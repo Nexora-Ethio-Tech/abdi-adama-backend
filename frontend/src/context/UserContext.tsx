@@ -41,7 +41,7 @@ interface UserContextType {
   setSchoolMotto: (motto: MultilingualText) => void;
   login: (credentials: { digitalIdOrEmail: string; password?: string; otp?: string }) => Promise<{ success: boolean; redirect?: string; error?: string }>;
   logout: () => void;
-  switchRole: (role: UserRole) => void;
+  switchRole: (role: UserRole) => Promise<string | null>;
   loading: boolean;
 }
 
@@ -207,7 +207,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     localStorage.removeItem('abdi_adama_token');
   };
 
-  const switchRole = async (newRole: UserRole) => {
+  const switchRole = async (newRole: UserRole): Promise<string | null> => {
     try {
       const token = localStorage.getItem('abdi_adama_token');
       const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/switch-role`, {
@@ -223,14 +223,17 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
       if (res.ok) {
         localStorage.setItem('abdi_adama_token', data.token);
-        setUser(data.user);
-        // Dispatch event for components that need to know
+        // Force the role to newRole so ProtectedRoute passes immediately on navigate
+        setUser({ ...data.user, role: newRole });
         window.dispatchEvent(new Event('role-switched'));
+        return data.redirect as string; // e.g. '/dashboard/teacher'
       } else {
         console.error('Failed to switch role:', data.error);
+        return null;
       }
     } catch (err) {
       console.error('Error switching role:', err);
+      return null;
     }
   };
 

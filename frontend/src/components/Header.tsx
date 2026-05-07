@@ -25,25 +25,7 @@ interface HeaderProps {
   onMenuClick: () => void;
 }
 
-// Maps a role to the route that leads to its dashboard
-const getDashboardRoute = (role: string): string => {
-  switch (role) {
-    case 'super-admin':     return '/dashboard/super-admin';
-    case 'school-admin':    return '/dashboard/school-admin';
-    case 'teacher':         return '/dashboard/teacher';
-    case 'student':         return '/dashboard/student';
-    case 'parent':          return '/dashboard/parent';
-    case 'finance-clerk':   return '/dashboard/finance';
-    case 'driver':          return '/dashboard/driver';
-    case 'clinic-admin':    return '/dashboard/clinic-admin';
-    case 'auditor':         return '/auditor-dashboard';
-    case 'vice-principal':  return '/dashboard/vice-principal';
-    case 'librarian':       return '/dashboard/librarian';
-    default:                return '/';
-  }
-};
 
-// All available portal roles with labels and icons
 const PORTAL_ROLES = [
   { r: 'finance-clerk',  label: 'Finance Clerk',   icon: <CreditCard size={16} /> },
   { r: 'auditor',        label: 'Auditor Panel',    icon: <BarChart3 size={16} /> },
@@ -78,9 +60,10 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
 
   const handleRoleSwitch = async (newRole: string) => {
     setIsMenuOpen(false);
-    await switchRole(newRole as any);
-    // After switchRole updates the user object, navigate to that role's dashboard
-    navigate(getDashboardRoute(newRole));
+    const redirect = await switchRole(newRole as any);
+    if (redirect) {
+      navigate(redirect);
+    }
   };
 
   // Only show admin roles to users who already have that admin role
