@@ -7,6 +7,7 @@ const router = Router();
 router.post('/register', register);
 router.post('/login', login);
 router.get('/verify', authenticateToken, verify);
+router.post('/switch-role', authenticateToken, switchRole);
 
 // Admin-only routes for approval workflow and provisioning
 router.get('/pending-users', authenticateToken, authorizeRoles('super-admin', 'school-admin'), getPendingUsers);

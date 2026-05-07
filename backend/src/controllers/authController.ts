@@ -143,6 +143,70 @@ export const login = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Server error during login' });
   }
 };
+export const switchRole = async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const { newRole } = req.body;
+
+  const staffRoles = ['teacher', 'student', 'parent', 'finance-clerk', 'driver', 'auditor', 'librarian', 'clinic-admin', 'vice-principal'];
+
+  try {
+    // Fetch user from DB to get fresh data
+    const result = await pool.query(
+      'SELECT id, name, email, role, branch_id, status, is_branch_auditor, digital_id FROM users WHERE id = $1',
+      [user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'User no longer exists' });
+    }
+
+    const dbUser = result.rows[0];
+
+    // Security Rules:
+    // 1. Cannot switch TO super-admin or school-admin unless you already HAVE that role in DB
+    if ((newRole === 'super-admin' || newRole === 'school-admin') && dbUser.role !== newRole) {
+      return res.status(403).json({ error: 'Unauthorized to switch to administrative roles' });
+    }
+
+    // 2. Otherwise, if it's a valid portal role, allow the switch (for demo/staff flexibility)
+    if (!staffRoles.includes(newRole) && newRole !== 'super-admin' && newRole !== 'school-admin') {
+      return res.status(400).json({ error: 'Invalid target role' });
+    }
+
+    const token = jwt.sign(
+      { id: dbUser.id, email: dbUser.email, role: newRole, branch_id: dbUser.branch_id, status: dbUser.status, is_branch_auditor: dbUser.is_branch_auditor },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    // Determine redirect
+    let dashboard = '/dashboard/school-admin';
+    if (newRole === 'super-admin') dashboard = '/dashboard/super-admin';
+    else if (newRole === 'school-admin') dashboard = '/dashboard/school-admin';
+    else if (newRole === 'teacher') dashboard = '/dashboard/teacher';
+    else if (newRole === 'student') dashboard = '/dashboard/student';
+    else if (newRole === 'parent') dashboard = '/dashboard/parent';
+    else if (newRole === 'finance-clerk') dashboard = '/dashboard/finance';
+    else if (newRole === 'vice-principal') dashboard = '/dashboard/vice-principal';
+    else if (newRole === 'driver') dashboard = '/dashboard/driver';
+    else if (newRole === 'auditor') dashboard = '/auditor-dashboard';
+    else if (newRole === 'librarian') dashboard = '/dashboard/librarian';
+    else if (newRole === 'clinic-admin') dashboard = '/dashboard/clinic-admin';
+
+    res.json({
+      token,
+      user: {
+        ...dbUser,
+        role: newRole
+      },
+      redirect: dashboard
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error during role switch' });
+  }
+};
+
 export const verify = async (req: Request, res: Response) => {
   // If the request made it here, authenticateToken middleware passed
   const user = (req as any).user;

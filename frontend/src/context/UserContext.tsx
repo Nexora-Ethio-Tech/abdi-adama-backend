@@ -207,10 +207,31 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     localStorage.removeItem('abdi_adama_token');
   };
 
-  // switchRole is intentionally disabled in production.
-  // Role is determined ONLY by the server at login.
-  const switchRole = (_newRole: UserRole) => {
-    console.warn('switchRole is disabled. Role is set by server authentication only.');
+  const switchRole = async (newRole: UserRole) => {
+    try {
+      const token = localStorage.getItem('abdi_adama_token');
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/switch-role`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ newRole })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        localStorage.setItem('abdi_adama_token', data.token);
+        setUser(data.user);
+        // Dispatch event for components that need to know
+        window.dispatchEvent(new Event('role-switched'));
+      } else {
+        console.error('Failed to switch role:', data.error);
+      }
+    } catch (err) {
+      console.error('Error switching role:', err);
+    }
   };
 
   return (
