@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { login, register, getPendingUsers, updateStatus, verify, provisionUser } from '../controllers/authController.js';
+import { login, register, getPendingUsers, updateStatus, verify, provisionUser, switchRole } from '../controllers/authController.js';
 import { authenticateToken, authorizeRoles } from '../middleware/authMiddleware.js';
 
 const router = Router();
