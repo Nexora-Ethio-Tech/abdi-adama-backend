@@ -32,9 +32,17 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
     localStorage.setItem('abdi_adama_language', lng);
   };
 
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+
   const handleLogout = () => {
     logout();
     navigate('/');
+  };
+
+  const handleRoleSwitch = async (newRole: string) => {
+    await switchRole(newRole as any);
+    setIsProfileOpen(false);
+    navigate('/'); // Force re-evaluation of routes
   };
 
   return (
@@ -104,76 +112,85 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
           <span className="absolute top-2.5 right-2.5 w-2 h-2 bg-school-secondary rounded-full border-2 border-white dark:border-slate-900"></span>
         </button>
 
-        <div className="flex items-center gap-1 md:gap-3 md:pl-6 md:border-l border-slate-200 dark:border-slate-800 relative group">
-          <div className="flex items-center gap-1 md:gap-4 p-1 cursor-pointer">
+        <div className="flex items-center gap-1 md:gap-3 md:pl-6 md:border-l border-slate-200 dark:border-slate-800 relative">
+          <div 
+            className="flex items-center gap-1 md:gap-4 p-1 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 rounded-2xl transition-colors"
+            onClick={() => setIsProfileOpen(!isProfileOpen)}
+          >
             <div className="text-right hidden sm:block">
               <p className="text-sm font-black text-slate-900 dark:text-white leading-tight">{user?.name || t('header.guest')}</p>
               <div className="flex items-center justify-end gap-1">
                 <p className="text-[10px] font-bold text-school-primary uppercase tracking-widest">{role?.replace('-', ' ')}</p>
-                <ChevronDown size={10} className="text-slate-400 group-hover:text-school-primary transition-colors" />
+                <ChevronDown size={10} className={cn("transition-transform duration-200", isProfileOpen && "rotate-180")} />
               </div>
             </div>
-            <div className="w-10 h-10 bg-gradient-to-br from-school-primary to-school-accent rounded-xl flex items-center justify-center text-white shadow-lg shadow-school-primary/20 group-hover:scale-110 transition-transform">
+            <div className="w-10 h-10 bg-gradient-to-br from-school-primary to-school-accent rounded-xl flex items-center justify-center text-white shadow-lg shadow-school-primary/20">
               <User size={20} />
             </div>
           </div>
 
-          {/* Role Switcher Dropdown */}
-          <div className="absolute top-full right-0 mt-2 w-56 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200/50 dark:border-slate-800/50 py-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 transform origin-top-right scale-95 group-hover:scale-100 z-50">
-            <div className="px-4 py-2 mb-2 border-b border-slate-100 dark:border-slate-800">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Switch Dashboard</p>
-            </div>
-            
-            <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
-              {[
-                { r: 'super-admin', label: 'Super Admin', icon: <Shield size={14} /> },
-                { r: 'school-admin', label: 'School Admin', icon: <Building size={14} /> },
-                { r: 'teacher', label: 'Teacher Portal', icon: <BookOpen size={14} /> },
-                { r: 'finance-clerk', label: 'Finance Clerk', icon: <CreditCard size={14} /> },
-                { r: 'auditor', label: 'Auditor Panel', icon: <BarChart3 size={14} /> },
-                { r: 'student', label: 'Student Portal', icon: <GraduationCap size={14} /> },
-                { r: 'parent', label: 'Parent Portal', icon: <Users size={14} /> },
-                { r: 'driver', label: 'Driver Portal', icon: <Truck size={14} /> },
-                { r: 'clinic-admin', label: 'Clinic Admin', icon: <Stethoscope size={14} /> },
-              ].filter(item => {
-                // Security: Super Admin can switch to anything. 
-                // Others can switch to portal roles.
-                // Admin roles require already having that role.
-                if (item.r === 'super-admin' || item.r === 'school-admin') {
-                  return user?.role === item.r;
-                }
-                return true; 
-              }).map((item) => (
-                <button
-                  key={item.r}
-                  onClick={() => {
-                    switchRole(item.r as any);
-                    navigate('/'); // Go to root to trigger redirect logic
-                  }}
-                  className={cn(
-                    "w-full px-4 py-2.5 flex items-center gap-3 text-sm font-medium transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50",
-                    role === item.r ? "text-school-primary bg-school-primary/5" : "text-slate-600 dark:text-slate-400"
-                  )}
-                >
-                  <span className={cn(role === item.r ? "text-school-primary" : "text-slate-400")}>
-                    {item.icon}
-                  </span>
-                  {item.label}
-                  {role === item.r && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-school-primary" />}
-                </button>
-              ))}
-            </div>
+          {/* Role Switcher Popover */}
+          {isProfileOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setIsProfileOpen(false)} />
+              <div className="absolute top-full right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200/50 dark:border-slate-800/50 py-4 z-50 animate-in fade-in zoom-in-95 duration-200 origin-top-right">
+                <div className="px-6 py-2 mb-3 border-b border-slate-100 dark:border-slate-800">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dashboard Switcher</p>
+                </div>
+                
+                <div className="max-h-[350px] overflow-y-auto px-2 space-y-1">
+                  {[
+                    { r: 'super-admin', label: 'Super Admin', icon: <Shield size={16} /> },
+                    { r: 'school-admin', label: 'School Admin', icon: <Building size={16} /> },
+                    { r: 'teacher', label: 'Teacher Portal', icon: <BookOpen size={16} /> },
+                    { r: 'finance-clerk', label: 'Finance Clerk', icon: <CreditCard size={16} /> },
+                    { r: 'auditor', label: 'Auditor Panel', icon: <BarChart3 size={16} /> },
+                    { r: 'student', label: 'Student Portal', icon: <GraduationCap size={16} /> },
+                    { r: 'parent', label: 'Parent Portal', icon: <Users size={16} /> },
+                    { r: 'driver', label: 'Driver Portal', icon: <Truck size={16} /> },
+                    { r: 'clinic-admin', label: 'Clinic Admin', icon: <Stethoscope size={16} /> },
+                    { r: 'vice-principal', label: 'Vice Principal', icon: <LayoutDashboard size={16} /> },
+                  ].filter(item => {
+                    if (item.r === 'super-admin' || item.r === 'school-admin') {
+                      return user?.role === item.r;
+                    }
+                    return true;
+                  }).map((item) => (
+                    <button
+                      key={item.r}
+                      onClick={() => handleRoleSwitch(item.r)}
+                      className={cn(
+                        "w-full px-4 py-3 flex items-center gap-4 rounded-2xl text-sm font-bold transition-all hover:scale-[1.02] active:scale-95",
+                        role === item.r 
+                          ? "bg-school-primary text-white shadow-lg shadow-school-primary/20" 
+                          : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
+                        role === item.r ? "bg-white/20" : "bg-slate-100 dark:bg-slate-800"
+                      )}>
+                        {item.icon}
+                      </div>
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
 
-            <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              <button
-                onClick={handleLogout}
-                className="w-full px-4 py-2.5 flex items-center gap-3 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors"
-              >
-                <LogOut size={14} />
-                Sign Out
-              </button>
-            </div>
-          </div>
+                <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 px-2">
+                  <button
+                    onClick={handleLogout}
+                    className="w-full px-4 py-3 flex items-center gap-4 rounded-2xl text-sm font-black text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 transition-all hover:scale-[1.02] active:scale-95"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center">
+                      <LogOut size={16} />
+                    </div>
+                    Sign Out Account
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </header>
