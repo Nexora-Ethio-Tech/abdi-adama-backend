@@ -35,6 +35,7 @@ const PORTAL_ROLES = [
   { r: 'driver',         label: 'Driver Portal',    icon: <Truck size={16} /> },
   { r: 'clinic-admin',   label: 'Clinic Portal',    icon: <Stethoscope size={16} /> },
   { r: 'vice-principal', label: 'Vice Principal',   icon: <LayoutDashboard size={16} /> },
+  { r: 'librarian',      label: 'Librarian',        icon: <BookOpen size={16} /> },
   { r: 'super-admin',    label: 'Super Admin',      icon: <Shield size={16} /> },
   { r: 'school-admin',   label: 'School Admin',     icon: <Building size={16} /> },
 ];
@@ -66,13 +67,18 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
     }
   };
 
-  // Only show admin roles to users who already have that admin role
-  const visibleRoles = PORTAL_ROLES.filter(item => {
-    if (item.r === 'super-admin' || item.r === 'school-admin') {
-      return user?.role === item.r;
-    }
-    return true;
-  });
+  // Only show the switcher for Super Admin.
+  // Other roles like School Admin should have a "clean" header.
+  const canSwitchRoles = user?.role === 'super-admin';
+  
+  const visibleRoles = canSwitchRoles 
+    ? PORTAL_ROLES.filter(item => {
+        if (item.r === 'super-admin' || item.r === 'school-admin') {
+          return user?.role === item.r;
+        }
+        return true;
+      })
+    : [];
 
   return (
     <>
@@ -192,35 +198,37 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
                     </span>
                   </div>
 
-                  {/* Role Switcher List */}
-                  <div className="py-2 px-2 max-h-[300px] overflow-y-auto">
-                    <p className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                      Switch Dashboard
-                    </p>
-                    {visibleRoles.map((item) => (
-                      <button
-                        key={item.r}
-                        onClick={() => handleRoleSwitch(item.r)}
-                        className={cn(
-                          "w-full px-3 py-2.5 flex items-center gap-3 rounded-xl text-sm font-semibold transition-all",
-                          role === item.r
-                            ? "bg-school-primary text-white"
-                            : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                        )}
-                      >
-                        <span className={cn(
-                          "w-7 h-7 rounded-lg flex items-center justify-center shrink-0",
-                          role === item.r ? "bg-white/20" : "bg-slate-100 dark:bg-slate-800 text-slate-500"
-                        )}>
-                          {item.icon}
-                        </span>
-                        {item.label}
-                        {role === item.r && (
-                          <span className="ml-auto w-2 h-2 rounded-full bg-white" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
+                  {/* Role Switcher List - Only for Super Admin */}
+                  {canSwitchRoles && visibleRoles.length > 0 && (
+                    <div className="py-2 px-2 max-h-[300px] overflow-y-auto border-b border-slate-100 dark:border-slate-800">
+                      <p className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        Switch Dashboard
+                      </p>
+                      {visibleRoles.map((item) => (
+                        <button
+                          key={item.r}
+                          onClick={() => handleRoleSwitch(item.r)}
+                          className={cn(
+                            "w-full px-3 py-2.5 flex items-center gap-3 rounded-xl text-sm font-semibold transition-all",
+                            role === item.r
+                              ? "bg-school-primary text-white"
+                              : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          )}
+                        >
+                          <span className={cn(
+                            "w-7 h-7 rounded-lg flex items-center justify-center shrink-0",
+                            role === item.r ? "bg-white/20" : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+                          )}>
+                            {item.icon}
+                          </span>
+                          {item.label}
+                          {role === item.r && (
+                            <span className="ml-auto w-2 h-2 rounded-full bg-white" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Sign Out */}
                   <div className="p-2 border-t border-slate-100 dark:border-slate-800">
