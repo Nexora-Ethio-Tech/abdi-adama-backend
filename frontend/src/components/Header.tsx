@@ -1,5 +1,5 @@
 
-import { Bell, Search, User, LogOut, Moon, Sun, Menu, Calendar as CalendarIcon, X, ChevronDown, Shield, Building, BookOpen, CreditCard, BarChart3, GraduationCap, Users, Truck, Stethoscope } from 'lucide-react';
+import { Bell, Search, User, LogOut, Moon, Sun, Menu, Calendar as CalendarIcon, X, ChevronDown, Shield, Building, BookOpen, CreditCard, BarChart3, GraduationCap, Users, Truck, Stethoscope, LayoutDashboard } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { useStore } from '../context/useStore';
 import { useTheme } from '../context/ThemeContext';
