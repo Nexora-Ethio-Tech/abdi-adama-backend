@@ -20,7 +20,7 @@ interface HeaderProps {
 }
 
 export const Header = ({ title, onMenuClick }: HeaderProps) => {
-  const { user, logout, selectedBranch, role } = useUser();
+  const { user, logout, selectedBranch, role, switchRole } = useUser();
   const { isExamLockedDown } = useStore();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
