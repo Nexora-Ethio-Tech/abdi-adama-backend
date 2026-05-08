@@ -1,0 +1,13 @@
+node_modules/
+.env
+*.log
+.DS_Store
+coverage/
+dist/
+*.js
+*.js.map
+!jest.config.js
+hahucloud_key
+hahucloud_key.pub
+*.pem
+*.key

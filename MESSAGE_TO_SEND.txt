@@ -1,0 +1,47 @@
+# 📧 Message to Send
+
+Copy and paste this:
+
+---
+
+Hi,
+
+Thanks for the SSH key!
+
+I also need the following information to connect:
+
+1. **SSH Username:** _______________ (e.g., root, ubuntu, admin)
+
+2. **Passphrase:** _______________ (password to unlock the SSH key)
+
+3. **SSH Port:** _______________ (usually 22)
+
+Once I have these, I'll:
+- Connect to the server
+- Upload the backend code
+- Install dependencies
+- Run the database seeding script
+- Start the backend service
+
+This should take about 20-30 minutes.
+
+Thanks!
+
+---
+
+# ✅ Once You Get the Info
+
+1. Open `SSH_CONNECTION_GUIDE.md` (I just created it)
+2. Follow the step-by-step instructions
+3. You'll have the backend running on the server!
+
+# 🎯 What Happens Next
+
+After deployment:
+✅ Backend runs 24/7 on HahuCloud server
+✅ Database connection is local (super fast and secure)
+✅ 4 admin accounts created and ready
+✅ API accessible at: http://91.204.209.22:5000
+✅ Task 1 COMPLETE!
+
+Then you can move to Task 2: Frontend deployment
