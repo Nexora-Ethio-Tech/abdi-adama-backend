@@ -120,6 +120,16 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
+      // Handle development bypass token persistence
+      if (token === 'dev-bypass-token') {
+        const savedUser = localStorage.getItem('abdi_adama_user');
+        if (savedUser) {
+          setUser(JSON.parse(savedUser));
+        }
+        setLoading(false);
+        return;
+      }
+
       try {
         const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/verify`, {
           headers: {
@@ -176,6 +186,28 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
 
   const login = async (credentials: { digitalIdOrEmail: string; password?: string; otp?: string }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
+    // ─── DEVELOPMENT BYPASS ──────────────────────────────────────────────────
+    // Allows easy access during development without a running backend.
+    if (
+      credentials.digitalIdOrEmail === 'abdiadamaschooloffice@gmail.com' &&
+      credentials.password === 'abdiadamaschooloffice@gmail.com'
+    ) {
+      const mockUser: User = {
+        id: 'dev-admin',
+        name: 'School Office Admin',
+        email: 'abdiadamaschooloffice@gmail.com',
+        role: 'super-admin'
+      };
+      
+      setUser(mockUser);
+      // We set a fake token to pass check in verifyToken/Header etc.
+      localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
+      localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
+      
+      return { success: true, redirect: '/dashboard' };
+    }
+    // ──────────────────────────────────────────────────────────────────────────
+
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/login`, {
         method: 'POST',
@@ -208,8 +240,33 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const switchRole = async (newRole: UserRole): Promise<string | null> => {
+    const token = localStorage.getItem('abdi_adama_token');
+
+    // Handle development bypass for role switching
+    if (token === 'dev-bypass-token' && user) {
+      const updatedUser = { ...user, role: newRole };
+      setUser(updatedUser);
+      localStorage.setItem('abdi_adama_user', JSON.stringify(updatedUser));
+      
+      // Map roles to their dashboard paths
+      const pathMap: Record<string, string> = {
+        'super-admin': '/dashboard',
+        'school-admin': '/dashboard/school-admin',
+        'vice-principal': '/dashboard/vice-principal',
+        'teacher': '/dashboard/teacher',
+        'finance-clerk': '/dashboard/finance',
+        'librarian': '/dashboard/library',
+        'clinic-admin': '/dashboard/clinic',
+        'driver': '/dashboard/driver',
+        'auditor': '/dashboard/auditor',
+        'student': '/dashboard/student',
+        'parent': '/dashboard/parent'
+      };
+      
+      return pathMap[newRole] || '/dashboard';
+    }
+
     try {
-      const token = localStorage.getItem('abdi_adama_token');
       const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/switch-role`, {
         method: 'POST',
         headers: {
