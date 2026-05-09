@@ -1,7 +1,7 @@
 
 import { UserPlus, Calendar, Search, Filter, MoreVertical, DoorOpen, DoorClosed, Award, X, Check, Mail, Phone, MapPin, Briefcase, GraduationCap, BookOpen, Trophy, Medal } from 'lucide-react';
 import { mockTeachers, mockSchedules, mockClasses } from '../data/mockData';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { ArrowLeft } from 'lucide-react';
@@ -20,36 +20,41 @@ export const Teachers = () => {
   const [viewMode, setViewMode] = useState<'directory' | 'leaderboard'>('directory');
   const [credentials, setCredentials] = useState<any>(null);
 
-  const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-  const getToken = () => localStorage.getItem('abdi_adama_token') || '';
+  // const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  // const getToken = () => localStorage.getItem('abdi_adama_token') || '';
 
   const fetchData = async () => {
-    try {
-      const res = await fetch(`${API}/api/teachers`, {
-        headers: { Authorization: `Bearer ${getToken()}` }
-      });
-      if (res.ok) setTeachers(await res.json());
-    } catch (err) {
-      console.error('Fetch error:', err);
-    }
+    // try {
+    //   const res = await fetch(`${API}/api/teachers`, {
+    //     headers: { Authorization: `Bearer ${getToken()}` }
+    //   });
+    //   if (res.ok) setTeachers(await res.json());
+    // } catch (err) {
+    //   console.error('Fetch error:', err);
+    // }
+    setTeachers(mockTeachers);
   };
 
   const [sections, setSections] = useState<any[]>([]);
 
-  useState(() => { 
+  useEffect(() => {
     fetchData(); 
     fetchSections();
-  });
+  }, []);
 
   const fetchSections = async () => {
-    try {
-      const res = await fetch(`${API}/api/academic/sections`, {
-        headers: { Authorization: `Bearer ${getToken()}` }
-      });
-      if (res.ok) setSections(await res.json());
-    } catch (err) {
-      console.error('Fetch sections error:', err);
-    }
+    // try {
+    //   const res = await fetch(`${API}/api/academic/sections`, {
+    //     headers: { Authorization: `Bearer ${getToken()}` }
+    //   });
+    //   if (res.ok) setSections(await res.json());
+    // } catch (err) {
+    //   console.error('Fetch sections error:', err);
+    // }
+    setSections([
+      { id: '1', grade_level: '9', section_name: 'A' },
+      { id: '2', grade_level: '10', section_name: 'A' }
+    ]);
   };
 
 
@@ -98,49 +103,54 @@ export const Teachers = () => {
     e.preventDefault();
     if (!promotingTeacher) return;
     
-    try {
-      const headers = { 
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${getToken()}` 
-      };
+    // try {
+    //   const headers = {
+    //     'Content-Type': 'application/json',
+    //     Authorization: `Bearer ${getToken()}`
+    //   };
 
-      // 1. Assign Room Teacher
-      if (promotingTeacher.isRoomTeacher && promotingTeacher.assignedRoomSectionId) {
-        await fetch(`${API}/api/teachers/${promotingTeacher.id}/assign-room`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ section_id: promotingTeacher.assignedRoomSectionId })
-        });
-      }
+    //   // 1. Assign Room Teacher
+    //   if (promotingTeacher.isRoomTeacher && promotingTeacher.assignedRoomSectionId) {
+    //     await fetch(`${API}/api/teachers/${promotingTeacher.id}/assign-room`, {
+    //       method: 'POST',
+    //       headers,
+    //       body: JSON.stringify({ section_id: promotingTeacher.assignedRoomSectionId })
+    //     });
+    //   }
 
-      // 2. Assign Examiner
-      if (promotingTeacher.isExaminer) {
-        await fetch(`${API}/api/teachers/${promotingTeacher.id}/assign-examiner`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            exam_title: promotingTeacher.examTitle,
-            exam_date: promotingTeacher.examDate,
-            assigned_class: promotingTeacher.assignedExamClass
-          })
-        });
-      }
+    //   // 2. Assign Examiner
+    //   if (promotingTeacher.isExaminer) {
+    //     await fetch(`${API}/api/teachers/${promotingTeacher.id}/assign-examiner`, {
+    //       method: 'POST',
+    //       headers,
+    //       body: JSON.stringify({
+    //         exam_title: promotingTeacher.examTitle,
+    //         exam_date: promotingTeacher.examDate,
+    //         assigned_class: promotingTeacher.assignedExamClass
+    //       })
+    //     });
+    //   }
 
-      // 3. Assign Department Head
-      if (promotingTeacher.isDeptHead) {
-        await fetch(`${API}/api/teachers/${promotingTeacher.id}/assign-dept-head`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ department_name: promotingTeacher.deptSubject })
-        });
-      }
+    //   // 3. Assign Department Head
+    //   if (promotingTeacher.isDeptHead) {
+    //     await fetch(`${API}/api/teachers/${promotingTeacher.id}/assign-dept-head`, {
+    //       method: 'POST',
+    //       headers,
+    //       body: JSON.stringify({ department_name: promotingTeacher.deptSubject })
+    //     });
+    //   }
 
-      setPromotingTeacher(null);
-      fetchData();
-      alert('Teacher roles updated successfully');
-    } catch (err: any) {
-      alert('Failed to update teacher roles');
-    }
+    //   setPromotingTeacher(null);
+    //   fetchData();
+    //   alert('Teacher roles updated successfully');
+    // } catch (err: any) {
+    //   alert('Failed to update teacher roles');
+    // }
+
+    // MOCK PROMOTE
+    setTeachers(prev => prev.map(t => t.id === promotingTeacher.id ? { ...t, ...promotingTeacher } : t));
+    setPromotingTeacher(null);
+    alert('Teacher roles updated successfully (Mock)');
   };
 
   const handleAddTeacher = async (e: React.FormEvent) => {
@@ -166,23 +176,32 @@ export const Teachers = () => {
       background_details: formData.get('background_details') as string
     };
 
-    try {
-      const res = await fetch(`${API}/api/teachers`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${getToken()}` 
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      setCredentials(data.credentials);
-      setShowAddModal(false);
-      fetchData();
-    } catch (err: any) {
-      alert(err.message || 'Failed to create teacher');
-    }
+    // try {
+    //   const res = await fetch(`${API}/api/teachers`, {
+    //     method: 'POST',
+    //     headers: {
+    //       'Content-Type': 'application/json',
+    //       Authorization: `Bearer ${getToken()}`
+    //     },
+    //     body: JSON.stringify(payload)
+    //   });
+    //   if (!res.ok) throw new Error(await res.text());
+    //   const data = await res.json();
+    //   setCredentials(data.credentials);
+    //   setShowAddModal(false);
+    //   fetchData();
+    // } catch (err: any) {
+    //   alert(err.message || 'Failed to create teacher');
+    // }
+
+    // MOCK ADD
+    const mockCreds = {
+      teacherUsername: 'T' + Math.floor(Math.random() * 10000),
+      tempPassword: Math.floor(Math.random() * 900000 + 100000).toString()
+    };
+    setCredentials(mockCreds);
+    setTeachers([...teachers, { id: 'T' + Date.now(), ...payload, digital_id: mockCreds.teacherUsername }]);
+    setShowAddModal(false);
   };
 
   return (

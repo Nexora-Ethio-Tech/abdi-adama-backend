@@ -1,6 +1,7 @@
 
 import { Book, Search, Plus, CheckCircle, Clock, RefreshCw } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { mockLibrary, mockOverdueLoans } from '../data/mockData';
 
 interface BookType {
   id: string;
@@ -35,23 +36,39 @@ export const Library = () => {
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [issueData, setIssueData] = useState({ book_id: '', student_id: '', due_date: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  // const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
   const fetchData = async () => {
     setLoading(true);
-    const token = localStorage.getItem('abdi_adama_token');
-    try {
-      const [booksRes, loansRes] = await Promise.all([
-        fetch(`${API_URL}/api/library/books`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`${API_URL}/api/library/loans`, { headers: { 'Authorization': `Bearer ${token}` } })
-      ]);
-      if (booksRes.ok) setBooks(await booksRes.json());
-      if (loansRes.ok) setLoans(await loansRes.json());
-    } catch (err) {
-      console.error('Failed to fetch library data:', err);
-    } finally {
-      setLoading(false);
-    }
+    // const token = localStorage.getItem('abdi_adama_token');
+    // try {
+    //   const [booksRes, loansRes] = await Promise.all([
+    //     fetch(`${API_URL}/api/library/books`, { headers: { 'Authorization': `Bearer ${token}` } }),
+    //     fetch(`${API_URL}/api/library/loans`, { headers: { 'Authorization': `Bearer ${token}` } })
+    //   ]);
+    //   if (booksRes.ok) setBooks(await booksRes.json());
+    //   if (loansRes.ok) setLoans(await loansRes.json());
+    // } catch (err) {
+    //   console.error('Failed to fetch library data:', err);
+    // } finally {
+    //   setLoading(false);
+    // }
+
+    // MOCK DATA
+    setBooks(mockLibrary);
+    setLoans(mockOverdueLoans.map(l => ({
+      id: l.id,
+      book_id: 'B1',
+      student_id: l.studentId,
+      book_title: l.bookTitle,
+      student_name: l.studentName,
+      borrowed_at: new Date().toISOString(),
+      due_date: l.dueDate,
+      returned_at: null,
+      days_overdue: l.daysOverdue,
+      fine_amount: l.daysOverdue * 5
+    })));
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -60,44 +77,67 @@ export const Library = () => {
 
   const handleIssueBook = async (e: React.FormEvent) => {
     e.preventDefault();
-    const token = localStorage.getItem('abdi_adama_token');
-    try {
-      const res = await fetch(`${API_URL}/api/library/issue`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(issueData)
-      });
-      if (res.ok) {
-        setShowIssueModal(false);
-        fetchData();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Failed to issue book');
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    // const token = localStorage.getItem('abdi_adama_token');
+    // try {
+    //   const res = await fetch(`${API_URL}/api/library/issue`, {
+    //     method: 'POST',
+    //     headers: {
+    //       'Authorization': `Bearer ${token}`,
+    //       'Content-Type': 'application/json'
+    //     },
+    //     body: JSON.stringify(issueData)
+    //   });
+    //   if (res.ok) {
+    //     setShowIssueModal(false);
+    //     fetchData();
+    //   } else {
+    //     const data = await res.json();
+    //     alert(data.error || 'Failed to issue book');
+    //   }
+    // } catch (err) {
+    //   console.error(err);
+    // }
+
+    // MOCK ISSUE
+    const book = books.find(b => b.id === issueData.book_id);
+    if (!book) return;
+
+    setLoans([...loans, {
+      id: 'L' + Date.now(),
+      book_id: issueData.book_id,
+      student_id: issueData.student_id,
+      book_title: book.title,
+      student_name: 'Mock Student',
+      borrowed_at: new Date().toISOString(),
+      due_date: issueData.due_date,
+      returned_at: null,
+      days_overdue: 0,
+      fine_amount: 0
+    }]);
+    setShowIssueModal(false);
+    alert('Book issued successfully (Mock)');
   };
 
   const handleReturnBook = async (loanId: string) => {
-    const token = localStorage.getItem('abdi_adama_token');
-    try {
-      const res = await fetch(`${API_URL}/api/library/return/${loanId}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        fetchData();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Failed to return book');
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    // const token = localStorage.getItem('abdi_adama_token');
+    // try {
+    //   const res = await fetch(`${API_URL}/api/library/return/${loanId}`, {
+    //     method: 'POST',
+    //     headers: { 'Authorization': `Bearer ${token}` }
+    //   });
+    //   if (res.ok) {
+    //     fetchData();
+    //   } else {
+    //     const data = await res.json();
+    //     alert(data.error || 'Failed to return book');
+    //   }
+    // } catch (err) {
+    //   console.error(err);
+    // }
+
+    // MOCK RETURN
+    setLoans(loans.map(l => l.id === loanId ? { ...l, returned_at: new Date().toISOString() } : l));
+    alert('Book returned successfully (Mock)');
   };
 
   const filteredBooks = books.filter(book =>

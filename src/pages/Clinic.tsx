@@ -1,5 +1,6 @@
 
 import { useState, useEffect } from 'react';
+import { mockStudents } from '../data/mockData';
 import {
   Stethoscope,
   Search,
@@ -45,25 +46,43 @@ export const Clinic = () => {
   const [showLogModal, setShowLogModal] = useState(false);
   const [newVisit, setNewVisit] = useState({ reason: '', treatment: '', selectedMeds: [] as {id: string, quantity: number}[] });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  // const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
   const fetchData = async () => {
     setLoading(true);
-    const token = localStorage.getItem('abdi_adama_token');
-    try {
-      const [studentsRes, medRes, visitsRes] = await Promise.all([
-        fetch(`${API_URL}/api/students`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`${API_URL}/api/clinic/medicine`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`${API_URL}/api/clinic/visits`, { headers: { 'Authorization': `Bearer ${token}` } })
-      ]);
-      if (studentsRes.ok) setStudents(await studentsRes.json());
-      if (medRes.ok) setMedicines(await medRes.json());
-      if (visitsRes.ok) setVisitLogs(await visitsRes.json());
-    } catch (err) {
-      console.error('Clinic data fetch failed:', err);
-    } finally {
-      setLoading(false);
-    }
+    // const token = localStorage.getItem('abdi_adama_token');
+    // try {
+    //   const [studentsRes, medRes, visitsRes] = await Promise.all([
+    //     fetch(`${API_URL}/api/students`, { headers: { 'Authorization': `Bearer ${token}` } }),
+    //     fetch(`${API_URL}/api/clinic/medicine`, { headers: { 'Authorization': `Bearer ${token}` } }),
+    //     fetch(`${API_URL}/api/clinic/visits`, { headers: { 'Authorization': `Bearer ${token}` } })
+    //   ]);
+    //   if (studentsRes.ok) setStudents(await studentsRes.json());
+    //   if (medRes.ok) setMedicines(await medRes.json());
+    //   if (visitsRes.ok) setVisitLogs(await visitsRes.json());
+    // } catch (err) {
+    //   console.error('Clinic data fetch failed:', err);
+    // } finally {
+    //   setLoading(false);
+    // }
+
+    // MOCK DATA
+    setStudents(mockStudents.map(s => ({
+      id: s.id,
+      name: s.name,
+      grade: s.grade,
+      blood_group: (s as any).bloodGroup || 'O+',
+      allergies: (s as any).allergies || 'None'
+    })));
+    setMedicines([
+      { id: 'M1', name: 'Paracetamol', stock: 50, unit: 'Tablets' },
+      { id: 'M2', name: 'Ibuprofen', stock: 30, unit: 'Tablets' },
+      { id: 'M3', name: 'Amoxicillin', stock: 20, unit: 'Capsules' }
+    ]);
+    setVisitLogs([
+      { id: 'V1', student_id: '1', student_name: 'Abebe Bikila', date: '2026-04-10', time: '10:30 AM', reason: 'Headache', treatment: 'Paracetamol', status: 'Logged' }
+    ]);
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -73,33 +92,49 @@ export const Clinic = () => {
   const handleLogVisit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedStudent) return;
-    const token = localStorage.getItem('abdi_adama_token');
-    try {
-      const res = await fetch(`${API_URL}/api/clinic/visit`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          student_id: selectedStudent.id,
-          student_name: selectedStudent.name,
-          reason: newVisit.reason,
-          treatment: newVisit.treatment,
-          medicines: newVisit.selectedMeds
-        })
-      });
-      if (res.ok) {
-        setShowLogModal(false);
-        setNewVisit({ reason: '', treatment: '', selectedMeds: [] });
-        fetchData();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Failed to log visit');
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    // const token = localStorage.getItem('abdi_adama_token');
+    // try {
+    //   const res = await fetch(`${API_URL}/api/clinic/visit`, {
+    //     method: 'POST',
+    //     headers: {
+    //       'Authorization': `Bearer ${token}`,
+    //       'Content-Type': 'application/json'
+    //     },
+    //     body: JSON.stringify({
+    //       student_id: selectedStudent.id,
+    //       student_name: selectedStudent.name,
+    //       reason: newVisit.reason,
+    //       treatment: newVisit.treatment,
+    //       medicines: newVisit.selectedMeds
+    //     })
+    //   });
+    //   if (res.ok) {
+    //     setShowLogModal(false);
+    //     setNewVisit({ reason: '', treatment: '', selectedMeds: [] });
+    //     fetchData();
+    //   } else {
+    //     const data = await res.json();
+    //     alert(data.error || 'Failed to log visit');
+    //   }
+    // } catch (err) {
+    //   console.error(err);
+    // }
+
+    // MOCK LOG
+    const newV: VisitLog = {
+      id: 'V' + Date.now(),
+      student_id: selectedStudent.id,
+      student_name: selectedStudent.name,
+      date: new Date().toISOString().split('T')[0],
+      time: new Date().toLocaleTimeString(),
+      reason: newVisit.reason,
+      treatment: newVisit.treatment,
+      status: 'Logged'
+    };
+    setVisitLogs([newV, ...visitLogs]);
+    setShowLogModal(false);
+    setNewVisit({ reason: '', treatment: '', selectedMeds: [] });
+    alert('Visit logged successfully (Mock)');
   };
 
   const filteredStudents = students.filter(s =>

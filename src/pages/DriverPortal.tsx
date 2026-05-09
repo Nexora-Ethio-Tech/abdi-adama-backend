@@ -24,21 +24,28 @@ export const DriverPortal = () => {
   const [content, setContent] = useState('');
   const [stations, setStations] = useState('');
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  // const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
   const fetchManifest = async () => {
     setLoading(true);
-    const token = localStorage.getItem('abdi_adama_token');
-    try {
-      const res = await fetch(`${API_URL}/api/transport/manifest`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) setManifest(await res.json());
-    } catch (err) {
-      console.error('Failed to fetch manifest:', err);
-    } finally {
-      setLoading(false);
-    }
+    // const token = localStorage.getItem('abdi_adama_token');
+    // try {
+    //   const res = await fetch(`${API_URL}/api/transport/manifest`, {
+    //     headers: { 'Authorization': `Bearer ${token}` }
+    //   });
+    //   if (res.ok) setManifest(await res.json());
+    // } catch (err) {
+    //   console.error('Failed to fetch manifest:', err);
+    // } finally {
+    //   setLoading(false);
+    // }
+
+    // MOCK DATA
+    setManifest([
+      { student_name: 'Abebe Bikila', digital_id: 'ST1001', grade: '10A', route_name: 'Route 1' },
+      { student_name: 'Sara Kebede', digital_id: 'ST1002', grade: '9B', route_name: 'Route 1' }
+    ]);
+    setLoading(false);
   };
 
   useEffect(() => {
