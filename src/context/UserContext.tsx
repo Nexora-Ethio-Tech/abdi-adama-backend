@@ -186,8 +186,9 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
 
   const login = async (credentials: { digitalIdOrEmail: string; password?: string; otp?: string }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
-    // ─── DEVELOPMENT BYPASS ──────────────────────────────────────────────────
-    // Allows easy access during development without a running backend.
+    const IS_DEV = import.meta.env.DEV;
+    
+    // ─── DEVELOPMENT BYPASS 1: Specific Credentials ──────────────────────────
     if (
       credentials.digitalIdOrEmail === 'abdiadamaschooloffice@gmail.com' &&
       credentials.password === 'abdiadamaschooloffice@gmail.com'
@@ -198,18 +199,15 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         email: 'abdiadamaschooloffice@gmail.com',
         role: 'super-admin'
       };
-      
       setUser(mockUser);
-      // We set a fake token to pass check in verifyToken/Header etc.
       localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
       localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
-      
       return { success: true, redirect: '/dashboard' };
     }
-    // ──────────────────────────────────────────────────────────────────────────
 
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/login`, {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const res = await fetch(`${apiUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -228,6 +226,22 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       return { success: false, error: data.error || 'Invalid credentials' };
     } catch (err) {
       console.error('Login error:', err);
+      
+      // ─── DEVELOPMENT BYPASS 2: Server Down Fallback ────────────────────────
+      if (IS_DEV) {
+        console.warn('Backend unreachable. Using DEV fallback login.');
+        const mockUser: User = {
+          id: 'dev-fallback',
+          name: 'Dev Guest',
+          email: credentials.digitalIdOrEmail || 'dev@example.com',
+          role: 'super-admin'
+        };
+        setUser(mockUser);
+        localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
+        localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
+        return { success: true, redirect: '/dashboard' };
+      }
+      
       return { success: false, error: 'Unable to connect to server' };
     }
   };
