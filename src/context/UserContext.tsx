@@ -130,32 +130,39 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
-      try {
-        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/verify`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
+      // try {
+      //   const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/verify`, {
+      //     headers: {
+      //       'Authorization': `Bearer ${token}`
+      //     }
+      //   });
 
-        if (res.ok) {
-          const data = await res.json();
-          setUser(data.user);
-          localStorage.setItem('abdi_adama_user', JSON.stringify(data.user));
-        } else {
-          // Token expired or invalid — force logout
-          localStorage.removeItem('abdi_adama_user');
-          localStorage.removeItem('abdi_adama_token');
-          setUser(null);
-        }
-      } catch (err) {
-        console.error('Failed to verify token:', err);
-        // Network error — clear session to be safe
-        localStorage.removeItem('abdi_adama_user');
-        localStorage.removeItem('abdi_adama_token');
-        setUser(null);
-      } finally {
-        setLoading(false);
+      //   if (res.ok) {
+      //     const data = await res.json();
+      //     setUser(data.user);
+      //     localStorage.setItem('abdi_adama_user', JSON.stringify(data.user));
+      //   } else {
+      //     // Token expired or invalid — force logout
+      //     localStorage.removeItem('abdi_adama_user');
+      //     localStorage.removeItem('abdi_adama_token');
+      //     setUser(null);
+      //   }
+      // } catch (err) {
+      //   console.error('Failed to verify token:', err);
+      //   // Network error — clear session to be safe
+      //   localStorage.removeItem('abdi_adama_user');
+      //   localStorage.removeItem('abdi_adama_token');
+      //   setUser(null);
+      // } finally {
+      //   setLoading(false);
+      // }
+
+      // MOCK VERIFICATION
+      const savedUser = localStorage.getItem('abdi_adama_user');
+      if (savedUser) {
+        setUser(JSON.parse(savedUser));
       }
+      setLoading(false);
     };
     verifyToken();
   }, []);
@@ -186,7 +193,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
 
   const login = async (credentials: { digitalIdOrEmail: string; password?: string; otp?: string }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
-    const IS_DEV = import.meta.env.DEV;
+    // const IS_DEV = import.meta.env.DEV;
     
     // ─── DEVELOPMENT BYPASS 1: Specific Credentials ──────────────────────────
     if (
@@ -205,45 +212,58 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       return { success: true, redirect: '/dashboard' };
     }
 
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-      const res = await fetch(`${apiUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          identifier: credentials.digitalIdOrEmail,
-          password: credentials.password
-        })
-      });
+    // ─── DEVELOPMENT BYPASS: Always use mock for now ────────────────────────
+    console.warn('Backend connection commented out. Using mock login.');
+    const mockUser: User = {
+      id: 'dev-fallback',
+      name: credentials.digitalIdOrEmail.split('@')[0] || 'Dev Guest',
+      email: credentials.digitalIdOrEmail || 'dev@example.com',
+      role: 'super-admin' // Default to super-admin for easy dev access
+    };
+    setUser(mockUser);
+    localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
+    localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
+    return { success: true, redirect: '/dashboard' };
 
-      const data = await res.json();
+    // try {
+    //   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+    //   const res = await fetch(`${apiUrl}/api/auth/login`, {
+    //     method: 'POST',
+    //     headers: { 'Content-Type': 'application/json' },
+    //     body: JSON.stringify({
+    //       identifier: credentials.digitalIdOrEmail,
+    //       password: credentials.password
+    //     })
+    //   });
 
-      if (res.ok) {
-        localStorage.setItem('abdi_adama_token', data.token);
-        setUser(data.user);
-        return { success: true, redirect: data.redirect };
-      }
-      return { success: false, error: data.error || 'Invalid credentials' };
-    } catch (err) {
-      console.error('Login error:', err);
+    //   const data = await res.json();
+
+    //   if (res.ok) {
+    //     localStorage.setItem('abdi_adama_token', data.token);
+    //     setUser(data.user);
+    //     return { success: true, redirect: data.redirect };
+    //   }
+    //   return { success: false, error: data.error || 'Invalid credentials' };
+    // } catch (err) {
+    //   console.error('Login error:', err);
       
-      // ─── DEVELOPMENT BYPASS 2: Server Down Fallback ────────────────────────
-      if (IS_DEV) {
-        console.warn('Backend unreachable. Using DEV fallback login.');
-        const mockUser: User = {
-          id: 'dev-fallback',
-          name: 'Dev Guest',
-          email: credentials.digitalIdOrEmail || 'dev@example.com',
-          role: 'super-admin'
-        };
-        setUser(mockUser);
-        localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
-        localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
-        return { success: true, redirect: '/dashboard' };
-      }
+    //   // ─── DEVELOPMENT BYPASS 2: Server Down Fallback ────────────────────────
+    //   if (IS_DEV) {
+    //     console.warn('Backend unreachable. Using DEV fallback login.');
+    //     const mockUser: User = {
+    //       id: 'dev-fallback',
+    //       name: 'Dev Guest',
+    //       email: credentials.digitalIdOrEmail || 'dev@example.com',
+    //       role: 'super-admin'
+    //     };
+    //     setUser(mockUser);
+    //     localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
+    //     localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
+    //     return { success: true, redirect: '/dashboard' };
+    //   }
       
-      return { success: false, error: 'Unable to connect to server' };
-    }
+    //   return { success: false, error: 'Unable to connect to server' };
+    // }
   };
 
   const logout = () => {
@@ -254,10 +274,8 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const switchRole = async (newRole: UserRole): Promise<string | null> => {
-    const token = localStorage.getItem('abdi_adama_token');
-
     // Handle development bypass for role switching
-    if (token === 'dev-bypass-token' && user) {
+    if (user) {
       const updatedUser = { ...user, role: newRole };
       setUser(updatedUser);
       localStorage.setItem('abdi_adama_user', JSON.stringify(updatedUser));
@@ -280,32 +298,33 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       return pathMap[newRole] || '/dashboard';
     }
 
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/switch-role`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ newRole })
-      });
+    // try {
+    //   const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/switch-role`, {
+    //     method: 'POST',
+    //     headers: {
+    //       'Content-Type': 'application/json',
+    //       'Authorization': `Bearer ${token}`
+    //     },
+    //     body: JSON.stringify({ newRole })
+    //   });
 
-      const data = await res.json();
+    //   const data = await res.json();
 
-      if (res.ok) {
-        localStorage.setItem('abdi_adama_token', data.token);
-        // Force the role to newRole so ProtectedRoute passes immediately on navigate
-        setUser({ ...data.user, role: newRole });
-        window.dispatchEvent(new Event('role-switched'));
-        return data.redirect as string; // e.g. '/dashboard/teacher'
-      } else {
-        console.error('Failed to switch role:', data.error);
-        return null;
-      }
-    } catch (err) {
-      console.error('Error switching role:', err);
-      return null;
-    }
+    //   if (res.ok) {
+    //     localStorage.setItem('abdi_adama_token', data.token);
+    //     // Force the role to newRole so ProtectedRoute passes immediately on navigate
+    //     setUser({ ...data.user, role: newRole });
+    //     window.dispatchEvent(new Event('role-switched'));
+    //     return data.redirect as string; // e.g. '/dashboard/teacher'
+    //   } else {
+    //     console.error('Failed to switch role:', data.error);
+    //     return null;
+    //   }
+    // } catch (err) {
+    //   console.error('Error switching role:', err);
+    //   return null;
+    // }
+    return null;
   };
 
   return (

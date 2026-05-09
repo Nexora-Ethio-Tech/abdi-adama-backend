@@ -13,14 +13,14 @@ import {
   X,
 } from 'lucide-react';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+// const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-const getToken = () => localStorage.getItem('abdi_adama_token') || '';
+// const getToken = () => localStorage.getItem('abdi_adama_token') || '';
 
-const authHeaders = () => ({
-  'Content-Type': 'application/json',
-  Authorization: `Bearer ${getToken()}`,
-});
+// const authHeaders = () => ({
+//   'Content-Type': 'application/json',
+//   Authorization: `Bearer ${getToken()}`,
+// });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Section {
@@ -69,16 +69,36 @@ export const AcademicManagement = () => {
   // ─── Fetch Grades ──────────────────────────────────────────────
   const fetchGrades = useCallback(async () => {
     setLoading(true);
-    try {
-      const res = await fetch(`${API}/api/academic/grades/with-sections`, { headers: authHeaders() });
-      if (!res.ok) throw new Error('Failed to fetch');
-      const data: Grade[] = await res.json();
-      setGrades(data);
-    } catch {
-      showToast('error', 'Could not load grades. Check your connection.');
-    } finally {
-      setLoading(false);
-    }
+    // try {
+    //   const res = await fetch(`${API}/api/academic/grades/with-sections`, { headers: authHeaders() });
+    //   if (!res.ok) throw new Error('Failed to fetch');
+    //   const data: Grade[] = await res.json();
+    //   setGrades(data);
+    // } catch {
+    //   showToast('error', 'Could not load grades. Check your connection.');
+    // } finally {
+    //   setLoading(false);
+    // }
+
+    // MOCK DATA
+    setGrades([
+      {
+        grade_id: '1',
+        grade_level: '9',
+        sections: [
+          { id: 'S1', section_name: 'A', capacity: 40, current_count: 35, available: 5, room_teacher_name: 'W/ro Selam' },
+          { id: 'S2', section_name: 'B', capacity: 40, current_count: 38, available: 2 }
+        ]
+      },
+      {
+        grade_id: '2',
+        grade_level: '10',
+        sections: [
+          { id: 'S3', section_name: 'A', capacity: 45, current_count: 45, available: 0, room_teacher_name: 'Ato Solomon' }
+        ]
+      }
+    ]);
+    setLoading(false);
   }, []);
 
   useEffect(() => { fetchGrades(); }, [fetchGrades]);
@@ -87,58 +107,86 @@ export const AcademicManagement = () => {
   const handleCreateGrade = async () => {
     if (!newGradeLevel.trim()) return;
     setGradeLoading(true);
-    try {
-      const res = await fetch(`${API}/api/academic/grades`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ grade_level: newGradeLevel.trim() }),
-      });
-      if (!res.ok) throw new Error();
-      showToast('success', `Grade ${newGradeLevel} created!`);
-      setNewGradeLevel('');
-      setShowAddGrade(false);
-      fetchGrades();
-    } catch {
-      showToast('error', 'Failed to create grade.');
-    } finally {
-      setGradeLoading(false);
-    }
+    // try {
+    //   const res = await fetch(`${API}/api/academic/grades`, {
+    //     method: 'POST',
+    //     headers: authHeaders(),
+    //     body: JSON.stringify({ grade_level: newGradeLevel.trim() }),
+    //   });
+    //   if (!res.ok) throw new Error();
+    //   showToast('success', `Grade ${newGradeLevel} created!`);
+    //   setNewGradeLevel('');
+    //   setShowAddGrade(false);
+    //   fetchGrades();
+    // } catch {
+    //   showToast('error', 'Failed to create grade.');
+    // } finally {
+    //   setGradeLoading(false);
+    // }
+
+    // MOCK CREATE
+    setGrades([...grades, { grade_id: Date.now().toString(), grade_level: newGradeLevel, sections: [] }]);
+    showToast('success', `Grade ${newGradeLevel} created! (Mock)`);
+    setNewGradeLevel('');
+    setShowAddGrade(false);
+    setGradeLoading(false);
   };
 
   // ─── Bulk Create Sections ──────────────────────────────────────
   const handleBulkCreate = async (gradeId: string) => {
     setBulkLoading(true);
-    try {
-      const res = await fetch(`${API}/api/academic/sections/bulk`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ grade_id: gradeId, section_count: bulkCount, capacity: bulkCapacity }),
-      });
-      if (!res.ok) throw new Error();
-      showToast('success', `${bulkCount} sections created!`);
-      setShowBulkSection(null);
-      fetchGrades();
-    } catch {
-      showToast('error', 'Failed to create sections.');
-    } finally {
-      setBulkLoading(false);
-    }
+    // try {
+    //   const res = await fetch(`${API}/api/academic/sections/bulk`, {
+    //     method: 'POST',
+    //     headers: authHeaders(),
+    //     body: JSON.stringify({ grade_id: gradeId, section_count: bulkCount, capacity: bulkCapacity }),
+    //   });
+    //   if (!res.ok) throw new Error();
+    //   showToast('success', `${bulkCount} sections created!`);
+    //   setShowBulkSection(null);
+    //   fetchGrades();
+    // } catch {
+    //   showToast('error', 'Failed to create sections.');
+    // } finally {
+    //   setBulkLoading(false);
+    // }
+
+    // MOCK BULK CREATE
+    const newSections = Array.from({ length: bulkCount }, (_, i) => ({
+      id: `BS-${gradeId}-${Date.now()}-${i}`,
+      section_name: String.fromCharCode(65 + i),
+      capacity: bulkCapacity,
+      current_count: 0,
+      available: bulkCapacity
+    }));
+    setGrades(grades.map(g => g.grade_id === gradeId ? { ...g, sections: [...(g.sections || []), ...newSections] } : g));
+    showToast('success', `${bulkCount} sections created! (Mock)`);
+    setShowBulkSection(null);
+    setBulkLoading(false);
   };
 
   // ─── Delete Section ────────────────────────────────────────────
   const handleDeleteSection = async (sectionId: string) => {
-    try {
-      const res = await fetch(`${API}/api/academic/sections/${sectionId}`, {
-        method: 'DELETE',
-        headers: authHeaders(),
-      });
-      if (!res.ok) throw new Error();
-      showToast('success', 'Section removed.');
-      setDeleteConfirm(null);
-      fetchGrades();
-    } catch {
-      showToast('error', 'Failed to delete section.');
-    }
+    // try {
+    //   const res = await fetch(`${API}/api/academic/sections/${sectionId}`, {
+    //     method: 'DELETE',
+    //     headers: authHeaders(),
+    //   });
+    //   if (!res.ok) throw new Error();
+    //   showToast('success', 'Section removed.');
+    //   setDeleteConfirm(null);
+    //   fetchGrades();
+    // } catch {
+    //   showToast('error', 'Failed to delete section.');
+    // }
+
+    // MOCK DELETE
+    setGrades(grades.map(g => ({
+      ...g,
+      sections: g.sections?.filter(s => s.id !== sectionId) || null
+    })));
+    showToast('success', 'Section removed (Mock).');
+    setDeleteConfirm(null);
   };
 
   // ─── Section letter → colour mapping ─────────────────────────

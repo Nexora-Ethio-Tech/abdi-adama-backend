@@ -63,52 +63,86 @@ export const TeacherPortal = () => {
   const [plans, setPlans] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
 
-  const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-  const getToken = () => localStorage.getItem('abdi_adama_token') || '';
+  // const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  // const getToken = () => localStorage.getItem('abdi_adama_token') || '';
 
   const fetchData = async () => {
-    try {
-      // 1. Fetch assigned sections
-      const sRes = await fetch(`${API}/api/academic/teacher/sections`, {
-        headers: { Authorization: `Bearer ${getToken()}` }
-      });
-      if (sRes.ok) setAssignedSections(await sRes.json());
+    // try {
+    //   // 1. Fetch assigned sections
+    //   const sRes = await fetch(`${API}/api/academic/teacher/sections`, {
+    //     headers: { Authorization: `Bearer ${getToken()}` }
+    //   });
+    //   if (sRes.ok) setAssignedSections(await sRes.json());
 
-      // 2. Fetch weekly plans
-      const pRes = await fetch(`${API}/api/operational/weekly-plans`, {
-        headers: { Authorization: `Bearer ${getToken()}` }
-      });
-      if (pRes.ok) setPlans(await pRes.json());
-    } catch (err) { console.error(err); }
+    //   // 2. Fetch weekly plans
+    //   const pRes = await fetch(`${API}/api/operational/weekly-plans`, {
+    //     headers: { Authorization: `Bearer ${getToken()}` }
+    //   });
+    //   if (pRes.ok) setPlans(await pRes.json());
+    // } catch (err) { console.error(err); }
+
+    // MOCK DATA
+    setAssignedSections([
+      { id: '1', grade_level: '10', section_name: 'A' },
+      { id: '2', grade_level: '9', section_name: 'B' }
+    ]);
+    setPlans([
+      {
+        id: 'P1',
+        teacherId: 'T1',
+        date: '2026-05-24',
+        content: 'Mathematics: Quadratic Equations',
+        objectives: 'Solve complex quadratic equations.',
+        teacherActivity: 'Explaining formula.',
+        time: '45 mins',
+        studentActivity: 'Board work.',
+        teachingMethod: 'Interactive.',
+        teachingAids: 'Textbook.',
+        evaluation: 'Quiz.',
+        remark: 'Good.',
+        status: 'Approved'
+      }
+    ]);
   };
 
   useEffect(() => { fetchData(); }, []);
 
   const handleAddPlan = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const res = await fetch(`${API}/api/operational/weekly-plans`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${getToken()}` 
-        },
-        body: JSON.stringify(newPlan)
-      });
-      if (res.ok) {
-        setIsPlanModalOpen(false);
-        fetchData(); // Refresh plans
-      }
-    } catch (err) { console.error(err); }
+    // try {
+    //   const res = await fetch(`${API}/api/operational/weekly-plans`, {
+    //     method: 'POST',
+    //     headers: {
+    //       'Content-Type': 'application/json',
+    //       Authorization: `Bearer ${getToken()}`
+    //     },
+    //     body: JSON.stringify(newPlan)
+    //   });
+    //   if (res.ok) {
+    //     setIsPlanModalOpen(false);
+    //     fetchData(); // Refresh plans
+    //   }
+    // } catch (err) { console.error(err); }
+
+    // MOCK ADD
+    setPlans([...plans, { id: Date.now().toString(), ...newPlan, teacherId: user?.id || 'T1' }]);
+    setIsPlanModalOpen(false);
+    alert('Plan submitted successfully (Mock)');
   };
 
-  const fetchStudentsForClass = async (sectionId: string) => {
-    try {
-      const res = await fetch(`${API}/api/academic/sections/${sectionId}/students`, {
-        headers: { Authorization: `Bearer ${getToken()}` }
-      });
-      if (res.ok) setStudents(await res.json());
-    } catch (err) { console.error(err); }
+  const fetchStudentsForClass = async (_sectionId: string) => {
+    // try {
+    //   const res = await fetch(`${API}/api/academic/sections/${sectionId}/students`, {
+    //     headers: { Authorization: `Bearer ${getToken()}` }
+    //   });
+    //   if (res.ok) setStudents(await res.json());
+    // } catch (err) { console.error(err); }
+
+    // MOCK DATA
+    setStudents([
+      { id: '1', name: 'Abebe Bikila' },
+      { id: '2', name: 'Sara Kebede' }
+    ]);
   };
 
   const pendingAssignments = 0; // TODO: fetch from /api/exams when exam module is live

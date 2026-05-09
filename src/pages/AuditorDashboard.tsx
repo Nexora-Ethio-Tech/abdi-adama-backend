@@ -5,7 +5,7 @@ import {
   Download, Clock, ShieldCheck,
   ArrowUpRight, Eye
 } from 'lucide-react';
-import { useUser } from '../context/UserContext';
+// import { useUser } from '../context/UserContext';
 
 interface Transaction {
   id: string;
@@ -32,7 +32,7 @@ interface SpecialStudent {
 }
 
 export const AuditorDashboard = () => {
-  const { user } = useUser();
+  // const { user } = useUser();
   const [activeTab, setActiveTab] = useState<'transactions' | 'special-students'>('transactions');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [specialStudents, setSpecialStudents] = useState<SpecialStudent[]>([]);
@@ -45,43 +45,56 @@ export const AuditorDashboard = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    try {
-      const token = localStorage.getItem('abdi_adama_token');
-      const [txRes, specialRes] = await Promise.all([
-        fetch('/api/finance/transactions', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('/api/students/special/list', { headers: { 'Authorization': `Bearer ${token}` } })
-      ]);
+    // try {
+    //   const token = localStorage.getItem('abdi_adama_token');
+    //   const [txRes, specialRes] = await Promise.all([
+    //     fetch('/api/finance/transactions', { headers: { 'Authorization': `Bearer ${token}` } }),
+    //     fetch('/api/students/special/list', { headers: { 'Authorization': `Bearer ${token}` } })
+    //   ]);
       
-      const txData = await txRes.json();
-      const specialData = await specialRes.json();
+    //   const txData = await txRes.json();
+    //   const specialData = await specialRes.json();
       
-      if (Array.isArray(txData)) setTransactions(txData);
-      if (Array.isArray(specialData)) setSpecialStudents(specialData);
-    } catch (err) {
-      console.error('Failed to fetch auditor data:', err);
-    } finally {
-      setLoading(false);
-    }
+    //   if (Array.isArray(txData)) setTransactions(txData);
+    //   if (Array.isArray(specialData)) setSpecialStudents(specialData);
+    // } catch (err) {
+    //   console.error('Failed to fetch auditor data:', err);
+    // } finally {
+    //   setLoading(false);
+    // }
+
+    // MOCK DATA
+    setTransactions([
+      { id: '1', student_name: 'Abebe Bikila', amount: 5000, type: 'Income', date: '2026-04-10', verified_by: 'Ato Solomon', branch_id: '1', branch_name: 'Main' }
+    ]);
+    setSpecialStudents([
+      { id: '1', name: 'Dawit Abebe', grade: '8', monthly_fee: 4000, bus_fee: 1000, fee_status: 'reduced', fee_approval_status: 'pending', fee_notes: 'Financial hardship', branch_name: 'Main' }
+    ]);
+    setLoading(false);
   };
 
   const handleApprove = async (id: string, approved: boolean) => {
-    try {
-      const token = localStorage.getItem('abdi_adama_token');
-      const res = await fetch('/api/students/fees/approve', {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ studentId: id, approved, approver_name: user?.name })
-      });
+    // try {
+    //   const token = localStorage.getItem('abdi_adama_token');
+    //   const res = await fetch('/api/students/fees/approve', {
+    //     method: 'POST',
+    //     headers: {
+    //       'Authorization': `Bearer ${token}`,
+    //       'Content-Type': 'application/json'
+    //     },
+    //     body: JSON.stringify({ studentId: id, approved, approver_name: user?.name })
+    //   });
       
-      if (res.ok) {
-        setSpecialStudents(prev => prev.map(s => s.id === id ? { ...s, fee_approval_status: approved ? 'approved' : 'rejected' } : s));
-      }
-    } catch (err) {
-      console.error('Failed to approve:', err);
-    }
+    //   if (res.ok) {
+    //     setSpecialStudents(prev => prev.map(s => s.id === id ? { ...s, fee_approval_status: approved ? 'approved' : 'rejected' } : s));
+    //   }
+    // } catch (err) {
+    //   console.error('Failed to approve:', err);
+    // }
+
+    // MOCK APPROVE
+    setSpecialStudents(prev => prev.map(s => s.id === id ? { ...s, fee_approval_status: approved ? 'approved' : 'rejected' } : s));
+    alert(approved ? 'Approved (Mock)' : 'Rejected (Mock)');
   };
 
   return (

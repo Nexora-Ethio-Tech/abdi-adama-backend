@@ -9,14 +9,14 @@ import { exportToCSV } from '../utils/exportUtils';
 import { useTranslation } from 'react-i18next';
 import { useEffect, useCallback } from 'react';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+// const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-const getToken = () => localStorage.getItem('abdi_adama_token') || '';
+// const getToken = () => localStorage.getItem('abdi_adama_token') || '';
 
-const authHeaders = () => ({
-  'Content-Type': 'application/json',
-  Authorization: `Bearer ${getToken()}`,
-});
+// const authHeaders = () => ({
+//   'Content-Type': 'application/json',
+//   Authorization: `Bearer ${getToken()}`,
+// });
 
 interface PaymentLog {
   status: boolean;
@@ -113,16 +113,32 @@ export const Finance = () => {
   const AUDIT_PAGE_SIZE = 10;
 
   const fetchData = useCallback(async () => {
-    try {
-      const [sumRes, txRes] = await Promise.all([
-        fetch(`${API}/api/finance/summary`, { headers: authHeaders() }),
-        fetch(`${API}/api/finance/transactions`, { headers: authHeaders() })
-      ]);
-      if (sumRes.ok) setDbSummary(await sumRes.json());
-      if (txRes.ok) setDbTransactions(await txRes.json());
-    } catch (err) {
-      console.error('Failed to fetch finance data', err);
-    }
+    // try {
+    //   const [sumRes, txRes] = await Promise.all([
+    //     fetch(`${API}/api/finance/summary`, { headers: authHeaders() }),
+    //     fetch(`${API}/api/finance/transactions`, { headers: authHeaders() })
+    //   ]);
+    //   if (sumRes.ok) setDbSummary(await sumRes.json());
+    //   if (txRes.ok) setDbTransactions(await txRes.json());
+    // } catch (err) {
+    //   console.error('Failed to fetch finance data', err);
+    // }
+
+    // MOCK DATA
+    setDbSummary({
+      total_revenue: mockFinances.totalRevenue,
+      pending_fees: mockFinances.pendingFees,
+      monthly_revenue: 850000
+    });
+    setDbTransactions(mockFinances.recentTransactions.map(tx => ({
+      id: tx.id,
+      student_name: tx.student,
+      amount: tx.amount,
+      type: 'Income',
+      date: tx.date,
+      verified_by: tx.verifiedBy,
+      branch_name: 'Main'
+    })));
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -891,28 +907,33 @@ export const Finance = () => {
               e.preventDefault();
               const f = new FormData(e.currentTarget);
               const data = {
-                student_name: f.get('desc'),
+                id: 'TX' + Date.now(),
+                student_name: f.get('desc') as string,
                 amount: Number(f.get('amount')),
-                type: f.get('type'),
+                type: f.get('type') as string,
                 date: new Date().toISOString(),
                 verified_by: user?.name || 'Unknown',
-                branch_id: (user as any).branch_id || 'B001',
-                student_id: null
+                branch_name: 'Main'
               };
-              try {
-                const res = await fetch(`${API}/api/finance/transactions`, {
-                  method: 'POST',
-                  headers: authHeaders(),
-                  body: JSON.stringify(data)
-                });
-                if (res.ok) {
-                   setSuccessMsg('Transaction recorded successfully!');
-                   fetchData();
-                   setShowForm(false);
-                }
-              } catch (err) {
-                console.error(err);
-              }
+              // try {
+              //   const res = await fetch(`${API}/api/finance/transactions`, {
+              //     method: 'POST',
+              //     headers: authHeaders(),
+              //     body: JSON.stringify(data)
+              //   });
+              //   if (res.ok) {
+              //      setSuccessMsg('Transaction recorded successfully!');
+              //      fetchData();
+              //      setShowForm(false);
+              //   }
+              // } catch (err) {
+              //   console.error(err);
+              // }
+
+              // MOCK ADD
+              setDbTransactions([data, ...dbTransactions]);
+              setSuccessMsg('Transaction recorded successfully! (Mock)');
+              setShowForm(false);
             }}>
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Category</label>

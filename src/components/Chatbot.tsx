@@ -27,23 +27,29 @@ export const Chatbot = () => {
     setMessage('');
     setIsLoading(true);
 
-    try {
-      const response = await fetch('https://kaleabbelayhun-abdiragbackend.hf.space/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          "Authorization": `Bearer ${import.meta.env.VITE_HF_TOKEN}`
-        },
-        body: JSON.stringify({ messages: [...messages, userMessage] }),
-      });
+    // try {
+    //   const response = await fetch('https://kaleabbelayhun-abdiragbackend.hf.space/chat', {
+    //     method: 'POST',
+    //     headers: {
+    //       'Content-Type': 'application/json',
+    //       "Authorization": `Bearer ${import.meta.env.VITE_HF_TOKEN}`
+    //     },
+    //     body: JSON.stringify({ messages: [...messages, userMessage] }),
+    //   });
 
-      const data = await response.json();
-      setMessages(prev => [...prev, { role: "assistant", content: data.content }]);
-    } catch (err) {
-      setMessages(prev => [...prev, { role: "assistant", content: "**Error:** Could not reach the server. Please try again." }]);
-    } finally {
+    //   const data = await response.json();
+    //   setMessages(prev => [...prev, { role: "assistant", content: data.content }]);
+    // } catch (err) {
+    //   setMessages(prev => [...prev, { role: "assistant", content: "**Error:** Could not reach the server. Please try again." }]);
+    // } finally {
+    //   setIsLoading(false);
+    // }
+
+    // MOCK RESPONSE
+    setTimeout(() => {
+      setMessages(prev => [...prev, { role: "assistant", content: "I'm currently in offline mode (backend connection commented out). How can I help you with the interface?" }]);
       setIsLoading(false);
-    }
+    }, 1000);
 
   };
 
