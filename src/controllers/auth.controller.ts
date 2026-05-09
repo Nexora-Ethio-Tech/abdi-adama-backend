@@ -72,7 +72,7 @@ class AuthController {
     }
   }
 
-  async logout(req: AuthRequest, res: Response): Promise<void> {
+  async logout(_req: AuthRequest, res: Response): Promise<void> {
     res.json({
       success: true,
       message: 'Logout successful'

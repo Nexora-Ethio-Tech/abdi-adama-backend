@@ -1,6 +1,5 @@
 import { Response, NextFunction } from 'express';
 import userService from '../services/user.service';
-import { USER_ROLES } from '../config/constants';
 import { AuthRequest, CreateUserDTO, UpdateUserStatusDTO, UserRole } from '../types';
 
 class SuperAdminController {

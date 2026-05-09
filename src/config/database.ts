@@ -10,11 +10,11 @@ const pool = new Pool({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   ssl: {
-    rejectUnauthorized: false // For self-signed certificates
+    rejectUnauthorized: false
   },
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000, // Increased to 10 seconds
+  connectionTimeoutMillis: 10000,
 });
 
 pool.on('connect', () => {
