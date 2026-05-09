@@ -11,29 +11,40 @@ export const Chatbot = () => {
   const [isMinimized, setIsMinimized] = useState(false);
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([
-    { role: 'assistant', text: 'Hello! I am the Abdi-Adama Smart Assistant. I can help you with school policies, schedules, and academic reports. How can I assist you today?' }
+    { role: 'assistant', content: 'Hello! I am the Abdi-Adama Smart Assistant. I can help you with school policies, schedules, and academic reports. How can I assist you today?' }
   ]);
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     setIsLoading(true);
     e.preventDefault();
-    if (!message.trim()) return;
-
-    setMessages([...messages, { role: 'user', text: message }]);
+    if (!message.trim() || isLoading) return;
+    const userMessage = { role: "user", content: message };
+    setMessages(prev => [...prev, userMessage]);
     setMessage('');
+    setIsLoading(true);
 
-    // Mock response
-    setTimeout(() => {
+    try {
+      const response = await fetch('https://kaleabbelayhun-abdiragbackend.hf.space/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          "Authorization": `Bearer ${import.meta.env.VITE_HF_TOKEN}`
+        },
+        body: JSON.stringify({ messages: [...messages, userMessage] }),
+      });
+
+      const data = await response.json();
+      setMessages(prev => [...prev, { role: "assistant", content: data.content }]);
+    } catch (err) {
+      setMessages(prev => [...prev, { role: "assistant", content: "**Error:** Could not reach the server. Please try again." }]);
+    } finally {
       setIsLoading(false);
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        text: 'I am currently in training mode. Soon I will be able to answer all your questions about our school!'
-      }]);
-    }, 1000);
+    }
+
   };
 
   if (!isOpen) {
@@ -84,10 +95,12 @@ export const Chatbot = () => {
               {messages.map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[80%] p-3 rounded-2xl text-sm shadow-sm ${m.role === 'user'
-                      ? 'bg-blue-600 text-white rounded-tr-none'
-                      : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none border border-slate-100 dark:border-slate-700'
+                    ? 'bg-blue-600 text-white rounded-tr-none'
+                    : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none border border-slate-100 dark:border-slate-700'
                     }`}>
-                    {m.text}
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {m.content}
+                    </ReactMarkdown>
                   </div>
                 </div>
               ))}
