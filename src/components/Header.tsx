@@ -41,7 +41,7 @@ const PORTAL_ROLES = [
 ];
 
 export const Header = ({ title, onMenuClick }: HeaderProps) => {
-  const { user, logout, selectedBranch, role, switchRole } = useUser();
+  const { user, logout, selectedBranch, role, primaryRole, switchRole } = useUser();
   const { isExamLockedDown } = useStore();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
@@ -67,22 +67,10 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
     }
   };
 
-  // In DEV mode, allow ALL roles to switch for testing.
-  // In production, only Super Admin can switch.
-  const IS_DEV = import.meta.env.DEV;
-  const canSwitchRoles = IS_DEV || user?.role === 'super-admin';
-  
-  const visibleRoles = canSwitchRoles 
-    ? PORTAL_ROLES.filter(item => {
-        // In dev mode, show all roles
-        if (IS_DEV) return true;
-        // In production, hide super-admin/school-admin unless user is that role
-        if (item.r === 'super-admin' || item.r === 'school-admin') {
-          return user?.role === item.r;
-        }
-        return true;
-      })
-    : [];
+  // Only show the switcher for Super Admin.
+  // Other roles like School Admin should have a "clean" header.
+  const canSwitchRoles = primaryRole === 'super-admin';
+  const visibleRoles = canSwitchRoles ? PORTAL_ROLES : [];
 
   return (
     <>

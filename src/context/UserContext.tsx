@@ -28,6 +28,7 @@ interface UserContextType {
   user: User | null;
   setUser: (user: User | null) => void;
   role: UserRole | null;
+  primaryRole: UserRole | null;
   selectedBranch: Branch | null;
   setSelectedBranch: (branch: Branch | null) => void;
   branches: Branch[];
@@ -62,6 +63,10 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true); // Block rendering until verified
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [gradesLocked, setGradesLocked] = useState(false);
+  const [primaryRole, setPrimaryRole] = useState<UserRole | null>(() => {
+    const stored = localStorage.getItem('abdi_adama_primary_role');
+    return stored as UserRole | null;
+  });
   const [registrationOpen, setRegistrationOpen] = useState(() => {
     return localStorage.getItem('registration_open') !== 'false';
   });
@@ -120,12 +125,35 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
-      // Handle development bypass token persistence
-      if (token === 'dev-bypass-token') {
-        const savedUser = localStorage.getItem('abdi_adama_user');
-        if (savedUser) {
-          setUser(JSON.parse(savedUser));
+      try {
+        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/verify`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setUser(data.user);
+          const restoredPrimaryRole = data.user?.primaryRole || data.user?.originalRole || data.user?.baseRole || data.user?.role;
+          if (restoredPrimaryRole) {
+            setPrimaryRole(restoredPrimaryRole);
+            localStorage.setItem('abdi_adama_primary_role', restoredPrimaryRole);
+          }
+          localStorage.setItem('abdi_adama_user', JSON.stringify(data.user));
+        } else {
+          // Token expired or invalid — force logout
+          localStorage.removeItem('abdi_adama_user');
+          localStorage.removeItem('abdi_adama_token');
+          setUser(null);
         }
+      } catch (err) {
+        console.error('Failed to verify token:', err);
+        // Network error — clear session to be safe
+        localStorage.removeItem('abdi_adama_user');
+        localStorage.removeItem('abdi_adama_token');
+        setUser(null);
+      } finally {
         setLoading(false);
         return;
       }
@@ -238,75 +266,47 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
     //   const data = await res.json();
 
-    //   if (res.ok) {
-    //     localStorage.setItem('abdi_adama_token', data.token);
-    //     setUser(data.user);
-    //     return { success: true, redirect: data.redirect };
-    //   }
-    //   return { success: false, error: data.error || 'Invalid credentials' };
-    // } catch (err) {
-    //   console.error('Login error:', err);
-      
-    //   // ─── DEVELOPMENT BYPASS 2: Server Down Fallback ────────────────────────
-    //   if (IS_DEV) {
-    //     console.warn('Backend unreachable. Using DEV fallback login.');
-    //     const mockUser: User = {
-    //       id: 'dev-fallback',
-    //       name: 'Dev Guest',
-    //       email: credentials.digitalIdOrEmail || 'dev@example.com',
-    //       role: 'super-admin'
-    //     };
-    //     setUser(mockUser);
-    //     localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
-    //     localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
-    //     return { success: true, redirect: '/dashboard' };
-    //   }
-      
-    //   return { success: false, error: 'Unable to connect to server' };
-    // }
+      if (res.ok) {
+        localStorage.setItem('abdi_adama_token', data.token);
+        setUser(data.user);
+        const restoredPrimaryRole = data.user?.primaryRole || data.user?.originalRole || data.user?.baseRole || data.user?.role;
+        if (restoredPrimaryRole) {
+          setPrimaryRole(restoredPrimaryRole);
+          localStorage.setItem('abdi_adama_primary_role', restoredPrimaryRole);
+        }
+        return { success: true, redirect: data.redirect };
+      }
+      return { success: false, error: data.error || 'Invalid credentials' };
+    } catch (err) {
+      console.error('Login error:', err);
+      return { success: false, error: 'Unable to connect to server' };
+    }
   };
 
   const logout = () => {
     setUser(null);
     setSelectedBranch(null);
+    setPrimaryRole(null);
     localStorage.removeItem('abdi_adama_user');
     localStorage.removeItem('abdi_adama_token');
+    localStorage.removeItem('abdi_adama_primary_role');
   };
 
   const switchRole = async (newRole: UserRole): Promise<string | null> => {
-    // Handle development bypass for role switching
-    if (user) {
-      const updatedUser = { ...user, role: newRole };
-      setUser(updatedUser);
-      localStorage.setItem('abdi_adama_user', JSON.stringify(updatedUser));
-      
-      // Map roles to their dashboard paths
-      const pathMap: Record<string, string> = {
-        'super-admin': '/dashboard',
-        'school-admin': '/dashboard/school-admin',
-        'vice-principal': '/dashboard/vice-principal',
-        'teacher': '/dashboard/teacher',
-        'finance-clerk': '/dashboard/finance',
-        'librarian': '/dashboard/library',
-        'clinic-admin': '/dashboard/clinic',
-        'driver': '/dashboard/driver',
-        'auditor': '/dashboard/auditor',
-        'student': '/dashboard/student',
-        'parent': '/dashboard/parent'
-      };
-      
-      return pathMap[newRole] || '/dashboard';
-    }
-
-    // try {
-    //   const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/switch-role`, {
-    //     method: 'POST',
-    //     headers: {
-    //       'Content-Type': 'application/json',
-    //       'Authorization': `Bearer ${token}`
-    //     },
-    //     body: JSON.stringify({ newRole })
-    //   });
+    try {
+      if (!primaryRole && user?.role) {
+        setPrimaryRole(user.role);
+        localStorage.setItem('abdi_adama_primary_role', user.role);
+      }
+      const token = localStorage.getItem('abdi_adama_token');
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/switch-role`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ newRole })
+      });
 
     //   const data = await res.json();
 
@@ -332,6 +332,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       user,
       setUser,
       role,
+      primaryRole,
       selectedBranch,
       setSelectedBranch,
       branches: mockBranches,
