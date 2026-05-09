@@ -12,9 +12,18 @@ interface CourseFrequency {
   sessions: string;
 }
 
+interface GradeCourse {
+  id: string;
+  grade: string;
+  course: string;
+  teacher?: string;
+  color: string;
+}
+
 export const ScheduleBuilder = () => {
   const navigate = useNavigate();
   const [numClasses, setNumClasses] = useState(12);
+  const [periodsPerDay, setPeriodsPerDay] = useState(8);
   const [frequencies, setFrequencies] = useState<CourseFrequency[]>([
     { id: '1', subject: 'Mathematics', sessions: '5 sessions/week' }
   ]);
@@ -25,6 +34,13 @@ export const ScheduleBuilder = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTeacher, setSelectedTeacher] = useState<any>(null);
   const [teacherConstraints, setTeacherConstraints] = useState<Record<string, number[]>>({});
+  const [gradeCourses, setGradeCourses] = useState<GradeCourse[]>([
+    { id: '1', grade: '10A', course: 'Mathematics', color: 'bg-blue-100' },
+    { id: '2', grade: '10A', course: 'English', color: 'bg-purple-100' },
+    { id: '3', grade: '9B', course: 'Mathematics', color: 'bg-blue-100' },
+    { id: '4', grade: '9B', course: 'Science', color: 'bg-green-100' },
+  ]);
+  const [showGeneratedSchedule, setShowGeneratedSchedule] = useState(false);
 
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
   const periods = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -71,7 +87,9 @@ export const ScheduleBuilder = () => {
           <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">Schedule Architect</h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 uppercase font-bold tracking-widest">Ethiopian High School Standards</p>
         </div>
-        <button className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-2xl font-black transition-all shadow-xl shadow-blue-500/20 hover:scale-105 active:scale-95">
+        <button 
+          onClick={() => setShowGeneratedSchedule(true)}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-2xl font-black transition-all shadow-xl shadow-blue-500/20 hover:scale-105 active:scale-95">
           Generate Timetable
         </button>
       </div>
@@ -121,13 +139,14 @@ export const ScheduleBuilder = () => {
             </div>
             <div className="space-y-1 col-span-2">
               <label className="text-[10px] font-black text-slate-500 uppercase">Periods per Day</label>
-              <div className="flex gap-2">
-                {[7, 8, 9].map(n => (
-                  <button key={n} className={`flex-1 p-3 rounded-xl font-bold text-sm border transition-all ${n === 8 ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'}`}>
-                    {n}
-                  </button>
-                ))}
-              </div>
+              <input
+                type="number"
+                min="1"
+                max="12"
+                className="w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                value={periodsPerDay}
+                onChange={(e) => setPeriodsPerDay(parseInt(e.target.value) || 8)}
+              />
             </div>
           </div>
         </div>
@@ -239,6 +258,63 @@ export const ScheduleBuilder = () => {
         </div>
       </div>
 
+      {/* Grade Courses Configuration */}
+      <div className="p-8 bg-indigo-50/50 dark:bg-indigo-900/10 rounded-[2.5rem] border border-indigo-100 dark:border-indigo-900/30 space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-black text-xs uppercase tracking-widest">
+            <BookOpen size={18} />
+            <span>Grades & Courses</span>
+          </div>
+          <button onClick={() => {
+            const newId = Date.now().toString();
+            setGradeCourses([...gradeCourses, { id: newId, grade: '10A', course: '', color: 'bg-blue-100' }]);
+          }} className="p-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 rounded-xl hover:scale-110 transition-transform">
+            <Plus size={16} />
+          </button>
+        </div>
+        <p className="text-xs text-indigo-600 dark:text-indigo-400 font-bold">Configure which courses are taught in each grade. Teachers can teach multiple grades and courses.</p>
+        <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+          {gradeCourses.map((gc) => (
+            <div key={gc.id} className="flex items-center justify-between p-4 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-900/30 rounded-2xl shadow-sm gap-3">
+              <div className="flex items-center gap-3 flex-1">
+                <select 
+                  value={gc.grade}
+                  onChange={(e) => setGradeCourses(gradeCourses.map(g => g.id === gc.id ? {...g, grade: e.target.value} : g))}
+                  className="px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-bold outline-none dark:text-white"
+                >
+                  <option>10A</option>
+                  <option>10B</option>
+                  <option>9A</option>
+                  <option>9B</option>
+                  <option>11A</option>
+                  <option>12A</option>
+                </select>
+                <input 
+                  type="text" 
+                  placeholder="Course name"
+                  value={gc.course}
+                  onChange={(e) => setGradeCourses(gradeCourses.map(g => g.id === gc.id ? {...g, course: e.target.value} : g))}
+                  className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-bold outline-none dark:text-white"
+                />
+                <select
+                  value={gc.teacher || ''}
+                  onChange={(e) => setGradeCourses(gradeCourses.map(g => g.id === gc.id ? {...g, teacher: e.target.value} : g))}
+                  className="px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-bold outline-none dark:text-white"
+                >
+                  <option value="">Assign Teacher</option>
+                  {mockTeachers.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <button onClick={() => setGradeCourses(gradeCourses.filter(g => g.id !== gc.id))} className="text-slate-300 hover:text-rose-500 transition-colors">
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Ethiopian Specific Constraints */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="p-8 bg-amber-50/50 dark:bg-amber-900/10 rounded-[2.5rem] border border-amber-100 dark:border-amber-900/30 space-y-6">
@@ -294,7 +370,93 @@ export const ScheduleBuilder = () => {
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Generated Schedule Display */}
+      {showGeneratedSchedule && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm overflow-y-auto p-4">
+          <div className="max-w-full min-h-screen flex items-start justify-center pt-8">
+            <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-2xl w-full max-w-7xl">
+              <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-t-[2.5rem]">
+                <div>
+                  <h3 className="text-2xl font-black text-slate-900 dark:text-white">Generated Timetable Schedule</h3>
+                  <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">Ethiopian High School Standard Format</p>
+                </div>
+                <button
+                  onClick={() => setShowGeneratedSchedule(false)}
+                  className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <div className="p-8 space-y-6 max-h-[80vh] overflow-y-auto">
+                {['10A', '10B', '9A', '9B'].map((gradeId) => (
+                  <div key={gradeId} className="space-y-3">
+                    <div className="flex items-center gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
+                      <div className="px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl font-black text-sm">
+                        {gradeId}
+                      </div>
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Weekly Timetable</span>
+                    </div>
+                    
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-center text-sm">
+                        <thead>
+                          <tr className="bg-slate-100 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
+                            <th className="px-4 py-3 font-black text-slate-700 dark:text-slate-300 text-left">Period</th>
+                            <th className="px-4 py-3 font-black text-slate-700 dark:text-slate-300">Monday</th>
+                            <th className="px-4 py-3 font-black text-slate-700 dark:text-slate-300">Tuesday</th>
+                            <th className="px-4 py-3 font-black text-slate-700 dark:text-slate-300">Wednesday</th>
+                            <th className="px-4 py-3 font-black text-slate-700 dark:text-slate-300">Thursday</th>
+                            <th className="px-4 py-3 font-black text-slate-700 dark:text-slate-300">Friday</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Array.from({ length: periodsPerDay }).map((_, periodIdx) => {
+                            const courses = ['Mathematics', 'English', 'Science', 'History', 'Geography', 'PE', 'Art', 'IT'];
+                            const teachers = mockTeachers;
+                            return (
+                              <tr key={periodIdx} className="border-b border-slate-100 dark:border-slate-800 hover:bg-blue-50 dark:hover:bg-slate-800/30 transition-colors">
+                                <td className="px-4 py-3 font-black text-slate-600 dark:text-slate-400 text-left">P{periodIdx + 1}</td>
+                                {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map((day) => {
+                                  const courseIdx = (periodIdx + (day.charCodeAt(0) % 3)) % courses.length;
+                                  const teacherIdx = (periodIdx + (day.charCodeAt(0) % 2)) % teachers.length;
+                                  const colors = ['bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300', 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300', 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300', 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300', 'bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300'];
+                                  const colorIdx = (periodIdx + day.length) % colors.length;
+                                  return (
+                                    <td key={day} className="px-4 py-3">
+                                      <div className={`${colors[colorIdx]} px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-tight`}>
+                                        <div>{courses[courseIdx]}</div>
+                                        <div className="text-[9px] font-medium opacity-80">{teachers[teacherIdx].name}</div>
+                                      </div>
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 rounded-b-[2.5rem] flex gap-3 justify-end">
+                <button
+                  onClick={() => setShowGeneratedSchedule(false)}
+                  className="px-6 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-xl font-black text-sm transition-all"
+                >
+                  Close
+                </button>
+                <button className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-sm transition-all shadow-lg">
+                  Export as PDF
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

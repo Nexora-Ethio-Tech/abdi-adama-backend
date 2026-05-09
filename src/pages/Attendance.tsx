@@ -282,20 +282,14 @@ export const Attendance = () => {
               </div>
             </div>
             <div className="h-10 w-px bg-slate-100 dark:bg-slate-800 hidden md:block" />
-            <div className="h-10 w-px bg-slate-100 dark:bg-slate-800 hidden md:block" />
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Attendance Date</label>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div className="h-10 w-px bg-slate-100 dark:bg-slate-800 hidden md:block" />
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Total Students</label>
-              <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{students.length} Enrolled</p>
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Student Enrollment</label>
+              <div className="flex items-center gap-3">
+                <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-900/50 rounded-lg text-sm font-black text-blue-700 dark:text-blue-300">
+                  {students.length}
+                </div>
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest">Total Enrolled</span>
+              </div>
             </div>
           </div>
 
