@@ -193,13 +193,8 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
                   {/* Role Switcher List - Only for Super Admin */}
                   {canSwitchRoles && visibleRoles.length > 0 && (
                     <div className="py-2 px-2 max-h-[300px] overflow-y-auto border-b border-slate-100 dark:border-slate-800">
-                      <p className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <p className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                         Switch Dashboard
-                        {IS_DEV && (
-                          <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded text-[8px] font-black tracking-tight border border-amber-200 dark:border-amber-800/50">
-                            🔧 DEV
-                          </span>
-                        )}
                       </p>
                       {visibleRoles.map((item) => (
                         <button

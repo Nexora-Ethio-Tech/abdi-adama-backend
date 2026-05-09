@@ -155,42 +155,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         setUser(null);
       } finally {
         setLoading(false);
-        return;
       }
-
-      // try {
-      //   const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/verify`, {
-      //     headers: {
-      //       'Authorization': `Bearer ${token}`
-      //     }
-      //   });
-
-      //   if (res.ok) {
-      //     const data = await res.json();
-      //     setUser(data.user);
-      //     localStorage.setItem('abdi_adama_user', JSON.stringify(data.user));
-      //   } else {
-      //     // Token expired or invalid — force logout
-      //     localStorage.removeItem('abdi_adama_user');
-      //     localStorage.removeItem('abdi_adama_token');
-      //     setUser(null);
-      //   }
-      // } catch (err) {
-      //   console.error('Failed to verify token:', err);
-      //   // Network error — clear session to be safe
-      //   localStorage.removeItem('abdi_adama_user');
-      //   localStorage.removeItem('abdi_adama_token');
-      //   setUser(null);
-      // } finally {
-      //   setLoading(false);
-      // }
-
-      // MOCK VERIFICATION
-      const savedUser = localStorage.getItem('abdi_adama_user');
-      if (savedUser) {
-        setUser(JSON.parse(savedUser));
-      }
-      setLoading(false);
     };
     verifyToken();
   }, []);
@@ -221,50 +186,17 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
 
   const login = async (credentials: { digitalIdOrEmail: string; password?: string; otp?: string }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
-    // const IS_DEV = import.meta.env.DEV;
-    
-    // ─── DEVELOPMENT BYPASS 1: Specific Credentials ──────────────────────────
-    if (
-      credentials.digitalIdOrEmail === 'abdiadamaschooloffice@gmail.com' &&
-      credentials.password === 'abdiadamaschooloffice@gmail.com'
-    ) {
-      const mockUser: User = {
-        id: 'dev-admin',
-        name: 'School Office Admin',
-        email: 'abdiadamaschooloffice@gmail.com',
-        role: 'super-admin'
-      };
-      setUser(mockUser);
-      localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
-      localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
-      return { success: true, redirect: '/dashboard' };
-    }
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          identifier: credentials.digitalIdOrEmail,
+          password: credentials.password
+        })
+      });
 
-    // ─── DEVELOPMENT BYPASS: Always use mock for now ────────────────────────
-    console.warn('Backend connection commented out. Using mock login.');
-    const mockUser: User = {
-      id: 'dev-fallback',
-      name: credentials.digitalIdOrEmail.split('@')[0] || 'Dev Guest',
-      email: credentials.digitalIdOrEmail || 'dev@example.com',
-      role: 'super-admin' // Default to super-admin for easy dev access
-    };
-    setUser(mockUser);
-    localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
-    localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
-    return { success: true, redirect: '/dashboard' };
-
-    // try {
-    //   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-    //   const res = await fetch(`${apiUrl}/api/auth/login`, {
-    //     method: 'POST',
-    //     headers: { 'Content-Type': 'application/json' },
-    //     body: JSON.stringify({
-    //       identifier: credentials.digitalIdOrEmail,
-    //       password: credentials.password
-    //     })
-    //   });
-
-    //   const data = await res.json();
+      const data = await res.json();
 
       if (res.ok) {
         localStorage.setItem('abdi_adama_token', data.token);
@@ -308,23 +240,22 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         body: JSON.stringify({ newRole })
       });
 
-    //   const data = await res.json();
+      const data = await res.json();
 
-    //   if (res.ok) {
-    //     localStorage.setItem('abdi_adama_token', data.token);
-    //     // Force the role to newRole so ProtectedRoute passes immediately on navigate
-    //     setUser({ ...data.user, role: newRole });
-    //     window.dispatchEvent(new Event('role-switched'));
-    //     return data.redirect as string; // e.g. '/dashboard/teacher'
-    //   } else {
-    //     console.error('Failed to switch role:', data.error);
-    //     return null;
-    //   }
-    // } catch (err) {
-    //   console.error('Error switching role:', err);
-    //   return null;
-    // }
-    return null;
+      if (res.ok) {
+        localStorage.setItem('abdi_adama_token', data.token);
+        // Force the role to newRole so ProtectedRoute passes immediately on navigate
+        setUser({ ...data.user, role: newRole });
+        window.dispatchEvent(new Event('role-switched'));
+        return data.redirect as string; // e.g. '/dashboard/teacher'
+      } else {
+        console.error('Failed to switch role:', data.error);
+        return null;
+      }
+    } catch (err) {
+      console.error('Error switching role:', err);
+      return null;
+    }
   };
 
   return (
