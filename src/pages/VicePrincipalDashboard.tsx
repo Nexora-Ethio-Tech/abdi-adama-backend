@@ -1,5 +1,5 @@
 
-import { TrendingUp, Users, GraduationCap, Clock, ShieldCheck, FileText, BarChart3, Bell, CheckCircle2 } from 'lucide-react';
+import { TrendingUp, Users, GraduationCap, Clock, ShieldCheck, FileText, BarChart3, Bell, CheckCircle2, Lock, Unlock } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { useState } from 'react';
 
@@ -21,7 +21,7 @@ const SummaryCard = ({ icon: Icon, label, value, trend, color }: any) => (
 );
 
 export const VicePrincipalDashboard = () => {
-  const { user } = useUser();
+  const { user, gradesLocked, setGradesLocked } = useUser();
   const [calculating, setCalculating] = useState(false);
 
   const handleCalculateRanks = () => {
@@ -60,6 +60,43 @@ export const VicePrincipalDashboard = () => {
               {calculating ? 'Processing Ranks...' : 'Generate Term Rankings'}
             </button>
             <p className="text-[10px] text-slate-500 text-center font-bold uppercase tracking-widest">Last Calculation: Today, 09:14 AM</p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Grade Entry Control (VP Exclusive) ── */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div
+          onClick={() => setGradesLocked(!gradesLocked)}
+          className={`p-6 rounded-[2rem] border-2 transition-all cursor-pointer flex items-center justify-between shadow-xl group hover:scale-[1.01] active:scale-[0.99] ${
+            gradesLocked
+              ? 'border-rose-200 dark:border-rose-800 bg-gradient-to-br from-rose-50 to-white dark:from-rose-900/20 dark:to-slate-900 text-rose-700 dark:text-rose-400 shadow-rose-200/50 dark:shadow-none'
+              : 'border-emerald-200 dark:border-emerald-800 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-900/20 dark:to-slate-900 text-emerald-700 dark:text-emerald-400 shadow-emerald-200/50 dark:shadow-none'
+          }`}
+        >
+          <div className="flex items-center gap-4">
+            <div className={`p-3 rounded-2xl ${gradesLocked ? 'bg-rose-500' : 'bg-emerald-500'} text-white shadow-lg group-hover:scale-110 transition-transform`}>
+              {gradesLocked ? <Lock size={24} /> : <Unlock size={24} />}
+            </div>
+            <div>
+              <p className="text-lg font-black uppercase tracking-tight">Grade Entry {gradesLocked ? 'Locked' : 'Open'}</p>
+              <p className="text-xs font-medium opacity-80">
+                {gradesLocked ? 'Teachers cannot modify or submit marks.' : 'Teachers can submit and edit student marks.'}
+              </p>
+            </div>
+          </div>
+          <div className={`w-14 h-7 rounded-full relative transition-colors ${gradesLocked ? 'bg-rose-600' : 'bg-emerald-600'}`}>
+            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all shadow-md ${gradesLocked ? 'right-1' : 'left-1'}`} />
+          </div>
+        </div>
+
+        <div className="p-6 rounded-[2rem] bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-sm flex items-center gap-4">
+          <div className="p-3 bg-indigo-100 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl">
+            <ShieldCheck size={24} />
+          </div>
+          <div>
+            <p className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-tight">VP Authority</p>
+            <p className="text-xs text-slate-500 font-medium">Only you can open or close the grade submission window for teachers across all branches.</p>
           </div>
         </div>
       </section>

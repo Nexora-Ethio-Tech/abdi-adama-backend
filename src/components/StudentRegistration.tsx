@@ -46,6 +46,7 @@ export const StudentRegistration = ({ isAdminView = true }: StudentRegistrationP
   const [selectedSemester, setSelectedSemester] = useState('Semester 2');
   const [registrationOpen, setRegistrationOpen] = useState(true);
   const [showExamConfig, setShowExamConfig] = useState(false);
+  const [showInlineRegForm, setShowInlineRegForm] = useState(false);
   const [emailToast, setEmailToast] = useState<string | null>(null);
   const [showFeeModal, setShowFeeModal] = useState(false);
   const [selectedAppForFee, setSelectedAppForFee] = useState<PendingApp | null>(null);
@@ -251,6 +252,182 @@ export const StudentRegistration = ({ isAdminView = true }: StudentRegistrationP
       {activeTab === 'new' ? (
         isAdminView ? (
           <div className="space-y-5">
+            {/* Manual Registration Button (for walk-in students) */}
+            {!isFinance && (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowInlineRegForm(!showInlineRegForm)}
+                  className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all active:scale-95 shadow-lg ${
+                    showInlineRegForm
+                      ? 'bg-slate-800 text-white shadow-slate-300/30 dark:shadow-none'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/20'
+                  }`}
+                >
+                  <UserPlus size={16} />
+                  {showInlineRegForm ? 'Back to Pipeline' : 'Register New Student'}
+                </button>
+                {showInlineRegForm && (
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Walk-in Admission Form</span>
+                )}
+              </div>
+            )}
+
+            {showInlineRegForm && !isFinance ? (
+              /* ── Inline 3-Step Registration Form (same as public-facing) ── */
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                      <UserPlus size={20} className="text-blue-600" />
+                      Admission Form (Walk-in Student)
+                    </h3>
+                    <div className="flex items-center gap-1 md:gap-2">
+                      {[1, 2, 3].map((step) => (
+                        <div key={step} className="flex items-center">
+                          <div className={`w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-[10px] md:text-xs font-bold transition-all ${
+                            registrationStep === step ? 'bg-blue-600 text-white' :
+                            registrationStep > step ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'
+                          }`}>
+                            {registrationStep > step ? <Check size={14} className="w-3 h-3 md:w-4 md:h-4" /> : step}
+                          </div>
+                          {step < 3 && <div className={`w-4 md:w-8 h-0.5 ${registrationStep > step ? 'bg-emerald-200' : 'bg-slate-100'}`} />}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <form onSubmit={handleRegister} className="p-6 space-y-6">
+                  {registrationStep === 1 && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Full Name</label>
+                          <input required type="text" placeholder="Enter student full name" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Fayda Alias Number (FAN)</label>
+                          <input required type="text" placeholder="e.g. FAN-12345678" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                          <p className="text-[10px] text-slate-400 pl-1">Alias number from the Ethiopia Digital ID (Fayda) card</p>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Date of Birth</label>
+                          <input required type="date" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Gender</label>
+                          <select className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                            <option>Male</option>
+                            <option>Female</option>
+                            <option>Other</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+                        <h4 className="text-xs font-black text-rose-500 uppercase tracking-widest flex items-center gap-2 mb-4">
+                          <HeartPulse size={16} />
+                          Confidential Medical Details (Clinic Required)
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase">Blood Group</label>
+                            <select className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                              <option>O+</option><option>O-</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase">Known Allergies</label>
+                            <input type="text" placeholder="e.g. Peanuts, Dust, None" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase">Chronic Conditions</label>
+                            <input type="text" placeholder="e.g. Asthma, Diabetes, None" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                          </div>
+                          <div className="space-y-1 md:col-span-3">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase">Current Home Medications</label>
+                            <input type="text" placeholder="List any medications taken at home..." className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {registrationStep === 2 && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Parent/Guardian Name</label>
+                          <input required type="text" placeholder="Enter parent name" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Parent Phone</label>
+                          <input required type="tel" placeholder="+251..." className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div className="space-y-1 md:col-span-2">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Address</label>
+                          <input required type="text" placeholder="City, Sub-city, Woreda" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {registrationStep === 3 && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Previous School</label>
+                          <input type="text" placeholder="Name of previous school" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Last Grade Completed</label>
+                          <input type="text" placeholder="e.g. Grade 9" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Registration Fee Status</label>
+                          <select className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                            <option>Paid</option>
+                            <option>Pending</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block">Last Transcript (Max 2MB)</label>
+                        <div className={`relative border-2 border-dashed rounded-2xl p-8 transition-all flex flex-col items-center justify-center gap-2 group cursor-pointer ${
+                          fileError ? 'border-rose-300 bg-rose-50 dark:bg-rose-900/10' : 'border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-600'
+                        }`}>
+                          <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
+                          <div className={`p-4 rounded-full ${fileError ? 'bg-rose-100 text-rose-600' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600'}`}>
+                            {fileName ? <FileText size={32} /> : <Upload size={32} />}
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-bold text-slate-700 dark:text-slate-200">{fileName || 'Click to upload transcript'}</p>
+                            <p className="text-xs text-slate-500 mt-1">PDF, PNG, JPG (Max 2MB)</p>
+                          </div>
+                        </div>
+                        {fileError && (
+                          <div className="flex items-center gap-2 text-rose-600 text-xs font-bold">
+                            <AlertCircle size={14} />
+                            <span>{fileError}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <div className="pt-6 border-t border-slate-100 dark:border-slate-800 flex flex-col-reverse sm:flex-row justify-between gap-4">
+                    <button type="button" onClick={prevStep} disabled={registrationStep === 1} className="w-full sm:w-auto px-6 py-2 rounded-xl font-bold text-slate-500 hover:bg-slate-100 transition-all disabled:hidden">
+                      Previous
+                    </button>
+                    {registrationStep < 3 ? (
+                      <button type="button" onClick={nextStep} className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-10 py-3 rounded-xl font-bold transition-all shadow-lg">
+                        Next Step
+                      </button>
+                    ) : (
+                      <button type="submit" className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white px-10 py-3 rounded-xl font-bold transition-all shadow-lg">
+                        Register Student
+                      </button>
+                    )}
+                  </div>
+                </form>
+              </div>
+            ) : (
+            <>
             {/* Registration Window Toggle */}
             {!isFinance && (
               <div
@@ -445,6 +622,8 @@ export const StudentRegistration = ({ isAdminView = true }: StudentRegistrationP
                 </div>
               )}
             </div>
+          </>
+          )}
           </div>
         ) : !registrationOpen ? (
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm p-12 text-center space-y-4">

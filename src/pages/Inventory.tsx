@@ -174,9 +174,32 @@ export const Inventory = () => {
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Quantity</label>
-                  <input required type="number" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Condition</label>
+                  <select className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+                    <option>New</option>
+                    <option>Good</option>
+                    <option>Fair</option>
+                  </select>
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Quantity</label>
+                  <input required type="number" min="0" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                    Low Stock Threshold
+                    <AlertCircle size={10} className="text-amber-500" />
+                  </label>
+                  <input required type="number" min="1" placeholder="e.g. 10" className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-500 transition-all" />
+                </div>
+              </div>
+              <div className="p-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-800/30 rounded-xl flex items-start gap-2">
+                <AlertCircle size={14} className="text-amber-500 mt-0.5 shrink-0" />
+                <p className="text-[10px] text-amber-700 dark:text-amber-400 font-medium leading-relaxed">
+                  <strong>Low Stock Alerts:</strong> You will be notified when the current stock quantity falls below this threshold number.
+                </p>
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Location</label>
