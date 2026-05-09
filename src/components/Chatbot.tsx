@@ -1,6 +1,10 @@
 
 import { useState } from 'react';
 import { MessageSquare, X, Send, MinusCircle, Maximize2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { useEffect, useRef } from 'react';
+
 
 export const Chatbot = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -9,7 +13,10 @@ export const Chatbot = () => {
   const [messages, setMessages] = useState([
     { role: 'assistant', text: 'Hello! I am the Abdi-Adama Smart Assistant. I can help you with school policies, schedules, and academic reports. How can I assist you today?' }
   ]);
-
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim()) return;
@@ -82,6 +89,7 @@ export const Chatbot = () => {
                   </div>
                 </div>
               ))}
+              <div ref={scrollRef} className="h-2" />
             </div>
 
             {/* Input */}
