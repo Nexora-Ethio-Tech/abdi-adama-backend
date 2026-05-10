@@ -118,9 +118,9 @@ export const mockFinances = {
   totalRevenue: 1250000,
   pendingFees: 45000,
   recentTransactions: [
-    { id: 'TX1', student: 'Abebe Bikila', amount: 5000, type: 'Registration', date: '2026-04-10', verifiedBy: 'Ato Solomon (Finance Clerk)' },
-    { id: 'TX2', student: 'Sara Kebede', amount: 5000, type: 'Registration', date: '2026-04-11', verifiedBy: 'W/ro Selam (Finance Clerk)' },
-    { id: 'TX3', student: 'Dawit Lema', amount: 6500, type: 'Monthly Fee', date: '2026-04-12', verifiedBy: 'Ato Girma (Auto-verify)' },
+    { id: 'TX1', category: 'Student Fees', description: 'May 2026 Collection (Grade 1-8)', amount: 450000, type: 'Income', date: '2026-05-10', verifiedBy: 'Ato Dawit (Chief Accountant)' },
+    { id: 'TX2', category: 'Staff Salaries', description: 'Servant & Janitor Payments (May)', amount: 25000, type: 'Expense', date: '2026-05-11', verifiedBy: 'W/ro Tigist (Finance Manager)' },
+    { id: 'TX3', category: 'Utilities', description: 'School Electricity & Water Bill', amount: 8500, type: 'Expense', date: '2026-05-12', verifiedBy: 'Ato Yosef (Senior Cashier)' },
   ],
   summaries: [
     { id: 'S1', category: 'Student Fees', description: 'April Student Fee', amount: 450000, count: 1200, type: 'Income', date: '2026-04-01' },

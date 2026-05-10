@@ -65,7 +65,8 @@ export const AuditorDashboard = () => {
 
     // MOCK DATA
     setTransactions([
-      { id: '1', student_name: 'Abebe Bikila', amount: 5000, type: 'Income', date: '2026-04-10', verified_by: 'Ato Solomon', branch_id: '1', branch_name: 'Main' }
+      { id: '1', category: 'Student Fees', description: 'May 2026 Collection (Grade 1-8)', amount: 450000, type: 'Income', date: '2026-05-10', verified_by: 'Ato Dawit (Chief Accountant)', branch_id: '1', branch_name: 'Main' },
+      { id: '2', category: 'Staff Salaries', description: 'Servant & Janitor Payments (May)', amount: 25000, type: 'Expense', date: '2026-05-11', verified_by: 'W/ro Tigist (Finance Manager)', branch_id: '1', branch_name: 'Main' }
     ]);
     setSpecialStudents([
       { id: '1', name: 'Dawit Abebe', grade: '8', monthly_fee: 4000, bus_fee: 1000, fee_status: 'reduced', fee_approval_status: 'pending', fee_notes: 'Financial hardship', branch_name: 'Main' }
@@ -185,32 +186,34 @@ export const AuditorDashboard = () => {
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-800/20">
-                  <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Student</th>
+                  <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Category</th>
+                  <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Description</th>
                   <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Amount</th>
                   <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Type</th>
-                  <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Branch</th>
                   <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Verified By</th>
                   <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Date</th>
                   <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {transactions.map((tx) => (
                   <tr key={tx.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold">
-                          {tx.student_name[0]}
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${tx.type === 'Income' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                          {tx.category[0]}
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{tx.student_name}</p>
-                          <p className="text-[10px] text-slate-400 font-bold">ID: {tx.student_digital_id || tx.id.slice(0, 8)}</p>
+                          <p className="text-sm font-bold text-slate-800 dark:text-slate-100 uppercase tracking-tight">{tx.category}</p>
+                          <p className="text-[10px] text-slate-400 font-bold">{tx.type}</p>
                         </div>
                       </div>
                     </td>
                     <td className="px-8 py-6">
-                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-black text-sm">
-                        <ArrowUpRight size={14} />
+                      <p className="text-xs font-medium text-slate-600 dark:text-slate-300">{tx.description}</p>
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className={`font-black text-sm ${tx.type === 'Income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {tx.type === 'Expense' && '-'}
                         {tx.amount.toLocaleString()} ETB
                       </div>
                     </td>
@@ -220,10 +223,7 @@ export const AuditorDashboard = () => {
                       </span>
                     </td>
                     <td className="px-8 py-6">
-                      <p className="text-xs font-bold text-slate-600 dark:text-slate-300">{tx.branch_name || 'Network'}</p>
-                    </td>
-                    <td className="px-8 py-6">
-                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{tx.verified_by}</p>
+                      <p className="text-xs font-semibold text-blue-700 dark:text-blue-400">{tx.verified_by}</p>
                     </td>
                     <td className="px-8 py-6">
                       <p className="text-xs font-bold text-slate-600 dark:text-slate-300">{tx.date}</p>

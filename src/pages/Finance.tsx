@@ -29,7 +29,7 @@ interface AuditLogItem extends PaymentLog {
   studentName: string;
   studentId: string;
   section: string;
-  category: 'Fees' | 'Staff';
+  category: string;
   direction: 'In' | 'Out';
   actionLabel: string;
 }
@@ -91,10 +91,10 @@ export const Finance = () => {
   ]);
 
   const [paymentStatus, setPaymentStatus] = useState<Record<string, PaymentLog[]>>({
-    '1': [{ status: true, modifiedBy: 'Ato Bekele', approverName: 'W/ro Almaz', timestamp: '2026-04-01T09:00:00' }],
-    '2': [{ status: false, modifiedBy: 'Ato Bekele', approverName: 'W/ro Almaz', timestamp: '2026-04-01T09:00:00' }],
-    '3': [{ status: false, modifiedBy: 'Ato Bekele', approverName: 'W/ro Almaz', timestamp: '2026-04-01T09:00:00' }],
-    '6': [{ status: false, modifiedBy: 'Ato Bekele', approverName: 'W/ro Almaz', timestamp: '2026-04-01T09:00:00' }],
+    '1': [{ status: true, modifiedBy: 'Ato Yosef (Cashier)', approverName: 'Ato Dawit (Chief Accountant)', timestamp: '2026-04-01T09:00:00' }],
+    '2': [{ status: false, modifiedBy: 'Ato Yosef (Cashier)', approverName: 'Ato Dawit (Chief Accountant)', timestamp: '2026-04-01T09:00:00' }],
+    '3': [{ status: false, modifiedBy: 'Ato Yosef (Cashier)', approverName: 'Ato Dawit (Chief Accountant)', timestamp: '2026-04-01T09:00:00' }],
+    '6': [{ status: false, modifiedBy: 'Ato Yosef (Cashier)', approverName: 'Ato Dawit (Chief Accountant)', timestamp: '2026-04-01T09:00:00' }],
   });
 
   const [activeView, setActiveView] = useState<'main' | 'audit'>('main');
@@ -103,13 +103,12 @@ export const Finance = () => {
   const [txCategory, setTxCategory] = useState('Student Fee');
   const [customCategory, setCustomCategory] = useState('');
   const [auditFilter, setAuditFilter] = useState<'In' | 'Out'>('In');
-  const [auditCategory, setAuditCategory] = useState<'Fees' | 'Staff'>('Fees');
+  const [auditCategory, setAuditCategory] = useState('Student Fees');
   const [auditSection, setAuditSection] = useState('all');
   const [auditPage, setAuditPage] = useState(0);
-  const [auditActionType, setAuditActionType] = useState('all');
-  const [auditUserRole, setAuditUserRole] = useState('all');
   const [auditMinAmount, setAuditMinAmount] = useState('');
   const [auditMaxAmount, setAuditMaxAmount] = useState('');
+  const [auditSearch, setAuditSearch] = useState('');
   const AUDIT_PAGE_SIZE = 10;
 
   const fetchData = useCallback(async () => {
@@ -132,9 +131,10 @@ export const Finance = () => {
     });
     setDbTransactions(mockFinances.recentTransactions.map(tx => ({
       id: tx.id,
-      student_name: tx.student,
+      category: tx.category || 'General',
+      description: tx.description || 'No description',
       amount: tx.amount,
-      type: 'Income',
+      type: tx.type || 'Income',
       date: tx.date,
       verified_by: tx.verifiedBy,
       branch_name: 'Main'
@@ -154,9 +154,9 @@ export const Finance = () => {
   };
 
   const summaryApprovers: Record<string, string> = {
-    S1: 'W/ro Selam (Finance Clerk)',
-    S2: 'Ato Mekonnen (School Admin)',
-    S3: 'W/ro Hana (Procurement Officer)'
+    S1: 'W/ro Tigist (Finance Manager)',
+    S2: 'Ato Dawit (Chief Accountant)',
+    S3: 'W/ro Genet (Accounts Clerk)'
   };
 
   const summariesWithApproval: SummaryWithApproval[] = mockFinances.summaries.map((summary) => ({
@@ -172,7 +172,7 @@ export const Finance = () => {
       studentName: student?.name || 'Unknown Student',
       studentId: id,
       section: student?.grade || 'N/A',
-      category: 'Fees' as const,
+      category: 'Student Fees',
       direction: log.status ? 'In' as const : 'Out' as const,
       actionLabel: log.status ? 'Fee Payment Approved' : 'Fee Status Reversed'
     }));
@@ -182,13 +182,13 @@ export const Finance = () => {
     .filter((summary) => summary.category !== 'Student Fees')
     .map((summary) => ({
       status: summary.type === 'Income',
-      modifiedBy: 'Ato Girma',
+      modifiedBy: 'Ato Yosef (Cashier)',
       approverName: summary.approvedBy,
       timestamp: summary.timestamp,
       studentName: summary.description,
       studentId: summary.id,
       section: 'N/A',
-      category: 'Staff',
+      category: summary.category,
       direction: summary.type === 'Income' ? 'In' : 'Out',
       actionLabel: summary.type === 'Income' ? 'Income Recorded' : 'Expense Recorded'
     }));
@@ -201,9 +201,9 @@ export const Finance = () => {
 
   const filteredAuditLogs = allAuditLogs.filter((log) => {
     const matchesSearch =
-      log.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.modifiedBy.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.approverName.toLowerCase().includes(searchTerm.toLowerCase());
+      log.studentName.toLowerCase().includes(auditSearch.toLowerCase()) ||
+      log.modifiedBy.toLowerCase().includes(auditSearch.toLowerCase()) ||
+      log.approverName.toLowerCase().includes(auditSearch.toLowerCase());
     const matchesSectionFilter = auditSection === 'all' || log.section === auditSection;
     return (
       log.direction === auditFilter &&
@@ -453,25 +453,36 @@ export const Finance = () => {
 
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('finance.category')}</label>
-                      <div className="flex bg-slate-50 dark:bg-slate-800 p-1 rounded-xl border border-slate-100 dark:border-slate-700">
-                        <button
-                          onClick={() => { setAuditCategory('Fees'); setAuditPage(0); }}
-                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all duration-200 ${auditCategory === 'Fees' ? 'bg-blue-600 text-white shadow-md shadow-blue-200 dark:shadow-none' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                          🎓 Fees
-                        </button>
-                        <button
-                          onClick={() => { setAuditCategory('Staff'); setAuditPage(0); }}
-                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all duration-200 ${auditCategory === 'Staff' ? 'bg-purple-600 text-white shadow-md shadow-purple-200 dark:shadow-none' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                          👤 Staff
-                        </button>
+                      <div className="flex bg-slate-50 dark:bg-slate-800 p-1 rounded-xl border border-slate-100 dark:border-slate-700 overflow-x-auto no-scrollbar">
+                        {['Student Fees', 'Staff Salaries', 'Utilities', 'Materials', 'Other'].map((cat) => (
+                          <button
+                            key={cat}
+                            onClick={() => { setAuditCategory(cat); setAuditPage(0); }}
+                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all duration-200 whitespace-nowrap ${auditCategory === cat ? 'bg-blue-600 text-white shadow-md shadow-blue-200 dark:shadow-none' : 'text-slate-500 hover:text-slate-700'}`}
+                          >
+                            {cat}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   </div>
 
                   {/* Row 2: Dropdowns + Amount Range */}
                   <div className="flex flex-wrap items-end gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Search Name / Ref</label>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                        <input
+                          type="text"
+                          placeholder="Search person or description..."
+                          value={auditSearch}
+                          onChange={(e) => { setAuditSearch(e.target.value); setAuditPage(0); }}
+                          className="pl-8 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-all w-64"
+                        />
+                      </div>
+                    </div>
+
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Section</label>
                       <div className="relative">
@@ -489,40 +500,9 @@ export const Finance = () => {
                       </div>
                     </div>
 
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Action</label>
-                      <div className="relative">
-                        <select
-                          value={auditActionType}
-                          onChange={(e) => { setAuditActionType(e.target.value); setAuditPage(0); }}
-                          className="appearance-none pl-3 pr-8 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-all cursor-pointer"
-                        >
-                          <option value="all">All Actions</option>
-                          <option value="Created">Created</option>
-                          <option value="Updated">Updated</option>
-                          <option value="Deleted">Deleted</option>
-                          <option value="Refunded">Refunded</option>
-                        </select>
-                        <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                      </div>
-                    </div>
 
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Role</label>
-                      <div className="relative">
-                        <select
-                          value={auditUserRole}
-                          onChange={(e) => { setAuditUserRole(e.target.value); setAuditPage(0); }}
-                          className="appearance-none pl-3 pr-8 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-all cursor-pointer"
-                        >
-                          <option value="all">All Roles</option>
-                          <option value="Admin">Admin</option>
-                          <option value="Accountant">Accountant</option>
-                          <option value="Vice Principal">Vice Principal</option>
-                        </select>
-                        <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                      </div>
-                    </div>
+
+
 
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Amount Range</label>
@@ -751,15 +731,8 @@ export const Finance = () => {
             <table className="w-full text-left text-sm min-w-[700px]">
               <thead className="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
                 <tr>
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                    {isAdmin ? 'Ledger Category' : 'Transaction ID'}
-                  </th>
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                    {isAdmin ? 'Description' : 'Student Name'}
-                  </th>
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                    {isAdmin ? 'Meta Details' : 'Payment Type'}
-                  </th>
+                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Category</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Description / Reference</th>
                   <th className="px-6 py-5 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Verified By</th>
                   <th className="px-6 py-5 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Date</th>
                   <th className="px-6 py-5 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Amount (ETB)</th>
@@ -776,18 +749,16 @@ export const Finance = () => {
                           }`}>
                             {tx.type === 'Income' ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
                           </div>
-                          <span className="font-medium text-slate-800">{tx.type}</span>
+                          <div>
+                            <p className="font-bold text-slate-800 text-xs uppercase tracking-tight">{tx.category}</p>
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{tx.type}</span>
+                          </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-slate-600">{tx.student_name}</td>
-                      <td className="px-6 py-4">
-                        <span className="text-xs text-slate-500">
-                          Branch: {tx.branch_name}
-                        </span>
-                      </td>
+                      <td className="px-6 py-4 text-slate-600 font-medium">{tx.description}</td>
                       <td className="px-6 py-4 text-slate-500 font-semibold">{tx.verified_by}</td>
                       <td className="px-6 py-4 text-slate-500">{formatDateTime(tx.date)}</td>
-                      <td className={`px-6 py-4 text-right font-bold ${
+                      <td className={`px-6 py-4 text-right font-black ${
                         tx.type === 'Income' ? 'text-emerald-600' : 'text-rose-600'
                       }`}>
                         {tx.type === 'Expense' && '-'}
@@ -805,13 +776,16 @@ export const Finance = () => {
                           }`}>
                             {tx.type === 'Income' ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
                           </div>
-                          <span className="font-medium text-slate-800">{tx.type}</span>
+                          <div>
+                            <p className="font-bold text-slate-800 text-xs uppercase tracking-tight">{tx.category}</p>
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{tx.type}</span>
+                          </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-slate-600">{tx.student_name}</td>
+                      <td className="px-6 py-4 text-slate-600 font-medium">{tx.description}</td>
                       <td className="px-6 py-4 text-slate-500 font-semibold">{tx.verified_by}</td>
                       <td className="px-6 py-4 text-slate-500">{formatDateTime(tx.date)}</td>
-                      <td className={`px-6 py-4 text-right font-bold ${
+                      <td className={`px-6 py-4 text-right font-black ${
                         tx.type === 'Income' ? 'text-emerald-600' : 'text-rose-600'
                       }`}>
                         {tx.type === 'Expense' && '-'}
@@ -908,7 +882,8 @@ export const Finance = () => {
               const f = new FormData(e.currentTarget);
               const data = {
                 id: 'TX' + Date.now(),
-                student_name: f.get('desc') as string,
+                category: txCategory === 'Custom' ? customCategory : txCategory,
+                description: f.get('desc') as string,
                 amount: Number(f.get('amount')),
                 type: f.get('type') as string,
                 date: new Date().toISOString(),
