@@ -27,6 +27,7 @@ export const ScheduleBuilder = () => {
   const [configView, setConfigView] = useState<'edit' | 'summary'>('edit');
   const [showGeneratedSchedule, setShowGeneratedSchedule] = useState(false);
   const [addCourseDropdown, setAddCourseDropdown] = useState<string | null>(null);
+  const [showAcademicConfig, setShowAcademicConfig] = useState(false);
 
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -129,13 +130,19 @@ export const ScheduleBuilder = () => {
       </div>
 
       {/* ═══════ ACADEMIC CONFIGURATION ═══════ */}
-      <div className="p-8 bg-indigo-50/50 dark:bg-indigo-900/10 rounded-[2.5rem] border border-indigo-100 dark:border-indigo-900/30 space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-black text-xs uppercase tracking-widest">
-            <GraduationCap size={18} />
-            <span>School Academic Structure</span>
+      <div className="bg-indigo-50/50 dark:bg-indigo-900/10 rounded-[2.5rem] border border-indigo-100 dark:border-indigo-900/30 overflow-hidden transition-all">
+        <button onClick={() => setShowAcademicConfig(!showAcademicConfig)} className="w-full flex items-center justify-between p-8 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 rounded-2xl"><GraduationCap size={22} /></div>
+            <div className="text-left">
+              <p className="font-black text-slate-800 dark:text-white text-lg">School Academic Structure</p>
+              <p className="text-[10px] text-indigo-500 dark:text-indigo-400 font-bold uppercase tracking-widest">{grades.length} Grades • {totalSections} Sections • {assignedCount}/{totalCourseSlots} Teachers Assigned</p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+          {showAcademicConfig ? <ChevronDown size={20} className="text-indigo-400" /> : <ChevronRight size={20} className="text-indigo-400" />}
+        </button>
+        {showAcademicConfig && <div className="px-8 pb-8 space-y-6 border-t border-indigo-100 dark:border-indigo-900/30 pt-6">
+        <div className="flex items-center justify-end gap-2">
             <button onClick={() => setConfigView(configView === 'edit' ? 'summary' : 'edit')} className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 rounded-xl text-xs font-black uppercase hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all">
               <Eye size={14} /> {configView === 'edit' ? 'View Summary' : 'Back to Edit'}
             </button>
@@ -143,7 +150,6 @@ export const ScheduleBuilder = () => {
               <Plus size={16} /> Add Grade
             </button>
           </div>
-        </div>
 
         {configView === 'edit' ? (
           <div className="space-y-3">
@@ -293,6 +299,7 @@ export const ScheduleBuilder = () => {
             ))}
           </div>
         )}
+        </div>}
       </div>
 
       {/* Teacher Unavailability Section */}
