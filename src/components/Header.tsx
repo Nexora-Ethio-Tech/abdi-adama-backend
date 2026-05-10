@@ -48,6 +48,7 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
   const { t, i18n } = useTranslation();
   const [showCalendar, setShowCalendar] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isLangOpen, setIsLangOpen] = useState(false);
 
   const handleLanguageChange = (lng: string) => {
     i18n.changeLanguage(lng);
@@ -107,17 +108,52 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
             />
           </div>
 
-          {/* Language */}
-          <select
-            value={i18n.language}
-            onChange={(e) => handleLanguageChange(e.target.value)}
-            disabled={isExamLockedDown}
-            className={cn("bg-transparent text-xs font-bold text-slate-600 dark:text-slate-300 outline-none cursor-pointer hover:text-school-primary transition-colors", isExamLockedDown && "opacity-50 cursor-not-allowed")}
-          >
-            <option value="en">EN</option>
-            <option value="am">AM</option>
-            <option value="om">OM</option>
-          </select>
+          {/* Language Switcher */}
+          <div className="relative">
+            <button
+              onClick={() => setIsLangOpen(!isLangOpen)}
+              disabled={isExamLockedDown}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-xl transition-all",
+                "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700",
+                isExamLockedDown && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              <span className="text-xs font-black uppercase tracking-widest">{i18n.language}</span>
+              <ChevronDown size={14} className={cn("transition-transform", isLangOpen && "rotate-180")} />
+            </button>
+
+            {isLangOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setIsLangOpen(false)} />
+                <div className="absolute top-full right-0 mt-2 w-32 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200/50 dark:border-slate-800/50 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="p-1">
+                    {[
+                      { code: 'en', label: 'English' },
+                      { code: 'am', label: 'አማርኛ' },
+                      { code: 'om', label: 'Oromoo' }
+                    ].map((lang) => (
+                      <button
+                        key={lang.code}
+                        onClick={() => {
+                          handleLanguageChange(lang.code);
+                          setIsLangOpen(false);
+                        }}
+                        className={cn(
+                          "w-full px-4 py-2 text-left text-xs font-bold rounded-xl transition-all",
+                          i18n.language === lang.code
+                            ? "bg-school-primary text-white"
+                            : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        )}
+                      >
+                        {lang.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Theme */}
           <button

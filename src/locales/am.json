@@ -13,6 +13,8 @@
     "teachers": "መምህራን",
     "attendance": "ክትትል",
     "scheduleBuilder": "የጊዜ ሰሌዳ ማውጫ",
+    "academicStructure": "የትምህርት መዋቅር",
+    "admissions": "መግቢያ (Admissions)",
     "inventory": "ንብረት",
     "finance": "ፋይናንስ",
     "settings": "ቅንብሮች",
@@ -347,5 +349,51 @@
     "noLogs": "ለዚህ ተማሪ ምንም የኮሙኒኬሽን ደብተር አልተገኘም።",
     "selectYear": "ያለፉ የአፈጻጸም ታሪኮችን ለማየት የትምህርት ዘመኑን ይምረጡ።",
     "noRecords": "ለ EC {{year}} ምንም መዝገቦች አልተገኙም"
+  },
+  "schedule": {
+    "title": "የጊዜ ሰሌዳ አርክቴክት",
+    "subtitle": "የኢትዮጵያ የሁለተኛ ደረጃ ትምህርት ደረጃዎች",
+    "generateBtn": "የጊዜ ሰሌዳውን አውጣ",
+    "startTime": "የመጀመሪያ ሰዓት",
+    "endTime": "የመዝጊያ ሰዓት",
+    "periodsPerDay": "በቀን ያሉ ክፍለ ጊዜያት",
+    "stats": {
+      "sections": "ክፍሎች",
+      "teachersAssigned": "የተመደቡ መምህራን"
+    },
+    "academicStructure": "የትምህርት ቤቱ የትምህርት መዋቅር",
+    "addGrade": "ክፍል አክል",
+    "viewSummary": "ማጠቃለያውን እይ",
+    "backToEdit": "ወደ ማስተካከያ ተመለስ",
+    "grade": "ክፍል",
+    "sections": "ክፍሎች",
+    "courses": "ትምህርቶች",
+    "addCourse": "ትምህርት አክል",
+    "teacherAssignment": "የመምህራን ምደባ",
+    "subject": "ትምህርት",
+    "unassigned": "ያልተመደበ",
+    "removeGrade": "ክፍሉን ሰርዝ",
+    "summary": {
+      "review": "ክለሳ፦ ሁሉም ክፍሎች፣ የክፍል ስሞች፣ ትምህርቶች እና የተመደቡ መምህራን"
+    },
+    "constraints": {
+      "title": "የመምህራን ገደቦች",
+      "subtitle": "የግል አለመገኘት",
+      "searchPlaceholder": "መምህር ፈልግ...",
+      "noTeacher": "ምንም መምህር አልተመረጠም",
+      "noTeacherDesc": "የመምህሩን ሳምንታዊ አለመገኘት ለማስተካከል ከመዝገቡ ውስጥ መምህር ይምረጡ።",
+      "weeklyBlocking": "ሳምንታዊ ክፍለ ጊዜ መቆለፊያ",
+      "pedagogical": "ፔዳጎጂካዊ አመክንዮ",
+      "maxConsecutive": "ከፍተኛው ተከታታይ ክፍለ ጊዜያት",
+      "preventsFatigue": "መምህራን እንዳይዝሉ ይረዳል",
+      "subjectDistribution": "የትምህርት ስርጭት",
+      "evenSpread": "በሳምንቱ ውስጥ በእኩል የተከፋፈለ",
+      "frequencies": "የክፍለ ጊዜ ድግግሞሽ"
+    },
+    "modal": {
+      "title": "የወጣው የጊዜ ሰሌዳ",
+      "export": "ኦፊሴላዊ PDF አውጣ",
+      "period": "ክፍለ ጊዜ"
+    }
   }
 }

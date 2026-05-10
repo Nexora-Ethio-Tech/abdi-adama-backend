@@ -13,6 +13,8 @@
     "teachers": "Teachers",
     "attendance": "Attendance",
     "scheduleBuilder": "Schedule Builder",
+    "academicStructure": "Academic Structure",
+    "admissions": "Admissions",
     "inventory": "Inventory",
     "finance": "Finance",
     "settings": "Settings",
@@ -347,5 +349,51 @@
     "noLogs": "No communication logs found for this student.",
     "selectYear": "Select an academic year to view historical performance.",
     "noRecords": "No records found for EC {{year}}"
+  },
+  "schedule": {
+    "title": "Schedule Architect",
+    "subtitle": "Ethiopian High School Standards",
+    "generateBtn": "Generate Timetable",
+    "startTime": "Start Time",
+    "endTime": "End Time",
+    "periodsPerDay": "Periods per Day",
+    "stats": {
+      "sections": "Sections",
+      "teachersAssigned": "Teachers Assigned"
+    },
+    "academicStructure": "School Academic Structure",
+    "addGrade": "Add Grade",
+    "viewSummary": "View Summary",
+    "backToEdit": "Back to Edit",
+    "grade": "Grade",
+    "sections": "Sections",
+    "courses": "Courses",
+    "addCourse": "Add Course",
+    "teacherAssignment": "Teacher Assignment",
+    "subject": "Subject",
+    "unassigned": "Unassigned",
+    "removeGrade": "Remove Grade",
+    "summary": {
+      "review": "Review: All grades, sections, courses and assigned teachers"
+    },
+    "constraints": {
+      "title": "Teacher Constraints",
+      "subtitle": "Individual Unavailability",
+      "searchPlaceholder": "Search teacher...",
+      "noTeacher": "No Teacher Selected",
+      "noTeacherDesc": "Choose a teacher from the list to configure their weekly unavailability sessions.",
+      "weeklyBlocking": "Weekly Session Blocking",
+      "pedagogical": "Pedagogical Logic",
+      "maxConsecutive": "Max Consecutive Periods",
+      "preventsFatigue": "Prevents teacher fatigue",
+      "subjectDistribution": "Subject Distribution",
+      "evenSpread": "Even spread across week",
+      "frequencies": "Session Frequencies"
+    },
+    "modal": {
+      "title": "Generated Timetable",
+      "export": "Export Official PDF",
+      "period": "Period"
+    }
   }
 }

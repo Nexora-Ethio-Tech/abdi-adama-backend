@@ -13,6 +13,8 @@
     "teachers": "Barsiisota",
     "attendance": "Hordoffii",
     "scheduleBuilder": "Sagantaa Baasaa",
+    "academicStructure": "Caasaa Barnootaa",
+    "admissions": "Seensa (Admissions)",
     "inventory": "Qabeenya",
     "finance": "Faayinaansii",
     "settings": "Sajoo",
@@ -347,5 +349,51 @@
     "noLogs": "Barataa kanaaf kitaabni qunnamtii hin argamne.",
     "selectYear": "Seenaa bu'aa barnootaa arguuf waggaa barnootaa filadhu.",
     "noRecords": "Waggaa EC {{year}} kessatti galmeen hin argamne"
+  },
+  "schedule": {
+    "title": "Dizayinera Sagantaa",
+    "subtitle": "Sadarkaa Mana Barumsaa Sadarkaa 2ffaa Itoophiyaa",
+    "generateBtn": "Sagantaa Baasi",
+    "startTime": "Sa'aatii Jalqabaa",
+    "endTime": "Sa'aatii Xumuraa",
+    "periodsPerDay": "Kutaa Barnootaa Guyyaatti",
+    "stats": {
+      "sections": "Kutaalee",
+      "teachersAssigned": "Barsiisota Ramadaman"
+    },
+    "academicStructure": "Caasaa Barnootaa Mana Barumsaa",
+    "addGrade": "Kutaa Addi",
+    "viewSummary": "Gabaasa Gabaabaa Ilaali",
+    "backToEdit": "Gara Sirreessaatti Deebi'i",
+    "grade": "Kutaa",
+    "sections": "Kutaalee",
+    "courses": "Barnoota",
+    "addCourse": "Barnoota Addi",
+    "teacherAssignment": "Ramaddii Barsiisotaa",
+    "subject": "Barnoota",
+    "unassigned": "Kan hin ramadamne",
+    "removeGrade": "Kutaa Haqi",
+    "summary": {
+      "review": "Xiinxala: Kutaalee, barnootaa fi barsiisota ramadaman hunda"
+    },
+    "constraints": {
+      "title": "Daqiiqaa Barsiisotaa",
+      "subtitle": "Yeroo barsiisaan hin jirre",
+      "searchPlaceholder": "Barsiisaa barbaadi...",
+      "noTeacher": "Barsiisaan hin filatamne",
+      "noTeacherDesc": "Yeroo barsiisaan torban keessa hin jirre sirreessuuf barsiisaa filadhu.",
+      "weeklyBlocking": "Cufiinsa Torbanii",
+      "pedagogical": "Yaada Barnootaa",
+      "maxConsecutive": "Kutaa Walitti Aanu",
+      "preventsFatigue": "Barsiisaan akka hin dadhabne gargaara",
+      "subjectDistribution": "Raabsa Barnootaa",
+      "evenSpread": "Torban keessatti wal-qixa raabsame",
+      "frequencies": "Daggala Kutaa"
+    },
+    "modal": {
+      "title": "Sagantaa Ba'e",
+      "export": "PDF Baasi",
+      "period": "Kutaa"
+    }
   }
 }
