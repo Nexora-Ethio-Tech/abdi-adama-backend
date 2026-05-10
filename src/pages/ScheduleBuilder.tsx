@@ -508,5 +508,6 @@ export const ScheduleBuilder = () => {
         </div>
       )}
     </div>
+  </div>
   );
 };

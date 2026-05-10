@@ -11,7 +11,6 @@ export const Attendance = () => {
   const isAdmin = role === 'school-admin' || role === 'super-admin';
   const isVP = role === 'vice-principal';
   const [selectedGrade, setSelectedGrade] = useState('10A');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendance, setAttendance] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
   const [showSubModal, setShowSubModal] = useState(false);
   const [absentTeacher, setAbsentTeacher] = useState<any>(null);
