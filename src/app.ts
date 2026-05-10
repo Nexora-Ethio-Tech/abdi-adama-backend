@@ -7,6 +7,7 @@ import logger from './utils/logger';
 import authRoutes from './routes/auth.routes';
 import superAdminRoutes from './routes/superAdmin.routes';
 import schoolAdminRoutes from './routes/schoolAdmin.routes';
+import financeClerkRoutes from './routes/financeClerk.routes';
 
 const app = express();
 
@@ -66,6 +67,7 @@ app.get('/health', (_req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/school-admin', schoolAdminRoutes);
+app.use('/api/finance-clerk', financeClerkRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({
