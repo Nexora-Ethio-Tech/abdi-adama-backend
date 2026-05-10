@@ -1,7 +1,7 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/abdiadam/public_html/
+    - export DEPLOYPATH=/home/abdiadam/repositories/abdi-adama-frontend
     # Delete default cPanel and Sitejet junk files
     - /bin/rm -f $DEPLOYPATH/default.php $DEPLOYPATH/default.html $DEPLOYPATH/index.php
     # Deploy frontend static files to public_html root
