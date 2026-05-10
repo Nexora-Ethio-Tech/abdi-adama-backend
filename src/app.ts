@@ -10,6 +10,7 @@ import schoolAdminRoutes from './routes/schoolAdmin.routes';
 import financeClerkRoutes from './routes/financeClerk.routes';
 import teacherRoutes from './routes/teacher.routes';
 import vicePrincipalRoutes from './routes/vicePrincipal.routes';
+import auditorRoutes from './routes/auditor.routes';
 
 const app = express();
 
@@ -72,6 +73,7 @@ app.use('/api/school-admin', schoolAdminRoutes);
 app.use('/api/finance-clerk', financeClerkRoutes);
 app.use('/api/teacher', teacherRoutes);
 app.use('/api/vice-principal', vicePrincipalRoutes);
+app.use('/api/auditor', auditorRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({

@@ -30,7 +30,7 @@ export const schemas = {
   createUser: Joi.object({
     name: Joi.string().min(2).max(150).required(),
     email: Joi.string().email().required(),
-    role: Joi.string().required(),
+    role: Joi.string().valid('teacher', 'student', 'parent', 'finance-clerk', 'driver', 'librarian', 'clinic-admin').required(),
     branchId: Joi.string().uuid().optional(),
     password: Joi.string().min(8).optional(),
     grade: Joi.string().optional()
