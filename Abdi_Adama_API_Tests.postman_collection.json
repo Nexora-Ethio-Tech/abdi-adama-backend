@@ -1,0 +1,774 @@
+{
+  "info": {
+    "name": "Abdi Adama School Management API",
+    "description": "Complete API testing collection for all 6 role modules",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5001/api",
+      "type": "string"
+    },
+    {
+      "key": "superAdminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "schoolAdminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "teacherToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "financeClerkToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vicePrincipalToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "auditorToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "branchId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "classId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "studentId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Authentication",
+      "item": [
+        {
+          "name": "Login Super Admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('superAdminToken', response.data.accessToken);",
+                  "    pm.test('Login successful', () => {",
+                  "        pm.expect(response.success).to.be.true;",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"abdiadamaschooloffice@gmail.com\",\n  \"password\": \"SuperAdmin@2026\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Login School Admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('schoolAdminToken', response.data.accessToken);",
+                  "    pm.collectionVariables.set('branchId', response.data.user.branch_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"65plante@gmail.com\",\n  \"password\": \"SchoolAdmin@2026\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Login Vice Principal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('vicePrincipalToken', response.data.accessToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"valerioero@gmail.com\",\n  \"password\": \"VicePrincipal@2026\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Login Auditor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('auditorToken', response.data.accessToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"hailegit35@gmail.com\",\n  \"password\": \"Auditor@2026\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{superAdminToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "me"]
+            }
+          }
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{superAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"SuperAdmin@2026\",\n  \"newPassword\": \"NewPassword@2026\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/change-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "change-password"]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{superAdminToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "logout"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Super Admin",
+      "item": [
+        {
+          "name": "Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{superAdminToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/super-admin/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["super-admin", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Get All Users",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{superAdminToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/super-admin/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["super-admin", "users"]
+            }
+          }
+        },
+        {
+          "name": "Create School Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{superAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New School Admin\",\n  \"email\": \"newadmin@test.com\",\n  \"branchId\": \"{{branchId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/super-admin/create-school-admin",
+              "host": ["{{baseUrl}}"],
+              "path": ["super-admin", "create-school-admin"]
+            }
+          }
+        },
+        {
+          "name": "Create Vice Principal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{superAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New Vice Principal\",\n  \"email\": \"newvp@test.com\",\n  \"branchId\": \"{{branchId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/super-admin/create-vice-principal",
+              "host": ["{{baseUrl}}"],
+              "path": ["super-admin", "create-vice-principal"]
+            }
+          }
+        },
+        {
+          "name": "Create Auditor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{superAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New Auditor\",\n  \"email\": \"newauditor@test.com\",\n  \"branchId\": \"{{branchId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/super-admin/create-auditor",
+              "host": ["{{baseUrl}}"],
+              "path": ["super-admin", "create-auditor"]
+            }
+          }
+        },
+        {
+          "name": "Get All Branches",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{superAdminToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/super-admin/branches",
+              "host": ["{{baseUrl}}"],
+              "path": ["super-admin", "branches"]
+            }
+          }
+        },
+        {
+          "name": "Create Branch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{superAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Branch\",\n  \"code\": \"TB\",\n  \"phone\": \"+251911234567\",\n  \"email\": \"testbranch@school.com\",\n  \"address\": \"Test Address\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/super-admin/branches",
+              "host": ["{{baseUrl}}"],
+              "path": ["super-admin", "branches"]
+            }
+          }
+        },
+        {
+          "name": "Get System Report",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{superAdminToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/super-admin/reports/system",
+              "host": ["{{baseUrl}}"],
+              "path": ["super-admin", "reports", "system"]
+            }
+          }
+        },
+        {
+          "name": "Approve User",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{superAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"Approved\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/super-admin/users/{{userId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["super-admin", "users", "{{userId}}", "status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. School Admin",
+      "item": [
+        {
+          "name": "Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{schoolAdminToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Register Teacher",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{schoolAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Teacher\",\n  \"email\": \"teacher@test.com\",\n  \"role\": \"teacher\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/register-user",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "register-user"]
+            }
+          }
+        },
+        {
+          "name": "Register Student",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{schoolAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Student\",\n  \"email\": \"student@test.com\",\n  \"role\": \"student\",\n  \"grade\": \"10\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/register-user",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "register-user"]
+            }
+          }
+        },
+        {
+          "name": "Register Finance Clerk",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{schoolAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Finance Clerk\",\n  \"email\": \"clerk@test.com\",\n  \"role\": \"finance-clerk\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/register-user",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "register-user"]
+            }
+          }
+        },
+        {
+          "name": "Create Class",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{schoolAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Grade 10-A\",\n  \"capacity\": 30,\n  \"section\": \"A\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/classes",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "classes"]
+            }
+          }
+        },
+        {
+          "name": "Get All Classes",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{schoolAdminToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/classes",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "classes"]
+            }
+          }
+        },
+        {
+          "name": "Create Academic Year",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{schoolAdminToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"yearName\": \"2025/2026\",\n  \"startDate\": \"2025-09-01\",\n  \"endDate\": \"2026-06-30\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/academic-years",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "academic-years"]
+            }
+          }
+        },
+        {
+          "name": "Get Branch Users",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{schoolAdminToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "users"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Finance Clerk",
+      "item": [
+        {
+          "name": "Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{financeClerkToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/finance-clerk/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["finance-clerk", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Get All Payments",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{financeClerkToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/finance-clerk/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["finance-clerk", "payments"]
+            }
+          }
+        },
+        {
+          "name": "Record Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{financeClerkToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"studentId\": \"{{studentId}}\",\n  \"amount\": 5000,\n  \"paymentType\": \"Tuition\",\n  \"paymentMethod\": \"Cash\",\n  \"paymentDate\": \"2025-01-15\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/finance-clerk/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["finance-clerk", "payments"]
+            }
+          }
+        },
+        {
+          "name": "Get Overdue Payments",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{financeClerkToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/finance-clerk/overdue-payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["finance-clerk", "overdue-payments"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Teacher",
+      "item": [
+        {
+          "name": "Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{teacherToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/teacher/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["teacher", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Get Schedule",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{teacherToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/teacher/schedule",
+              "host": ["{{baseUrl}}"],
+              "path": ["teacher", "schedule"]
+            }
+          }
+        },
+        {
+          "name": "Mark Attendance",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{teacherToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"classId\": \"{{classId}}\",\n  \"date\": \"2025-01-15\",\n  \"attendanceRecords\": [\n    {\"studentId\": \"{{studentId}}\", \"status\": \"Present\"}\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/teacher/attendance",
+              "host": ["{{baseUrl}}"],
+              "path": ["teacher", "attendance"]
+            }
+          }
+        },
+        {
+          "name": "Submit Lesson Plan",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{teacherToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"weekNumber\": 1,\n  \"subject\": \"Mathematics\",\n  \"topics\": \"Algebra basics\",\n  \"objectives\": \"Understand variables\",\n  \"activities\": \"Practice problems\",\n  \"assessmentMethods\": \"Quiz\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/teacher/lesson-plans",
+              "host": ["{{baseUrl}}"],
+              "path": ["teacher", "lesson-plans"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Vice Principal",
+      "item": [
+        {
+          "name": "Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{vicePrincipalToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/vice-principal/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["vice-principal", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Get Absence Queue",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{vicePrincipalToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/vice-principal/absence-queue",
+              "host": ["{{baseUrl}}"],
+              "path": ["vice-principal", "absence-queue"]
+            }
+          }
+        },
+        {
+          "name": "Get Pending Lesson Plans",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{vicePrincipalToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/vice-principal/lesson-plans/pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["vice-principal", "lesson-plans", "pending"]
+            }
+          }
+        },
+        {
+          "name": "Get Teacher Monitoring",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{vicePrincipalToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/vice-principal/teacher-monitoring",
+              "host": ["{{baseUrl}}"],
+              "path": ["vice-principal", "teacher-monitoring"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Auditor",
+      "item": [
+        {
+          "name": "Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{auditorToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/auditor/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["auditor", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Get All Payments",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{auditorToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/auditor/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["auditor", "payments"]
+            }
+          }
+        },
+        {
+          "name": "Get Fee Reduction Requests",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{auditorToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/auditor/fee-reductions",
+              "host": ["{{baseUrl}}"],
+              "path": ["auditor", "fee-reductions"]
+            }
+          }
+        },
+        {
+          "name": "Approve Fee Reduction",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{auditorToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"Approved\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auditor/fee-reductions/{{studentId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["auditor", "fee-reductions", "{{studentId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "Get Financial Report",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{auditorToken}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/auditor/financial-report?startDate=2025-01-01&endDate=2025-12-31",
+              "host": ["{{baseUrl}}"],
+              "path": ["auditor", "financial-report"],
+              "query": [
+                {"key": "startDate", "value": "2025-01-01"},
+                {"key": "endDate", "value": "2025-12-31"}
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
