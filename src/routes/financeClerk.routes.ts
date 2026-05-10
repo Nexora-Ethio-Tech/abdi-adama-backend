@@ -1,15 +1,16 @@
 import { Router } from 'express';
 import financeClerkController from '../controllers/financeClerk.controller';
 import { authenticate } from '../middleware/auth';
-import { requireRole } from '../middleware/roleGuard';
+import { roleGuard } from '../middleware/roleGuard';
 import { validate } from '../middleware/validator';
+import { UserRole } from '../types';
 import Joi from 'joi';
 
 const router = Router();
 
 // All routes require authentication and finance-clerk role
 router.use(authenticate);
-router.use(requireRole(['finance-clerk']));
+router.use(roleGuard([UserRole.FINANCE_CLERK]));
 
 // Validation schemas
 const recordPaymentSchema = Joi.object({

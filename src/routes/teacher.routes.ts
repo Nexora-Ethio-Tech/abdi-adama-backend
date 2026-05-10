@@ -1,15 +1,16 @@
 import { Router } from 'express';
 import teacherController from '../controllers/teacher.controller';
 import { authenticate } from '../middleware/auth';
-import { requireRole } from '../middleware/roleGuard';
+import { roleGuard } from '../middleware/roleGuard';
 import { validate } from '../middleware/validator';
+import { UserRole } from '../types';
 import Joi from 'joi';
 
 const router = Router();
 
 // All routes require authentication and teacher role
 router.use(authenticate);
-router.use(requireRole(['teacher']));
+router.use(roleGuard([UserRole.TEACHER]));
 
 // Validation schemas
 const markAttendanceSchema = Joi.object({

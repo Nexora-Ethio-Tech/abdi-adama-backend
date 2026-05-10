@@ -8,7 +8,7 @@ class FinanceClerkController {
     try {
       const { studentId, amount, type, date } = req.body;
       const verifiedBy = req.user!.name;
-      const branchId = req.user!.branchId;
+      const branchId = req.user!.branch_id;
 
       const payment = await financeClerkService.recordPayment({
         studentId,
@@ -16,7 +16,7 @@ class FinanceClerkController {
         type,
         date,
         verifiedBy,
-        branchId
+        branchId: branchId!
       });
 
       res.status(201).json({
@@ -47,7 +47,7 @@ class FinanceClerkController {
   // Get all students with fee information
   async getStudentsWithFees(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const branchId = req.user!.branchId;
+      const branchId = req.user!.branch_id;
       const { search, feeStatus } = req.query;
 
       const students = await financeClerkService.getStudentsWithFees(
@@ -92,7 +92,7 @@ class FinanceClerkController {
   // Get dashboard statistics
   async getDashboard(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const branchId = req.user!.branchId;
+      const branchId = req.user!.branch_id;
       const stats = await financeClerkService.getDashboardStats(branchId!);
 
       res.json({
@@ -107,7 +107,7 @@ class FinanceClerkController {
   // Get overdue payments
   async getOverduePayments(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const branchId = req.user!.branchId;
+      const branchId = req.user!.branch_id;
       const overdueStudents = await financeClerkService.getOverduePayments(branchId!);
 
       res.json({
@@ -122,7 +122,7 @@ class FinanceClerkController {
   // Get daily collection report
   async getDailyReport(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const branchId = req.user!.branchId;
+      const branchId = req.user!.branch_id;
       const { date } = req.query;
 
       const report = await financeClerkService.getDailyReport(
