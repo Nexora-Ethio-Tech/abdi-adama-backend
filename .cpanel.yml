@@ -1,17 +1,9 @@
----
 deployment:
   tasks:
     - export DEPLOYPATH=/home/abdiadam/repositories/abdi-adama-frontend
     # Delete default cPanel and Sitejet junk files
     - /bin/rm -f $DEPLOYPATH/default.php $DEPLOYPATH/default.html $DEPLOYPATH/index.php
-    # Deploy frontend static files to public_html root
-    - /bin/cp -R frontend/dist/* $DEPLOYPATH
+    # Deploy frontend static files to the target directory
+    - /bin/cp -R dist/* $DEPLOYPATH
     # Deploy .htaccess for HTTPS enforcement
     - /bin/cp .htaccess $DEPLOYPATH/.htaccess
-    # Deploy backend (compiled dist + package.json + .env)
-    - /bin/mkdir -p $DEPLOYPATH/backend
-    - /bin/cp -R backend/dist $DEPLOYPATH/backend/
-    - /bin/cp backend/package.json $DEPLOYPATH/backend/
-    - /bin/cp backend/app.cjs $DEPLOYPATH/backend/
-    # Install production dependencies on server
-    - cd $DEPLOYPATH/backend && /usr/local/bin/npm install --omit=dev

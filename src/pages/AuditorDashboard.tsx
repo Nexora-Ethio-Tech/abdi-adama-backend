@@ -1,15 +1,16 @@
 
 import { useState, useEffect } from 'react';
 import { 
-  Wallet, Users, AlertCircle, CheckCircle, XCircle, Search, 
+  Wallet, Users, AlertCircle, CheckCircle, XCircle, Search,
   Download, Clock, ShieldCheck,
-  ArrowUpRight, Eye
+  Eye
 } from 'lucide-react';
 // import { useUser } from '../context/UserContext';
 
 interface Transaction {
   id: string;
-  student_name: string;
+  category: string;
+  description: string;
   amount: number;
   type: string;
   date: string;
@@ -196,6 +197,7 @@ export const AuditorDashboard = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {transactions.map((tx) => (
                   <tr key={tx.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-3">
