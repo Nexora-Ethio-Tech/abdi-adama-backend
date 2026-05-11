@@ -106,15 +106,15 @@ class SuperAdminService {
       SELECT 
         COUNT(*) as total_transactions,
         SUM(amount) as total_collected
-      FROM payments
+      FROM finance_transactions
     `);
 
     const monthlyPaymentsResult = await pool.query(`
       SELECT 
         COUNT(*) as count,
         SUM(amount) as total
-      FROM payments
-      WHERE payment_date >= DATE_TRUNC('month', CURRENT_DATE)
+      FROM finance_transactions
+      WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
     `);
 
     return {
@@ -145,7 +145,7 @@ class SuperAdminService {
       SELECT 
         COUNT(*) as total_transactions,
         SUM(amount) as total_collected
-      FROM payments p
+      FROM finance_transactions p
       JOIN students s ON p.student_id = s.id
       WHERE s.branch_id = $1
     `, [branchId]);

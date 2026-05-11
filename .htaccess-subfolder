@@ -1,0 +1,16 @@
+# Enable Rewrite Engine
+RewriteEngine On
+
+# Proxy all /api requests to Node.js backend on port 5001
+RewriteCond %{REQUEST_URI} ^/api
+RewriteRule ^api/(.*)$ http://localhost:5001/api/$1 [P,L]
+
+# Enable proxy
+ProxyPreserveHost On
+ProxyPass /api http://localhost:5001/api
+ProxyPassReverse /api http://localhost:5001/api
+
+# CORS Headers (if needed)
+Header always set Access-Control-Allow-Origin "*"
+Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+Header always set Access-Control-Allow-Headers "Content-Type, Authorization"

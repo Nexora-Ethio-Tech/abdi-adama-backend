@@ -1,0 +1,16 @@
+# Enable Rewrite Engine
+RewriteEngine On
+
+# Proxy all requests to Node.js backend on port 5001
+RewriteCond %{HTTP_HOST} ^api\.abdiadamaschool\.com$ [NC]
+RewriteRule ^(.*)$ http://localhost:5001/$1 [P,L]
+
+# Enable proxy
+ProxyPreserveHost On
+ProxyPass / http://localhost:5001/
+ProxyPassReverse / http://localhost:5001/
+
+# CORS Headers
+Header always set Access-Control-Allow-Origin "*"
+Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+Header always set Access-Control-Allow-Headers "Content-Type, Authorization"

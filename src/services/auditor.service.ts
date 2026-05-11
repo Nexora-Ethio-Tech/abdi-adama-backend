@@ -6,7 +6,7 @@ class AuditorService {
     let query = `
       SELECT p.*, s.name as student_name, s.digital_id as student_digital_id, 
              u.name as recorded_by_name
-      FROM payments p
+      FROM finance_transactions p
       JOIN students s ON p.student_id = s.id
       JOIN users u ON p.recorded_by = u.id
       WHERE s.branch_id = $1
@@ -21,18 +21,18 @@ class AuditorService {
     }
 
     if (filters?.startDate) {
-      query += ` AND p.payment_date >= $${paramIndex}`;
+      query += ` AND p.date >= $${paramIndex}`;
       params.push(filters.startDate);
       paramIndex++;
     }
 
     if (filters?.endDate) {
-      query += ` AND p.payment_date <= $${paramIndex}`;
+      query += ` AND p.date <= $${paramIndex}`;
       params.push(filters.endDate);
       paramIndex++;
     }
 
-    query += ` ORDER BY p.payment_date DESC`;
+    query += ` ORDER BY p.date DESC`;
 
     const result = await pool.query(query, params);
     return result.rows;
@@ -91,13 +91,13 @@ class AuditorService {
       `SELECT 
          COUNT(*) as total_transactions,
          SUM(amount) as total_collected,
-         SUM(CASE WHEN payment_type = 'Tuition' THEN amount ELSE 0 END) as tuition_collected,
-         SUM(CASE WHEN payment_type = 'Registration' THEN amount ELSE 0 END) as registration_collected,
-         SUM(CASE WHEN payment_type = 'Bus Fee' THEN amount ELSE 0 END) as bus_collected,
-         SUM(CASE WHEN payment_type = 'Penalty' THEN amount ELSE 0 END) as penalty_collected
-       FROM payments p
+         SUM(CASE WHEN type = 'Tuition' THEN amount ELSE 0 END) as tuition_collected,
+         SUM(CASE WHEN type = 'Registration' THEN amount ELSE 0 END) as registration_collected,
+         SUM(CASE WHEN type = 'Bus Fee' THEN amount ELSE 0 END) as bus_collected,
+         SUM(CASE WHEN type = 'Penalty' THEN amount ELSE 0 END) as penalty_collected
+       FROM finance_transactions p
        JOIN students s ON p.student_id = s.id
-       WHERE s.branch_id = $1 AND p.payment_date BETWEEN $2 AND $3`,
+       WHERE s.branch_id = $1 AND p.date BETWEEN $2 AND $3`,
       [branchId, startDate, endDate]
     );
 
@@ -171,7 +171,7 @@ class AuditorService {
   async getDashboard(branchId: string) {
     const totalPaymentsResult = await pool.query(
       `SELECT COUNT(*) as count, SUM(amount) as total
-       FROM payments p
+       FROM finance_transactions p
        JOIN students s ON p.student_id = s.id
        WHERE s.branch_id = $1`,
       [branchId]
@@ -179,9 +179,9 @@ class AuditorService {
 
     const monthlyPaymentsResult = await pool.query(
       `SELECT COUNT(*) as count, SUM(amount) as total
-       FROM payments p
+       FROM finance_transactions p
        JOIN students s ON p.student_id = s.id
-       WHERE s.branch_id = $1 AND p.payment_date >= DATE_TRUNC('month', CURRENT_DATE)`,
+       WHERE s.branch_id = $1 AND p.date >= DATE_TRUNC('month', CURRENT_DATE)`,
       [branchId]
     );
 
