@@ -1,10 +1,13 @@
 import { PoolClient } from 'pg';
 import pool from '../config/database';
-import { hashPassword, generateRandomPassword } from '../utils/password';
+import { hashPassword, generateRandomPassword, generate4DigitPIN } from '../utils/password';
 import { generateDigitalId } from '../utils/idGenerator';
 import { USER_STATUS } from '../config/constants';
 import logger from '../utils/logger';
 import { CreateUserDTO, User, UserFilters, CreateUserResult, UserStatus } from '../types';
+
+// Roles that use 4-digit PIN instead of complex password
+const PIN_BASED_ROLES = ['teacher', 'student', 'parent', 'finance-clerk', 'librarian', 'clinic-admin', 'driver'];
 
 class UserService {
   async createUser(userData: CreateUserDTO, createdBy: string): Promise<CreateUserResult> {
@@ -25,7 +28,10 @@ class UserService {
       }
 
       const digitalId = await generateDigitalId(role, branchName);
-      const userPassword = password || generateRandomPassword();
+      
+      // Use 4-digit PIN for students, teachers, parents, and staff
+      // Use complex password for admin roles
+      const userPassword = password || (PIN_BASED_ROLES.includes(role) ? generate4DigitPIN() : generateRandomPassword());
       const passwordHash = await hashPassword(userPassword);
       const userUsername = username || email.split('@')[0];
 

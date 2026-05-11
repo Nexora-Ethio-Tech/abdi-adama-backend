@@ -9,6 +9,21 @@ export const comparePassword = async (password: string, hashedPassword: string):
   return bcrypt.compare(password, hashedPassword);
 };
 
+/**
+ * Generates a random 4-digit PIN for students, teachers, parents, and staff
+ * @returns A 4-digit numeric PIN as a string
+ */
+export const generate4DigitPIN = (): string => {
+  // Generate random 4-digit number between 1000 and 9999
+  const pin = Math.floor(1000 + Math.random() * 9000);
+  return pin.toString();
+};
+
+/**
+ * Generates a secure random password for admin roles
+ * @param length - Password length (default: 12)
+ * @returns A secure random password with mixed characters
+ */
 export const generateRandomPassword = (length: number = 12): string => {
   const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   const lowercase = 'abcdefghijklmnopqrstuvwxyz';
