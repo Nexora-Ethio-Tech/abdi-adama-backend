@@ -95,52 +95,48 @@ export const Clinic = () => {
   const handleLogVisit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedStudent) return;
-    // const token = localStorage.getItem('abdi_adama_token');
-    // try {
-    //   const res = await fetch(`${API_URL}/api/clinic/visit`, {
-    //     method: 'POST',
-    //     headers: {
-    //       'Authorization': `Bearer ${token}`,
-    //       'Content-Type': 'application/json'
-    //     },
-    //     body: JSON.stringify({
-    //       student_id: selectedStudent.id,
-    //       student_name: selectedStudent.name,
-    //       reason: newVisit.reason,
-    //       treatment: newVisit.treatment,
-    //       medicines: newVisit.selectedMeds
-    //     })
-    //   });
-    //   if (res.ok) {
-    //     setShowLogModal(false);
-    //     setNewVisit({ reason: '', treatment: '', selectedMeds: [] });
-    //     fetchData();
-    //   } else {
-    //     const data = await res.json();
-    //     alert(data.error || 'Failed to log visit');
-    //   }
-    // } catch (err) {
-    //   console.error(err);
-    // }
 
-    // MOCK LOG
     setIsSaving(true);
-    await new Promise(r => setTimeout(r, 900));
-    const newV: VisitLog = {
-      id: 'V' + Date.now(),
-      student_id: selectedStudent.id,
-      student_name: selectedStudent.name,
-      date: new Date().toISOString().split('T')[0],
-      time: new Date().toLocaleTimeString(),
-      reason: newVisit.reason,
-      treatment: newVisit.treatment,
-      status: 'Logged'
-    };
-    setVisitLogs([newV, ...visitLogs]);
-    setIsSaving(false);
-    setShowLogModal(false);
-    setNewVisit({ reason: '', treatment: '', selectedMeds: [] });
-    toast.success(`Visit logged for ${selectedStudent.name}.`);
+    try {
+      // 1. Log the main visit
+      const visitRes = await apiFetch('/api/clinic/visits', {
+        method: 'POST',
+        body: JSON.stringify({
+          student_id: selectedStudent.id,
+          reason: newVisit.reason,
+          treatment: newVisit.treatment,
+        })
+      });
+
+      if (!visitRes.ok) {
+        const errorData = await visitRes.json();
+        throw new Error(errorData.message || 'Failed to log visit.');
+      }
+
+      // 2. Deduct medicines if any were selected
+      if (newVisit.selectedMeds.length > 0) {
+        await Promise.all(
+          newVisit.selectedMeds.map(med => 
+            apiFetch('/api/clinic/medicine/deduct', {
+              method: 'POST',
+              body: JSON.stringify({
+                medicine_id: med.id,
+                quantity: med.quantity
+              })
+            })
+          )
+        );
+      }
+
+      toast.success(`Visit logged and stock updated for ${selectedStudent.name}.`);
+      setShowLogModal(false);
+      setNewVisit({ reason: '', treatment: '', selectedMeds: [] });
+      fetchData(); // Refresh history and medicine stock
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to log clinical visit.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const filteredStudents = students.filter(s =>

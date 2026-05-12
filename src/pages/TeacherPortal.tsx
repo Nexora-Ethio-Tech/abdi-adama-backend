@@ -1,8 +1,10 @@
-import { BookOpen, Users, Calendar, ArrowRight, Award, ClipboardList, Star, Save, CheckCircle, ChevronRight, History, FileText, CheckSquare, MessageSquare, X, Plus } from 'lucide-react';
+import { BookOpen, Users, Calendar, ArrowRight, Award, ClipboardList, Star, Save, CheckCircle, ChevronRight, History, FileText, CheckSquare, MessageSquare, X, Plus, Loader2 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { WeeklyPlan } from '../data/mockData';
 import { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
+import { apiFetch } from '../utils/apiClient';
+import { toast } from '../components/Toast';
 
 export const TeacherPortal = () => {
   const { user } = useUser();
@@ -10,11 +12,11 @@ export const TeacherPortal = () => {
   const isDean = (user as any)?.is_dean || false;
   const isRoomTeacher = (user as any)?.is_room_teacher || false;
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'plans' | 'communication' | 'review'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'plans' | 'communication' | 'review' | 'exams'>('overview');
 
   useEffect(() => {
     const tab = searchParams.get('tab');
-    if (tab && ['overview', 'plans', 'communication', 'review'].includes(tab)) {
+    if (tab && ['overview', 'plans', 'communication', 'review', 'exams'].includes(tab)) {
       setActiveTab(tab as any);
     }
   }, [searchParams]);
@@ -62,25 +64,14 @@ export const TeacherPortal = () => {
   const [assignedSections, setAssignedSections] = useState<any[]>([]);
   const [plans, setPlans] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
-
-  // const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-  // const getToken = () => localStorage.getItem('abdi_adama_token') || '';
+  const [examList, setExamList] = useState<any[]>([]);
+  const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
+  const [examResults, setExamResults] = useState<any[]>([]);
+  const [examLoading, setExamLoading] = useState(false);
+  const [resultLoading, setResultLoading] = useState(false);
+  const [editingScores, setEditingScores] = useState<Record<string, string>>({});
 
   const fetchData = async () => {
-    // try {
-    //   // 1. Fetch assigned sections
-    //   const sRes = await fetch(`${API}/api/academic/teacher/sections`, {
-    //     headers: { Authorization: `Bearer ${getToken()}` }
-    //   });
-    //   if (sRes.ok) setAssignedSections(await sRes.json());
-
-    //   // 2. Fetch weekly plans
-    //   const pRes = await fetch(`${API}/api/operational/weekly-plans`, {
-    //     headers: { Authorization: `Bearer ${getToken()}` }
-    //   });
-    //   if (pRes.ok) setPlans(await pRes.json());
-    // } catch (err) { console.error(err); }
-
     // MOCK DATA
     setAssignedSections([
       { id: '1', grade_level: '10', section_name: 'A' },
@@ -105,47 +96,80 @@ export const TeacherPortal = () => {
     ]);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  const fetchExams = async () => {
+    setExamLoading(true);
+    try {
+      const res = await apiFetch('/api/exams');
+      if (res.ok) {
+        const data = await res.json();
+        setExamList(data.data || []);
+      }
+    } catch {
+      toast.error('Failed to load exams.');
+    } finally {
+      setExamLoading(false);
+    }
+  };
+
+  const fetchExamResults = async (examId: string) => {
+    setResultLoading(true);
+    try {
+      const res = await apiFetch(`/api/exams/teacher?exam_id=${examId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setExamResults(data.data || []);
+      }
+    } catch {
+      toast.error('Failed to load exam results.');
+    } finally {
+      setResultLoading(false);
+    }
+  };
+
+  const handleApproveResult = async (resultId: string) => {
+    const score = editingScores[resultId];
+    if (!score || isNaN(Number(score))) {
+      toast.error('Please enter a valid numeric score.');
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`/api/exams/results/${resultId}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ score: Number(score) })
+      });
+      if (res.ok) {
+        toast.success('Result approved and grade updated.');
+        if (selectedExamId) fetchExamResults(selectedExamId);
+      } else {
+        const data = await res.json();
+        toast.error(data.message || 'Approval failed.');
+      }
+    } catch {
+      toast.error('Network error during approval.');
+    }
+  };
+
+  useEffect(() => { 
+    fetchData(); 
+    fetchExams();
+  }, []);
 
   const handleAddPlan = async (e: React.FormEvent) => {
     e.preventDefault();
-    // try {
-    //   const res = await fetch(`${API}/api/operational/weekly-plans`, {
-    //     method: 'POST',
-    //     headers: {
-    //       'Content-Type': 'application/json',
-    //       Authorization: `Bearer ${getToken()}`
-    //     },
-    //     body: JSON.stringify(newPlan)
-    //   });
-    //   if (res.ok) {
-    //     setIsPlanModalOpen(false);
-    //     fetchData(); // Refresh plans
-    //   }
-    // } catch (err) { console.error(err); }
-
-    // MOCK ADD
     setPlans([...plans, { id: Date.now().toString(), ...newPlan, teacherId: user?.id || 'T1' }]);
     setIsPlanModalOpen(false);
-    alert('Plan submitted successfully (Mock)');
+    toast.success('Plan submitted successfully (Mock)');
   };
 
   const fetchStudentsForClass = async (_sectionId: string) => {
-    // try {
-    //   const res = await fetch(`${API}/api/academic/sections/${sectionId}/students`, {
-    //     headers: { Authorization: `Bearer ${getToken()}` }
-    //   });
-    //   if (res.ok) setStudents(await res.json());
-    // } catch (err) { console.error(err); }
-
-    // MOCK DATA
     setStudents([
       { id: '1', name: 'Abebe Bikila' },
       { id: '2', name: 'Sara Kebede' }
     ]);
   };
 
-  const pendingAssignments = 0; // TODO: fetch from /api/exams when exam module is live
+  const pendingAssignments = 0; 
 
   const handleRating = (fieldId: string, rating: number) => {
     setRatings(prev => ({ ...prev, [fieldId]: rating }));
@@ -173,6 +197,7 @@ export const TeacherPortal = () => {
         {[
           { id: 'overview', label: 'Overview' },
           { id: 'plans', label: 'Weekly Plans' },
+          { id: 'exams', label: 'Exam Results' },
           ...(isRoomTeacher ? [{ id: 'communication', label: 'Comm. Book' }] : []),
           ...(isDean ? [{ id: 'review', label: 'Review' }] : [])
         ].map(tab => (
@@ -484,6 +509,112 @@ export const TeacherPortal = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      ) : activeTab === 'exams' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-4 space-y-6">
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tight mb-4">Official Exams</h3>
+              {examLoading ? (
+                <div className="flex justify-center p-8"><Loader2 className="animate-spin text-blue-600" /></div>
+              ) : (
+                <div className="space-y-2">
+                  {examList.map(exam => (
+                    <button
+                      key={exam.id}
+                      onClick={() => {
+                        setSelectedExamId(exam.id);
+                        fetchExamResults(exam.id);
+                      }}
+                      className={`w-full p-4 text-left rounded-2xl transition-all ${selectedExamId === exam.id ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'}`}
+                    >
+                      <p className="font-black text-sm uppercase tracking-tight">{exam.title}</p>
+                      <p className={`text-[10px] font-bold mt-1 ${selectedExamId === exam.id ? 'text-blue-100' : 'text-slate-500'}`}>Duration: {exam.duration_minutes}m</p>
+                    </button>
+                  ))}
+                  {examList.length === 0 && <p className="text-center py-8 text-slate-400 font-bold italic">No exams found.</p>}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="lg:col-span-8">
+            {selectedExamId ? (
+              <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-xl space-y-6">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">Student Submissions</h3>
+                  {resultLoading && <Loader2 className="animate-spin text-blue-600" size={20} />}
+                </div>
+
+                <div className="space-y-4">
+                  {examResults.map(res => (
+                    <div key={res.id} className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-[2rem] border border-slate-100 dark:border-slate-700/50">
+                      <div className="flex flex-col md:flex-row justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center text-blue-600 font-black">
+                            {res.student_name ? res.student_name[0] : 'S'}
+                          </div>
+                          <div>
+                            <h4 className="font-black text-slate-900 dark:text-white uppercase tracking-tight">{res.student_name}</h4>
+                            <p className="text-xs text-slate-500 font-bold">Score: <span className="text-blue-600">{res.score || 0}</span></p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                           <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter ${
+                             res.status === 'submitted' ? 'bg-blue-100 text-blue-600' : 
+                             res.status === 'active' ? 'bg-amber-100 text-amber-600' : 'bg-rose-100 text-rose-600'
+                           }`}>
+                             {res.status}
+                           </span>
+
+                           <div className="flex items-center gap-2">
+                             <input
+                               type="number"
+                               placeholder="Score"
+                               value={editingScores[res.id] || ''}
+                               onChange={(e) => setEditingScores(prev => ({ ...prev, [res.id]: e.target.value }))}
+                               className="w-20 px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold"
+                             />
+                             <button
+                               onClick={() => handleApproveResult(res.id)}
+                               className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
+                             >
+                               Approve
+                             </button>
+                           </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                         <details className="group">
+                           <summary className="text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors list-none flex items-center gap-2">
+                             <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
+                             View Student Answers
+                           </summary>
+                           <div className="mt-4 p-4 bg-white dark:bg-slate-900 rounded-2xl text-xs font-mono text-slate-600 dark:text-slate-400 overflow-x-auto">
+                             <pre>{JSON.stringify(res.answers_json, null, 2)}</pre>
+                           </div>
+                         </details>
+                      </div>
+                    </div>
+                  ))}
+                  {examResults.length === 0 && (
+                    <div className="text-center py-20 text-slate-400">
+                       <CheckSquare size={48} className="mx-auto mb-4 opacity-20" />
+                       <p className="font-bold italic">No results yet for this exam.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center p-12 text-center bg-slate-50/50 dark:bg-slate-900/20 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800">
+                <CheckSquare className="text-slate-300 dark:text-slate-700 mb-4" size={48} />
+                <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">Exam Results Review</h3>
+                <p className="text-slate-500 max-w-xs mx-auto mt-2 font-medium">Select an exam from the left panel to review student submissions and approve final scores.</p>
+              </div>
+            )}
           </div>
         </div>
       ) : activeTab === 'review' ? (
