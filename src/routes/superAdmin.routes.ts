@@ -32,9 +32,9 @@ const capacitySchema = Joi.object({
 });
 
 // User Management
-router.post('/create-school-admin', validate(schemas.createUser), superAdminController.createSchoolAdmin);
-router.post('/create-vice-principal', validate(schemas.createUser), superAdminController.createVicePrincipal);
-router.post('/create-auditor', validate(schemas.createUser), superAdminController.createAuditor);
+router.post('/create-school-admin', validate(schemas.createAdminUser), superAdminController.createSchoolAdmin);
+router.post('/create-vice-principal', validate(schemas.createAdminUser), superAdminController.createVicePrincipal);
+router.post('/create-auditor', validate(schemas.createAdminUser), superAdminController.createAuditor);
 router.get('/users', superAdminController.getAllUsers);
 router.get('/users/:id', superAdminController.getUserById);
 router.patch('/users/:id/status', validate(schemas.updateUserStatus), superAdminController.updateUserStatus);

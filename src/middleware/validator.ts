@@ -36,6 +36,14 @@ export const schemas = {
     grade: Joi.string().optional()
   }),
 
+  // Schema for dedicated admin creation endpoints (no role field needed)
+  createAdminUser: Joi.object({
+    name: Joi.string().min(2).max(150).required(),
+    email: Joi.string().email().required(),
+    branchId: Joi.string().uuid().required(),
+    password: Joi.string().min(8).optional()
+  }),
+
   updateUserStatus: Joi.object({
     status: Joi.string().valid('Pending', 'Approved', 'Revoked').required()
   }),
