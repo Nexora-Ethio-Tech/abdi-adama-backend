@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { mockStudents } from '../data/mockData';
+import { apiFetch } from '../utils/apiClient';
 import { toast } from '../components/Toast';
 import {
   Stethoscope,
@@ -53,39 +53,36 @@ export const Clinic = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    // const token = localStorage.getItem('abdi_adama_token');
-    // try {
-    //   const [studentsRes, medRes, visitsRes] = await Promise.all([
-    //     fetch(`${API_URL}/api/students`, { headers: { 'Authorization': `Bearer ${token}` } }),
-    //     fetch(`${API_URL}/api/clinic/medicine`, { headers: { 'Authorization': `Bearer ${token}` } }),
-    //     fetch(`${API_URL}/api/clinic/visits`, { headers: { 'Authorization': `Bearer ${token}` } })
-    //   ]);
-    //   if (studentsRes.ok) setStudents(await studentsRes.json());
-    //   if (medRes.ok) setMedicines(await medRes.json());
-    //   if (visitsRes.ok) setVisitLogs(await visitsRes.json());
-    // } catch (err) {
-    //   console.error('Clinic data fetch failed:', err);
-    // } finally {
-    //   setLoading(false);
-    // }
+    try {
+      const [studentsRes, visitsRes] = await Promise.all([
+        apiFetch('/api/clinic/students'),
+        apiFetch('/api/clinic/visits/history'),
+      ]);
 
-    // MOCK DATA
-    setStudents(mockStudents.map(s => ({
-      id: s.id,
-      name: s.name,
-      grade: s.grade,
-      blood_group: (s as any).bloodGroup || 'O+',
-      allergies: (s as any).allergies || 'None'
-    })));
-    setMedicines([
-      { id: 'M1', name: 'Paracetamol', stock: 50, unit: 'Tablets' },
-      { id: 'M2', name: 'Ibuprofen', stock: 30, unit: 'Tablets' },
-      { id: 'M3', name: 'Amoxicillin', stock: 20, unit: 'Capsules' }
-    ]);
-    setVisitLogs([
-      { id: 'V1', student_id: '1', student_name: 'Abebe Bikila', date: '2026-04-10', time: '10:30 AM', reason: 'Headache', treatment: 'Paracetamol', status: 'Logged' }
-    ]);
-    setLoading(false);
+      if (studentsRes.ok) {
+        const studentsJson = await studentsRes.json();
+        // Backend returns { data: { students: [...] } }
+        setStudents(studentsJson.data?.students || studentsJson.students || studentsJson.data || []);
+      } else {
+        toast.error('Failed to load student directory.');
+      }
+
+      if (visitsRes.ok) {
+        const visitsJson = await visitsRes.json();
+        setVisitLogs(visitsJson.data || visitsJson);
+      }
+
+      // Medicine API not yet implemented — keep mock
+      setMedicines([
+        { id: 'M1', name: 'Paracetamol', stock: 50, unit: 'Tablets' },
+        { id: 'M2', name: 'Ibuprofen', stock: 30, unit: 'Tablets' },
+        { id: 'M3', name: 'Amoxicillin', stock: 20, unit: 'Capsules' }
+      ]);
+    } catch {
+      toast.error('Network error — could not reach the clinic server.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {

@@ -49,6 +49,11 @@ export const Login = () => {
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Frontend PIN guard — matches backend validation
+    if (password.length < 4) {
+      setError('PIN must be at least 4 digits.');
+      return;
+    }
     setError(''); setLoading(true);
     try {
       const result = await login({ digitalIdOrEmail, password, otp: '' });
@@ -126,16 +131,18 @@ export const Login = () => {
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">Password</label>
+                <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">Password / PIN</label>
                 <div className="relative">
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                   <input
                     type="password" required value={password}
+                    minLength={4}
                     onChange={e => setPassword(e.target.value)}
-                    placeholder="••••••••"
+                    placeholder="●●●● (min. 4 digits)"
                     className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-school-primary focus:ring-4 focus:ring-school-primary/10 transition-all outline-none"
                   />
                 </div>
+                <p className="text-[11px] text-slate-400 ml-1">Minimum 4 digits required</p>
               </div>
               <button
                 type="submit" disabled={loading}

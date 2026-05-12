@@ -1,9 +1,11 @@
 
-import { Calendar, BookOpen, Award, User, History, Megaphone, HeartPulse, Star, ChevronRight, ClipboardList, TrendingUp } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { Calendar, BookOpen, Award, User, History, Megaphone, HeartPulse, Star, ChevronRight, ClipboardList, TrendingUp, Loader2 } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { mockCommunicationLogs, commFields, ratingLabels } from '../data/mockData';
 import { useTranslation } from 'react-i18next';
+import { apiFetch } from '../utils/apiClient';
+import { toast } from '../components/Toast';
 
 export const ParentPortal = () => {
   const { t } = useTranslation();
@@ -13,6 +15,12 @@ export const ParentPortal = () => {
   const [selectedYear, setSelectedYear] = useState<string | null>(null);
   const [activePortalTab, setActivePortalTab] = useState<'academic' | 'communication'>('academic');
 
+  // ─── Real data state ───────────────────────────────────────────────────────
+  const [children, setChildren] = useState<any[]>([]);
+  const [notices, setNotices] = useState<any[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+
+  // ─── Academic history (still using rich mock until history API is wired) ──
   const academicYears = ['2015', '2016', '2017'];
   const historyData: Record<string, any[]> = {
     '2015': [
@@ -25,36 +33,46 @@ export const ParentPortal = () => {
     ]
   };
 
-  const [notices] = useState([
-    { id: 1, title: 'Term 3 Exams Schedule', content: 'The final schedule for Term 3 exams has been posted in the academic office.', priority: 'High', time: '1 hour ago' },
-    { id: 2, title: 'School Bus Maintenance', content: 'Route B buses will be undergoing maintenance this Friday. Please expect minor delays.', priority: 'Medium', time: 'Yesterday' }
-  ]);
+  // ─── Fetch real data from backend ─────────────────────────────────────────
+  useEffect(() => {
+    const fetchDashboard = async () => {
+      setDataLoading(true);
+      try {
+        const res = await apiFetch('/api/parent/dashboard');
+        const data = await res.json();
 
-  const children = [
-    {
-      id: '1',
-      name: 'Abebe Bikila',
-      grade: '10A',
-      attendance: '96%',
-      performance: 'Excellent',
-      courses: [
-        { name: 'Mathematics', teacher: 'Ato Solomon', grades: { mid: '28/30', quiz: '9/10', assignment: '10/10', final: 'Not Yet' } },
-        { name: 'Physics', teacher: 'Ato Solomon', grades: { mid: '25/30', quiz: '8/10', assignment: '9/10', final: 'Not Yet' } },
-        { name: 'English', teacher: 'W/ro Aster', grades: { mid: '29/30', quiz: '10/10', assignment: '10/10', final: 'Not Yet' } },
-      ]
-    },
-    {
-      id: '2',
-      name: 'Sara Bikila',
-      grade: '7B',
-      attendance: '94%',
-      performance: 'Good',
-      courses: [
-        { name: 'Biology', teacher: 'W/ro Selam', grades: { mid: '24/30', quiz: '8/10', assignment: '8/10', final: 'Not Yet' } },
-        { name: 'Amharic', teacher: 'W/ro Aster', grades: { mid: '27/30', quiz: '9/10', assignment: '10/10', final: 'Not Yet' } },
-      ]
-    },
-  ];
+        if (!res.ok) {
+          toast.error(data.message || 'Failed to load parent dashboard.');
+          return;
+        }
+
+        // Map backend keys (fullName, identity_id) to frontend shape
+        const mappedChildren = (data.children || []).map((c: any) => ({
+          id:          c.identity_id,
+          name:        c.fullName || c.full_name,
+          grade:       c.grade || '—',
+          school_id:   c.school_id,
+          attendance:  c.attendance || '—',
+          performance: c.performance || '—',
+          courses:     c.courses || [],
+        }));
+
+        // Format announcement timestamps
+        const mappedNotices = (data.announcements || []).map((n: any) => ({
+          ...n,
+          time: n.timestamp ? new Date(n.timestamp).toLocaleDateString() : '—',
+        }));
+
+        setChildren(mappedChildren);
+        setNotices(mappedNotices);
+      } catch {
+        toast.error('Network error — could not reach the parent portal server.');
+      } finally {
+        setDataLoading(false);
+      }
+    };
+    fetchDashboard();
+  }, []);
 
   const CommunicationBook = ({ studentId }: { studentId: string }) => {
     const studentLogs = useMemo(() => {

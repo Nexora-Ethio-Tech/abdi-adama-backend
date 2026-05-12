@@ -1,9 +1,11 @@
 
-import { Megaphone, Plus, X, Bus, Users, RefreshCw } from 'lucide-react';
+import { Megaphone, Plus, X, Bus, Users, RefreshCw, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../context/useStore';
+import { apiFetch } from '../utils/apiClient';
+import { toast } from '../components/Toast';
 
 interface ManifestItem {
   student_name: string;
@@ -18,6 +20,7 @@ export const DriverPortal = () => {
   const { notices, addNotice } = useStore();
   const [activeTab, setActiveTab] = useState<'notices' | 'manifest'>('manifest');
   const [manifest, setManifest] = useState<ManifestItem[]>([]);
+  const [routeInfo, setRouteInfo] = useState<{ bus_number?: string; route_name?: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState('');
@@ -28,24 +31,24 @@ export const DriverPortal = () => {
 
   const fetchManifest = async () => {
     setLoading(true);
-    // const token = localStorage.getItem('abdi_adama_token');
-    // try {
-    //   const res = await fetch(`${API_URL}/api/transport/manifest`, {
-    //     headers: { 'Authorization': `Bearer ${token}` }
-    //   });
-    //   if (res.ok) setManifest(await res.json());
-    // } catch (err) {
-    //   console.error('Failed to fetch manifest:', err);
-    // } finally {
-    //   setLoading(false);
-    // }
+    try {
+      const res = await apiFetch('/api/driver/manifest');
+      const data = await res.json();
 
-    // MOCK DATA
-    setManifest([
-      { student_name: 'Abebe Bikila', digital_id: 'ST1001', grade: '10A', route_name: 'Route 1' },
-      { student_name: 'Sara Kebede', digital_id: 'ST1002', grade: '9B', route_name: 'Route 1' }
-    ]);
-    setLoading(false);
+      if (!res.ok) {
+        // 404 = no route assigned yet; show friendly message
+        toast.error(data.message || 'Failed to fetch manifest.');
+        setManifest([]);
+        return;
+      }
+
+      setRouteInfo({ bus_number: data.data?.bus_number, route_name: data.data?.route_name });
+      setManifest(data.data?.manifest || []);
+    } catch {
+      toast.error('Network error — could not reach the transport server.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {

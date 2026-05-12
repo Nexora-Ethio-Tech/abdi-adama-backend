@@ -3,6 +3,8 @@ import { Book, Search, Plus, CheckCircle, Clock, RefreshCw, Loader2 } from 'luci
 import { useState, useEffect } from 'react';
 import { mockLibrary, mockOverdueLoans } from '../data/mockData';
 import { toast } from '../components/Toast';
+import { apiFetch } from '../utils/apiClient';
+
 
 interface BookType {
   id: string;
@@ -43,35 +45,40 @@ export const Library = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    // const token = localStorage.getItem('abdi_adama_token');
-    // try {
-    //   const [booksRes, loansRes] = await Promise.all([
-    //     fetch(`${API_URL}/api/library/books`, { headers: { 'Authorization': `Bearer ${token}` } }),
-    //     fetch(`${API_URL}/api/library/loans`, { headers: { 'Authorization': `Bearer ${token}` } })
-    //   ]);
-    //   if (booksRes.ok) setBooks(await booksRes.json());
-    //   if (loansRes.ok) setLoans(await loansRes.json());
-    // } catch (err) {
-    //   console.error('Failed to fetch library data:', err);
-    // } finally {
-    //   setLoading(false);
-    // }
+    try {
+      const [booksRes, loansRes] = await Promise.all([
+        apiFetch('/api/library/books'),
+        apiFetch('/api/library/loans'),
+      ]);
 
-    // MOCK DATA
-    setBooks(mockLibrary);
-    setLoans(mockOverdueLoans.map(l => ({
-      id: l.id,
-      book_id: 'B1',
-      student_id: l.studentId,
-      book_title: l.bookTitle,
-      student_name: l.studentName,
-      borrowed_at: new Date().toISOString(),
-      due_date: l.dueDate,
-      returned_at: null,
-      days_overdue: l.daysOverdue,
-      fine_amount: l.daysOverdue * 5
-    })));
-    setLoading(false);
+      if (booksRes.ok) {
+        const booksJson = await booksRes.json();
+        // Backend returns { data: [...], total, page, limit }
+        setBooks(booksJson.data || booksJson);
+      } else {
+        toast.error('Failed to load books from server.');
+        setBooks(mockLibrary); // graceful fallback
+      }
+
+      if (loansRes.ok) {
+        const loansJson = await loansRes.json();
+        setLoans(loansJson.data || loansJson);
+      } else {
+        toast.error('Failed to load loans from server.');
+      }
+    } catch {
+      toast.error('Network error — could not reach the library server.');
+      // Offline fallback
+      setBooks(mockLibrary);
+      setLoans(mockOverdueLoans.map(l => ({
+        id: l.id, book_id: 'B1', student_id: l.studentId,
+        book_title: l.bookTitle, student_name: l.studentName,
+        borrowed_at: new Date().toISOString(), due_date: l.dueDate,
+        returned_at: null, days_overdue: l.daysOverdue, fine_amount: l.daysOverdue * 5
+      })));
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
