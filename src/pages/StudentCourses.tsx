@@ -1,8 +1,33 @@
 
-import { studentCurrentCourses, studentAcademicHistory } from '../data/mockData';
-import { BookOpen, User, CheckCircle2, Circle, AlertCircle, Calendar, GraduationCap, ChevronDown, Award, TrendingUp } from 'lucide-react';
-import { useState, useMemo, useEffect } from 'react';
+import { BookOpen, User, CheckCircle2, Circle, GraduationCap, ChevronDown, Award, TrendingUp, Loader2, Calendar } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+
+interface GradeItem {
+  enrollment_id: string;
+  subject_id: string;
+  name: string;
+  code: string;
+  teacher: string;
+  progress: number;
+  quiz_10: number;
+  assignment_10: number;
+  mid_30: number;
+  final_50: number;
+  total: number;
+  max_quiz: number;
+  max_assignment: number;
+  max_mid: number;
+  max_final: number;
+  max_total: number;
+}
+
+interface HistoryRecord {
+  year: string;
+  semester: string;
+  average: string;
+  courses: Array<{ name: string; score: number }>;
+}
 
 export const StudentCourses = () => {
   const [searchParams] = useSearchParams();
@@ -10,28 +35,83 @@ export const StudentCourses = () => {
     searchParams.get('tab') === 'history' ? 'history' : 'current'
   );
 
+  const [loading, setLoading] = useState(true);
+  const [courses, setCourses] = useState<GradeItem[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const [currentSemester, setCurrentSemester] = useState('2');
+
+  // History state
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [selectedYear, setSelectedYear] = useState('2024/2025');
+  const [selectedHistSemester, setSelectedHistSemester] = useState('2');
+
   useEffect(() => {
     const tab = searchParams.get('tab');
     if (tab === 'history') setViewMode('history');
     else if (tab === 'current') setViewMode('current');
   }, [searchParams]);
-  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
-  const [currentSemester, setCurrentSemester] = useState('Semester 2');
 
-  // History filters
-  const availableYears = useMemo(() => Array.from(new Set(studentAcademicHistory.map(h => h.year))), []);
-  const [selectedYear, setSelectedYear] = useState(availableYears[0]);
-  const [selectedSemester, setSelectedSemester] = useState('Semester 2');
+  // Fetch Current Grades
+  useEffect(() => {
+    if (viewMode !== 'current') return;
 
-  const selectedCourse = useMemo(() => 
-    studentCurrentCourses.find(c => c.id === selectedCourseId), 
-    [selectedCourseId]
-  );
+    const fetchGrades = async () => {
+      setLoading(true);
+      const token = localStorage.getItem('abdi_adama_token');
+      try {
+        const res = await fetch(`/api/student/grades?semester=${currentSemester}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const result = await res.json();
+          setCourses(result.data.courses);
+        }
+      } catch (err) {
+        console.error('Failed to fetch grades:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const filteredHistory = useMemo(() => 
-    studentAcademicHistory.find(h => h.year === selectedYear && h.semester === selectedSemester),
-    [selectedYear, selectedSemester]
-  );
+    fetchGrades();
+  }, [viewMode, currentSemester]);
+
+  // Fetch History
+  useEffect(() => {
+    if (viewMode !== 'history') return;
+
+    const fetchHistory = async () => {
+      setLoading(true);
+      const token = localStorage.getItem('abdi_adama_token');
+      try {
+        const res = await fetch(`/api/student/history?year=${selectedYear}&semester=${selectedHistSemester}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const result = await res.json();
+          setHistory(result.data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch history:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHistory();
+  }, [viewMode, selectedYear, selectedHistSemester]);
+
+  const selectedCourse = courses.find(c => c.subject_id === selectedCourseId);
+  const activeHistory = history[0]; // The API returns an array, but with filters it should be one
+
+  if (loading && courses.length === 0 && history.length === 0) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4">
+        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+        <p className="text-sm font-bold text-slate-500">Retrieving academic records...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -89,8 +169,8 @@ export const StudentCourses = () => {
                     onChange={(e) => setCurrentSemester(e.target.value)}
                     className="w-full appearance-none pl-6 pr-12 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all cursor-pointer"
                   >
-                    <option value="Semester 1">Semester 1</option>
-                    <option value="Semester 2">Semester 2</option>
+                    <option value="1">Semester 1</option>
+                    <option value="2">Semester 2</option>
                   </select>
                   <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={20} />
                 </div>
@@ -99,15 +179,12 @@ export const StudentCourses = () => {
                   <label className="absolute -top-2 left-4 px-2 bg-white dark:bg-slate-900 text-[10px] font-black text-blue-600 uppercase tracking-widest z-10">Select Subject</label>
                   <select
                     value={selectedCourseId || ''}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSelectedCourseId(val || null);
-                    }}
+                    onChange={(e) => setSelectedCourseId(e.target.value || null)}
                     className="w-full appearance-none pl-6 pr-12 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all cursor-pointer"
                   >
                     <option value="">Please Select Course</option>
-                    {studentCurrentCourses.map((course) => (
-                      <option key={course.id} value={course.id}>{course.name}</option>
+                    {courses.map((course) => (
+                      <option key={course.subject_id} value={course.subject_id}>{course.name}</option>
                     ))}
                   </select>
                   <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none group-hover:text-blue-500 transition-colors" size={20} />
@@ -165,20 +242,17 @@ export const StudentCourses = () => {
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                            {[
-                             { id: 'quiz_1', label: 'Quiz 1', score: selectedCourse.grades.quiz_1, max: selectedCourse.grades.max_scores.quiz_1 },
-                             { id: 'quiz_2', label: 'Quiz 2', score: selectedCourse.grades.quiz_2, max: selectedCourse.grades.max_scores.quiz_2 },
-                             { id: 'test_1', label: 'Test 1', score: selectedCourse.grades.test_1, max: selectedCourse.grades.max_scores.test_1 },
-                             { id: 'test_2', label: 'Test 2', score: selectedCourse.grades.test_2, max: selectedCourse.grades.max_scores.test_2 },
-                             { id: 'participation', label: 'Class Participation', score: selectedCourse.grades.participation, max: selectedCourse.grades.max_scores.participation },
-                             { id: 'mid_exam', label: 'Mid Exam', score: selectedCourse.grades.mid_exam, max: selectedCourse.grades.max_scores.mid_exam },
-                             { id: 'final_exam', label: 'Final Exam', score: selectedCourse.grades.final_exam, max: selectedCourse.grades.max_scores.final_exam },
+                             { id: 'quiz',       label: 'Quiz',       score: selectedCourse.quiz_10,       max: selectedCourse.max_quiz },
+                             { id: 'assignment', label: 'Assignment', score: selectedCourse.assignment_10, max: selectedCourse.max_assignment },
+                             { id: 'mid',        label: 'Mid Exam',   score: selectedCourse.mid_30,        max: selectedCourse.max_mid },
+                             { id: 'final',      label: 'Final Exam', score: selectedCourse.final_50,      max: selectedCourse.max_final },
                            ].map((item) => (
                              <tr key={item.id} className="hover:bg-white dark:hover:bg-slate-800/50 transition-colors">
                                <td className="px-8 py-5">
                                  <p className="font-bold text-slate-800 dark:text-white">{item.label}</p>
                                </td>
                                <td className="px-8 py-5 text-center">
-                                 <span className="text-xs font-bold text-slate-500 italic">Pending Config</span>
+                                 <span className="text-xs font-black text-blue-600/40 uppercase tracking-widest">{(item.max/100)*100}%</span>
                                </td>
                                <td className="px-8 py-5 text-center">
                                  {item.score !== null ? (
@@ -208,24 +282,12 @@ export const StudentCourses = () => {
                                  <p className="text-sm font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest">Total Performance</p>
                               </td>
                               <td className="px-8 py-6 text-center">
-                                 <span className="text-xs font-black text-blue-400 dark:text-blue-600 uppercase tracking-widest">Aggregate</span>
+                                 <span className="text-xs font-black text-blue-400 dark:text-blue-600 uppercase tracking-widest">100%</span>
                               </td>
                               <td className="px-8 py-6 text-center">
                                  <span className="text-xl font-black text-blue-700 dark:text-blue-300">
-                                    {[
-                                      selectedCourse.grades.quiz_1, selectedCourse.grades.quiz_2,
-                                      selectedCourse.grades.test_1, selectedCourse.grades.test_2,
-                                      selectedCourse.grades.participation, selectedCourse.grades.mid_exam,
-                                      selectedCourse.grades.final_exam
-                                    ].reduce((acc, curr) => acc + (curr || 0), 0)}
-                                    <span className="text-xs ml-1 opacity-60">
-                                       / {[
-                                         selectedCourse.grades.max_scores.quiz_1, selectedCourse.grades.max_scores.quiz_2,
-                                         selectedCourse.grades.max_scores.test_1, selectedCourse.grades.max_scores.test_2,
-                                         selectedCourse.grades.max_scores.participation, selectedCourse.grades.max_scores.mid_exam,
-                                         selectedCourse.grades.max_scores.final_exam
-                                       ].reduce((acc, curr) => acc + (curr || 0), 0)}
-                                    </span>
+                                    {selectedCourse.total}
+                                    <span className="text-xs ml-1 opacity-60">/ {selectedCourse.max_total}</span>
                                  </span>
                               </td>
                               <td className="px-8 py-6 text-right">
@@ -271,7 +333,9 @@ export const StudentCourses = () => {
                         onChange={(e) => setSelectedYear(e.target.value)}
                         className="w-full appearance-none pl-6 pr-12 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all cursor-pointer"
                       >
-                        {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                        <option value="2023/2024">2023/2024</option>
+                        <option value="2024/2025">2024/2025</option>
+                        <option value="2025/2026">2025/2026</option>
                       </select>
                       <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
                    </div>
@@ -279,12 +343,12 @@ export const StudentCourses = () => {
                    <div className="relative group flex-1 sm:w-48">
                       <label className="absolute -top-2 left-4 px-2 bg-white dark:bg-slate-900 text-[10px] font-black text-blue-600 uppercase tracking-widest z-10">Semester</label>
                       <select
-                        value={selectedSemester}
-                        onChange={(e) => setSelectedSemester(e.target.value)}
+                        value={selectedHistSemester}
+                        onChange={(e) => setSelectedHistSemester(e.target.value)}
                         className="w-full appearance-none pl-6 pr-12 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all cursor-pointer"
                       >
-                        <option value="Semester 1">Semester 1</option>
-                        <option value="Semester 2">Semester 2</option>
+                        <option value="1">Semester 1</option>
+                        <option value="2">Semester 2</option>
                       </select>
                       <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
                    </div>
@@ -293,9 +357,9 @@ export const StudentCourses = () => {
 
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                 {[
-                  { label: 'Academic Year', value: selectedYear, icon: Calendar, color: 'text-blue-600' },
-                  { label: 'Term/Semester', value: selectedSemester, icon: BookOpen, color: 'text-purple-600' },
-                  { label: 'Semester Percentage', value: filteredHistory?.average || 'N/A', icon: TrendingUp, color: 'text-emerald-600' },
+                   { label: 'Academic Year', value: selectedYear, icon: Calendar, color: 'text-blue-600' },
+                   { label: 'Term/Semester', value: `Semester ${selectedHistSemester}`, icon: BookOpen, color: 'text-purple-600' },
+                   { label: 'Semester Percentage', value: activeHistory?.average || 'N/A', icon: TrendingUp, color: 'text-emerald-600' },
                 ].map((stat, i) => (
                    <div key={i} className="p-6 rounded-3xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
                       <div className="flex items-center gap-3 mb-3">
@@ -307,7 +371,7 @@ export const StudentCourses = () => {
                 ))}
              </div>
 
-             {filteredHistory ? (
+             {activeHistory ? (
                <div className="overflow-hidden rounded-[2rem] border border-slate-100 dark:border-slate-800">
                   <table className="w-full text-left">
                      <thead className="bg-slate-50 dark:bg-slate-800/50">
@@ -317,7 +381,7 @@ export const StudentCourses = () => {
                         </tr>
                      </thead>
                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {filteredHistory.courses.map((course, i) => (
+                        {activeHistory.courses.map((course, i) => (
                            <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                               <td className="px-8 py-5">
                                  <p className="font-bold text-slate-800 dark:text-white">{course.name}</p>
@@ -343,3 +407,4 @@ export const StudentCourses = () => {
     </div>
   );
 };
+

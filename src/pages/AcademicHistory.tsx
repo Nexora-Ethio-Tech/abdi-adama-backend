@@ -1,8 +1,54 @@
 
-import { studentAcademicHistory } from '../data/mockData';
-import { Award, Calendar, ChevronRight, TrendingUp } from 'lucide-react';
+import { Award, Calendar, ChevronRight, TrendingUp, Loader2 } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+
+interface HistoryRecord {
+  year: string;
+  semester: string;
+  average: string;
+  courses: Array<{ name: string; score: number }>;
+}
 
 export const AcademicHistory = () => {
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      const token = localStorage.getItem('abdi_adama_token');
+      try {
+        const res = await fetch('/api/student/academic-history', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const result = await res.json();
+          setHistory(result.data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch legacy history:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHistory();
+  }, []);
+
+  const cumulativeGpa = useMemo(() => {
+    if (history.length === 0) return '0.00';
+    const totalAvg = history.reduce((acc, h) => acc + parseFloat(h.average), 0);
+    return (totalAvg / history.length / 25).toFixed(2); // Crude 100% to 4.0 scale conversion for display
+  }, [history]);
+
+  if (loading) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4">
+        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+        <p className="text-sm font-bold text-slate-500">Loading your history...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
@@ -15,16 +61,16 @@ export const AcademicHistory = () => {
               <TrendingUp className="text-emerald-600" size={24} />
               <div>
                  <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Cumulative GPA</p>
-                 <p className="text-xl font-black text-emerald-900 dark:text-emerald-100">3.74</p>
+                 <p className="text-xl font-black text-emerald-900 dark:text-emerald-100">{cumulativeGpa}</p>
               </div>
            </div>
         </div>
       </div>
 
-      <div className="space-y-12">
-        {studentAcademicHistory.map((session, sIdx) => (
+      <div className="space-y-12 pb-20">
+        {history.length > 0 ? history.map((session, sIdx) => (
           <div key={sIdx} className="relative">
-            {sIdx !== studentAcademicHistory.length - 1 && (
+            {sIdx !== history.length - 1 && (
               <div className="absolute left-[31px] top-20 bottom-0 w-1 bg-gradient-to-b from-blue-100 to-transparent dark:from-slate-800 -z-10" />
             )}
 
@@ -41,7 +87,7 @@ export const AcademicHistory = () => {
                      </div>
                      <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl font-black text-slate-700 dark:text-slate-200">
                         <Award size={18} className="text-amber-500" />
-                        GPA: {session.gpa}
+                        Average: {session.average}
                      </div>
                   </div>
 
@@ -53,8 +99,8 @@ export const AcademicHistory = () => {
                               < Award size={20} />
                            </div>
                            <span className={`text-lg font-black ${
-                              course.grade.startsWith('A') ? 'text-emerald-500' : 'text-blue-500'
-                           }`}>{course.grade}</span>
+                              course.score >= 90 ? 'text-emerald-500' : 'text-blue-500'
+                           }`}>{course.score >= 90 ? 'A+' : course.score >= 80 ? 'A' : course.score >= 70 ? 'B' : 'C'}</span>
                         </div>
                         <h3 className="font-bold text-slate-900 dark:text-white mb-1 leading-tight">{course.name}</h3>
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Score: {course.score}%</p>
@@ -69,8 +115,13 @@ export const AcademicHistory = () => {
                </div>
             </div>
           </div>
-        ))}
+        )) : (
+          <div className="py-24 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-[3rem]">
+            <p className="text-slate-400 font-bold italic">No historical records found for your account.</p>
+          </div>
+        )}
       </div>
     </div>
   );
 };
+
