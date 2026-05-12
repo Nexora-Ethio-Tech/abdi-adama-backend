@@ -53,6 +53,39 @@ class SchoolAdminService {
     return result.rows[0];
   }
 
+  // User Status Management (Approve/Revoke users in their branch)
+  async updateUserStatus(userId: string, status: string, branchId: string, _schoolAdminId: string) {
+    // Verify user belongs to School Admin's branch
+    const userCheck = await pool.query(
+      `SELECT id, role, status FROM users 
+       WHERE id = $1 AND branch_id = $2`,
+      [userId, branchId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      throw new Error('User not found in your branch');
+    }
+
+    const user = userCheck.rows[0];
+
+    // Prevent School Admin from approving other School Admins, Vice Principals, or Auditors
+    const restrictedRoles = ['school-admin', 'vice-principal', 'auditor', 'super-admin'];
+    if (restrictedRoles.includes(user.role)) {
+      throw new Error('You cannot change the status of admin roles. Contact Super Admin.');
+    }
+
+    // Update user status
+    const result = await pool.query(
+      `UPDATE users 
+       SET status = $1, updated_at = NOW()
+       WHERE id = $2
+       RETURNING id, digital_id, name, email, role, status, branch_id`,
+      [status, userId]
+    );
+
+    return result.rows[0];
+  }
+
   // Class Management
   async createClass(data: {
     name: string;

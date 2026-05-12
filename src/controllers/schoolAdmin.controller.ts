@@ -53,6 +53,26 @@ class SchoolAdminController {
     }
   }
 
+  // User Status Management (Approve/Revoke)
+  async updateUserStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      const branchId = req.user!.branch_id;
+      const schoolAdminId = req.user!.id;
+
+      const user = await schoolAdminService.updateUserStatus(id, status, branchId!, schoolAdminId);
+
+      res.json({
+        success: true,
+        data: user,
+        message: `User ${status.toLowerCase()} successfully`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Class Management
   async createClass(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
