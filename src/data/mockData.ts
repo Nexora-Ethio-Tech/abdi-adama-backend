@@ -155,11 +155,22 @@ export const studentCurrentCourses = [
     teacher: 'Dr. Solomon',
     progress: 65,
     grades: {
-      quizzes: [{ name: 'Quiz 1', score: 15, total: 20 }, { name: 'Quiz 2', score: null, total: 20 }],
-      tests: [{ name: 'Test 1', score: 32, total: 40 }],
-      midterm: { name: 'Midterm', score: null, total: 100 },
-      assignments: [{ name: 'Assignment 1', score: 18, total: 20 }, { name: 'Assignment 2', score: null, total: 20 }],
-      final: { name: 'Final Exam', score: null, total: 100 }
+      quiz_1: 15,
+      quiz_2: null,
+      test_1: 32,
+      test_2: null,
+      participation: 18,
+      mid_exam: null,
+      final_exam: null,
+      max_scores: {
+        quiz_1: 20,
+        quiz_2: 20,
+        test_1: 40,
+        test_2: 40,
+        participation: 20,
+        mid_exam: 100,
+        final_exam: 100
+      }
     }
   },
   {
@@ -169,11 +180,22 @@ export const studentCurrentCourses = [
     teacher: 'Dr. Solomon',
     progress: 40,
     grades: {
-      quizzes: [{ name: 'Quiz 1', score: 12, total: 20 }],
-      tests: [{ name: 'Test 1', score: null, total: 40 }],
-      midterm: { name: 'Midterm', score: null, total: 100 },
-      assignments: [{ name: 'Assignment 1', score: 15, total: 20 }],
-      final: { name: 'Final Exam', score: null, total: 100 }
+      quiz_1: 12,
+      quiz_2: 15,
+      test_1: null,
+      test_2: null,
+      participation: 15,
+      mid_exam: null,
+      final_exam: null,
+      max_scores: {
+        quiz_1: 20,
+        quiz_2: 20,
+        test_1: 40,
+        test_2: 40,
+        participation: 20,
+        mid_exam: 100,
+        final_exam: 100
+      }
     }
   },
   {
@@ -183,11 +205,22 @@ export const studentCurrentCourses = [
     teacher: 'W/ro Selam',
     progress: 80,
     grades: {
-      quizzes: [{ name: 'Quiz 1', score: 18, total: 20 }, { name: 'Quiz 2', score: 19, total: 20 }],
-      tests: [{ name: 'Test 1', score: 38, total: 40 }],
-      midterm: { name: 'Midterm', score: 88, total: 100 },
-      assignments: [{ name: 'Assignment 1', score: 20, total: 20 }],
-      final: { name: 'Final Exam', score: null, total: 100 }
+      quiz_1: 18,
+      quiz_2: 19,
+      test_1: 38,
+      test_2: null,
+      participation: 20,
+      mid_exam: 88,
+      final_exam: null,
+      max_scores: {
+        quiz_1: 20,
+        quiz_2: 20,
+        test_1: 40,
+        test_2: 40,
+        participation: 20,
+        mid_exam: 100,
+        final_exam: 100
+      }
     }
   }
 ];
@@ -196,34 +229,40 @@ export const studentAcademicHistory = [
   {
     year: '2024/2025',
     semester: 'Semester 2',
-    gpa: '3.85',
+    average: '92.4%',
     courses: [
-      { name: 'Amharic', grade: 'A', score: 92 },
-      { name: 'English', grade: 'A', score: 95 },
-      { name: 'Chemistry', grade: 'B+', score: 88 },
-      { name: 'Civics', grade: 'A', score: 90 }
+      { name: 'Amharic', score: 92 },
+      { name: 'English', score: 95 },
+      { name: 'Chemistry', score: 88 },
+      { name: 'Civics', score: 90 },
+      { name: 'Biology', score: 94 },
+      { name: 'Physics', score: 91 },
+      { name: 'Mathematics', score: 96 }
     ]
   },
   {
     year: '2024/2025',
     semester: 'Semester 1',
-    gpa: '3.72',
+    average: '89.6%',
     courses: [
-      { name: 'Amharic', grade: 'A-', score: 89 },
-      { name: 'English', grade: 'A', score: 93 },
-      { name: 'General Science', grade: 'B', score: 84 },
-      { name: 'Art', grade: 'A+', score: 98 }
+      { name: 'Amharic', score: 89 },
+      { name: 'English', score: 93 },
+      { name: 'General Science', score: 84 },
+      { name: 'Art', score: 98 },
+      { name: 'Physical Education', score: 95 },
+      { name: 'Geography', score: 82 }
     ]
   },
   {
     year: '2023/2024',
-    semester: 'Full Year',
-    gpa: '3.65',
+    semester: 'Semester 2',
+    average: '87.2%',
     courses: [
-      { name: 'Grade 9 Mathematics', grade: 'B+', score: 87 },
-      { name: 'Grade 9 Physics', grade: 'A-', score: 90 },
-      { name: 'Grade 9 Biology', grade: 'A', score: 94 },
-      { name: 'Geography', grade: 'B', score: 82 }
+      { name: 'Grade 9 Mathematics', score: 87 },
+      { name: 'Grade 9 Physics', score: 90 },
+      { name: 'Grade 9 Biology', score: 94 },
+      { name: 'Geography', score: 82 },
+      { name: 'History', score: 85 }
     ]
   }
 ];

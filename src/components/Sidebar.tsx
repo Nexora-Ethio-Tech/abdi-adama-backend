@@ -114,7 +114,7 @@ export const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
         return [
           { icon: LayoutDashboard, label: t('nav.myDashboard'), path: '/' },
           { icon: BookOpen, label: t('nav.gradesCourses'), path: '/courses' },
-          { icon: CalendarCheck, label: t('nav.academicHistory'), path: '/attendance' },
+          { icon: CalendarCheck, label: t('nav.academicHistory'), path: '/courses?tab=history' },
           { icon: ClipboardList, label: t('nav.exams'), path: '/exams' },
         ];
       case 'parent':
