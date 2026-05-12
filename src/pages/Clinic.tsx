@@ -72,12 +72,15 @@ export const Clinic = () => {
         setVisitLogs(visitsJson.data || visitsJson);
       }
 
-      // Medicine API not yet implemented — keep mock
-      setMedicines([
-        { id: 'M1', name: 'Paracetamol', stock: 50, unit: 'Tablets' },
-        { id: 'M2', name: 'Ibuprofen', stock: 30, unit: 'Tablets' },
-        { id: 'M3', name: 'Amoxicillin', stock: 20, unit: 'Capsules' }
-      ]);
+      // Medicine inventory — now backed by silo_medicines table
+      const medRes = await apiFetch('/api/clinic/medicine');
+      if (medRes.ok) {
+        const medJson = await medRes.json();
+        setMedicines(medJson.data || medJson);
+      } else {
+        // Non-fatal: keep empty array, don't block clinic
+        setMedicines([]);
+      }
     } catch {
       toast.error('Network error — could not reach the clinic server.');
     } finally {

@@ -1,5 +1,5 @@
 
-import { Megaphone, Plus, X, Bus, Users, RefreshCw, Loader2 } from 'lucide-react';
+import { Megaphone, Plus, X, Bus, Users, RefreshCw } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
 import { useTranslation } from 'react-i18next';
@@ -117,7 +117,14 @@ export const DriverPortal = () => {
       {activeTab === 'manifest' ? (
         <div className="space-y-4 animate-in fade-in duration-300">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Students on your route</h3>
+            <div>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Students on your route</h3>
+              {routeInfo && (
+                <p className="text-[11px] font-bold text-orange-500 mt-0.5">
+                  Bus {routeInfo.bus_number} · {routeInfo.route_name}
+                </p>
+              )}
+            </div>
             <button onClick={fetchManifest} className="text-orange-600 hover:rotate-180 transition-transform duration-500">
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>

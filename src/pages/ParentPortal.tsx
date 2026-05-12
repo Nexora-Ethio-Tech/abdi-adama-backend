@@ -184,6 +184,14 @@ export const ParentPortal = () => {
     );
   };
 
+  if (dataLoading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
+      </div>
+    );
+  }
+
   if (selectedChild) {
     return (
       <div className="space-y-8 animate-in fade-in duration-500">

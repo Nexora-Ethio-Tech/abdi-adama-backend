@@ -10,6 +10,7 @@ import clinicRoutes from './modules/Clinic/clinicRoutes';
 import driverRoutes from './modules/Driver/driverRoutes';
 import studentRoutes from './modules/Student/studentRoutes';
 import parentRoutes from './modules/Parent/parentRoutes';
+import examRoutes from './modules/Exam/examRoutes';
 
 dotenv.config();
 
@@ -413,6 +414,7 @@ app.use('/api/driver',    driverRoutes);
 app.use('/api/transport', driverRoutes);  // Frontend alias → same Driver controller
 app.use('/api/student',   studentRoutes);
 app.use('/api/parent',    parentRoutes);
+app.use('/api/exams',     examRoutes);    // Official Exam Secure Environment
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/health', async (req: Request, res: Response) => {
@@ -446,7 +448,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
-  console.log(`\n✓ Server running at http://localhost:${PORT}`);
+  console.log(`✓ Server running at http://localhost:${PORT}`);
   console.log(`✓ Swagger UI       → http://localhost:${PORT}/api-docs`);
   console.log(`✓ Health Check     → http://localhost:${PORT}/health`);
   console.log(`✓ Admin API        → POST http://localhost:${PORT}/api/admin/create-user`);
@@ -455,7 +457,8 @@ app.listen(PORT, async () => {
   console.log(`✓ Clinic API       → GET  http://localhost:${PORT}/api/clinic/visits/history`);
   console.log(`✓ Driver API       → GET  http://localhost:${PORT}/api/driver/manifest`);
   console.log(`✓ Student API      → GET  http://localhost:${PORT}/api/student/profile`);
-  console.log(`✓ Parent API       → GET  http://localhost:${PORT}/api/parent/dashboard\n`);
+  console.log(`✓ Parent API       → GET  http://localhost:${PORT}/api/parent/dashboard`);
+  console.log(`✓ Exam API         → GET  http://localhost:${PORT}/api/exams\n`);
 
   try {
     await pool.query('SELECT 1');

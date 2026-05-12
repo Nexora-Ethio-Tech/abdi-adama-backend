@@ -1,6 +1,8 @@
 
 import { Award, Calendar, ChevronRight, TrendingUp, Loader2 } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
+import { apiFetch } from '../utils/apiClient';
+import { toast } from '../components/Toast';
 
 interface HistoryRecord {
   year: string;
@@ -15,17 +17,17 @@ export const AcademicHistory = () => {
 
   useEffect(() => {
     const fetchHistory = async () => {
-      const token = localStorage.getItem('abdi_adama_token');
       try {
-        const res = await fetch('/api/student/academic-history', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const res = await apiFetch('/api/student/academic-history');
         if (res.ok) {
           const result = await res.json();
-          setHistory(result.data);
+          setHistory(result.data || []);
+        } else {
+          const err = await res.json().catch(() => ({}));
+          toast.error(err.message || 'Failed to load archives.');
         }
-      } catch (err) {
-        console.error('Failed to fetch legacy history:', err);
+      } catch {
+        toast.error('Failed to load archives.');
       } finally {
         setLoading(false);
       }

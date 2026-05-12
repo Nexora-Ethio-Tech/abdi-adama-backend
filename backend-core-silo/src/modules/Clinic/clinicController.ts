@@ -121,3 +121,54 @@ export const getVisitHistory = async (req: Request, res: Response) => {
     return sendError(res, 'Failed to fetch visit history.', 500, err.message);
   }
 };
+
+/**
+ * GET /api/clinic/medicine
+ * Returns all medicines in the inventory with current stock.
+ */
+export const getMedicines = async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, stock, unit, description
+         FROM silo_medicines
+        ORDER BY name ASC`
+    );
+    return sendSuccess(res, result.rows);
+  } catch (err: any) {
+    return sendError(res, 'Failed to fetch medicine inventory.', 500, err.message);
+  }
+};
+
+/**
+ * POST /api/clinic/medicine/deduct
+ * Deducts stock from a medicine (e.g., when administered during a visit).
+ * Body: { medicine_id, quantity }
+ * Returns updated medicine row.
+ */
+export const deductMedicine = async (req: Request, res: Response) => {
+  const { medicine_id, quantity } = req.body;
+
+  if (!medicine_id || !quantity || isNaN(Number(quantity)) || Number(quantity) < 1) {
+    return sendError(res, 'medicine_id and a positive quantity are required.', 400);
+  }
+
+  try {
+    // Atomic decrement with stock floor check
+    const result = await pool.query(
+      `UPDATE silo_medicines
+          SET stock = GREATEST(stock - $1, 0),
+              updated_at = NOW()
+        WHERE id = $2
+        RETURNING id, name, stock, unit`,
+      [Number(quantity), medicine_id]
+    );
+
+    if (result.rows.length === 0) {
+      return sendError(res, 'Medicine not found.', 404);
+    }
+
+    return sendSuccess(res, result.rows[0], 'Stock deducted successfully.');
+  } catch (err: any) {
+    return sendError(res, 'Failed to deduct medicine stock.', 500, err.message);
+  }
+};

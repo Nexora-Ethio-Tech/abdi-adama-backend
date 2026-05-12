@@ -39,6 +39,7 @@ const WebsitePosts = lazy(() => import('./pages/WebsitePosts').then((m) => ({ de
 const AuditorDashboard = lazy(() => import('./pages/AuditorDashboard').then((m) => ({ default: m.AuditorDashboard })));
 const AcademicManagement = lazy(() => import('./pages/AcademicManagement').then((m) => ({ default: m.AcademicManagement })));
 const VicePrincipalDashboard = lazy(() => import('./pages/VicePrincipalDashboard').then((m) => ({ default: m.VicePrincipalDashboard })));
+const OfficialExam = lazy(() => import('./pages/OfficialExam').then((m) => ({ default: m.OfficialExam })));
 
 const PageLoader = () => (
   <div className="min-h-[40vh] flex items-center justify-center">
@@ -270,6 +271,13 @@ function App() {
             } />
             <Route path="settings" element={<Settings />} />
             <Route path="exam/:examId" element={<ExamSession />} />
+
+            {/* Official Exam — full lockdown mode for Students */}
+            <Route path="official-exam" element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <OfficialExam />
+              </ProtectedRoute>
+            } />
 
             {/* Catch-all within layout */}
             <Route path="*" element={<Navigate to="/" replace />} />

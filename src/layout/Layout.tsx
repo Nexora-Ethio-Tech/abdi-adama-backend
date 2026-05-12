@@ -5,16 +5,18 @@ import { Header } from '../components/Header';
 import { Chatbot } from '../components/Chatbot';
 import { ShootingStars } from '../components/Effects';
 import { useUser } from '../context/UserContext';
+import { useExam } from '../context/ExamContext';
 import { useState } from 'react';
 
 export const Layout = () => {
   const location = useLocation();
   const { role, user, schoolName } = useUser();
+  const { examLockdown } = useExam();
 
   const displaySchoolName = schoolName.english;
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  const shouldShowStars = role === 'student' || role === 'parent' || !user;
+  const shouldShowStars = (role === 'student' || role === 'parent' || !user) && !examLockdown;
 
   const getTitle = (path: string) => {
     if (role === 'student') {
@@ -23,6 +25,7 @@ export const Layout = () => {
         case '/courses': return 'Grades & Courses';
         case '/attendance': return 'Academic History';
         case '/finance': return 'Fee Payments';
+        case '/official-exam': return 'Official Exam';
         default: return 'Student Portal';
       }
     }
@@ -69,6 +72,16 @@ export const Layout = () => {
 
   const isExamPage = location.pathname.startsWith('/exam/');
 
+  // ── EXAM LOCKDOWN MODE — full-screen takeover ──────────────────────────────
+  // When active: no sidebar, no header, no chatbot, no decorations.
+  if (examLockdown) {
+    return (
+      <div className="min-h-screen bg-slate-950">
+        <Outlet />
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-300 relative overflow-hidden">
       {shouldShowStars && <ShootingStars />}
@@ -97,3 +110,4 @@ export const Layout = () => {
     </div>
   );
 };
+
