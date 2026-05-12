@@ -41,19 +41,19 @@ export const AcademicHistory = () => {
                      </div>
                      <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl font-black text-slate-700 dark:text-slate-200">
                         <Award size={18} className="text-amber-500" />
-                        GPA: {session.gpa}
+                        GPA: {(session as any).gpa}
                      </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {session.courses.map((course, cIdx) => (
+                    {session.courses.map((course: any, cIdx) => (
                       <div key={cIdx} className="bg-white dark:bg-slate-900 p-6 rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group">
                         <div className="flex justify-between items-start mb-4">
                            <div className="w-10 h-10 bg-slate-50 dark:bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-blue-600 group-hover:text-white transition-colors">
                               < Award size={20} />
                            </div>
                            <span className={`text-lg font-black ${
-                              course.grade.startsWith('A') ? 'text-emerald-500' : 'text-blue-500'
+                              course.grade?.startsWith('A') ? 'text-emerald-500' : 'text-blue-500'
                            }`}>{course.grade}</span>
                         </div>
                         <h3 className="font-bold text-slate-900 dark:text-white mb-1 leading-tight">{course.name}</h3>

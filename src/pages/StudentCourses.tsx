@@ -1,6 +1,6 @@
 
 import { studentCurrentCourses, studentAcademicHistory } from '../data/mockData';
-import { BookOpen, User, CheckCircle2, Circle, AlertCircle, Calendar, GraduationCap, ChevronDown, Award, TrendingUp } from 'lucide-react';
+import { BookOpen, User, CheckCircle2, Circle, Calendar, GraduationCap, ChevronDown, Award, TrendingUp } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -217,14 +217,13 @@ export const StudentCourses = () => {
                                       selectedCourse.grades.test_1, selectedCourse.grades.test_2,
                                       selectedCourse.grades.participation, selectedCourse.grades.mid_exam,
                                       selectedCourse.grades.final_exam
-                                    ].reduce((acc, curr) => acc + (curr || 0), 0)}
+                                    ].reduce((acc: number, curr) => acc + (curr || 0), 0)}
                                     <span className="text-xs ml-1 opacity-60">
                                        / {[
                                          selectedCourse.grades.max_scores.quiz_1, selectedCourse.grades.max_scores.quiz_2,
                                          selectedCourse.grades.max_scores.test_1, selectedCourse.grades.max_scores.test_2,
                                          selectedCourse.grades.max_scores.participation, selectedCourse.grades.max_scores.mid_exam,
-                                         selectedCourse.grades.max_scores.final_exam
-                                       ].reduce((acc, curr) => acc + (curr || 0), 0)}
+                                       ].reduce((acc: number, curr) => acc + (curr || 0), 0)}
                                     </span>
                                  </span>
                               </td>
