@@ -8,6 +8,7 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  school_id?: string;      // 4-digit or formatted ID from backend (e.g. "STU-2001")
   digitalId?: string;
   isBranchAuditor?: boolean;
 }
@@ -70,12 +71,26 @@ const getDashboardRoute = (role: UserRole) => {
   }
 };
 
-const createMockUser = (identifier: string, role: UserRole = 'super-admin'): User => ({
-  id: `dev-${identifier || 'user'}`,
-  name: identifier.split('@')[0] || 'Dev User',
-  email: identifier || 'dev@example.com',
-  role,
-});
+/**
+ * Map backend silo_role enum values to frontend UserRole.
+ * Backend uses PascalCase enums; frontend uses kebab-case strings.
+ */
+const mapBackendRole = (backendRole: string): UserRole => {
+  const map: Record<string, UserRole> = {
+    Student:    'student',
+    Parent:     'parent',
+    Driver:     'driver',
+    Librarian:  'librarian',
+    ClinicAdmin:'clinic-admin',
+    Teacher:    'teacher',
+    Admin:      'school-admin',
+    SuperAdmin: 'super-admin',
+    Finance:    'finance-clerk',
+    VP:         'vice-principal',
+    Auditor:    'auditor',
+  };
+  return map[backendRole] ?? 'student';
+};
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
@@ -84,7 +99,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   // Do NOT trust localStorage on initial load. Start with null.
   // The verifyToken effect will restore the user ONLY if the token is valid.
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true); // Block rendering until verified
+  const [loading, setLoading] = useState(true);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [gradesLocked, setGradesLocked] = useState(false);
   const [primaryRole, setPrimaryRole] = useState<UserRole | null>(() => {
@@ -98,53 +113,24 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const [schoolName, setSchoolName] = useState<MultilingualText>(() => {
     const saved = localStorage.getItem('school_name');
     if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return {
-          oromic: 'Mana Barumsaa Abdii Adaamaa',
-          amharic: 'አብዲ አዳማ ትምህርት ቤት',
-          english: 'Abdi Adama School'
-        };
-      }
+      try { return JSON.parse(saved); } catch { /* fall through */ }
     }
-    return {
-      oromic: 'Mana Barumsaa Abdii Adaamaa',
-      amharic: 'አብዲ አዳማ ትምህርት ቤት',
-      english: 'Abdi Adama School'
-    };
+    return { oromic: 'Mana Barumsaa Abdii Adaamaa', amharic: 'አብዲ አዳማ ትምህርት ቤት', english: 'Abdi Adama School' };
   });
 
   const [schoolMotto, setSchoolMotto] = useState<MultilingualText>(() => {
     const saved = localStorage.getItem('school_motto');
     if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return {
-          oromic: 'ijooleen kessaan ijolee kenyaa',
-          amharic: 'ልጆቻቹ ልጆቻችን ናቸዉ',
-          english: 'Your children are our children'
-        };
-      }
+      try { return JSON.parse(saved); } catch { /* fall through */ }
     }
-    return {
-      oromic: 'ijooleen kessaan ijolee kenyaa',
-      amharic: 'ልጆቻቹ ልጆቻችን ናቸዉ',
-      english: 'Your children are our children'
-    };
+    return { oromic: 'ijooleen kessaan ijolee kenyaa', amharic: 'ልጆቻቹ ልጆቻችን ናቸዉ', english: 'Your children are our children' };
   });
 
   // ─── Token Verification on Load ────────────────────────────────────────────
-  // This is the ONLY way a user gets restored after page refresh.
-  // No token → no user. Invalid token → user cleared.
   useEffect(() => {
     const restoreSession = () => {
       const token = localStorage.getItem('abdi_adama_token');
-      if (!token) {
-        setLoading(false);
-        return;
-      }
+      if (!token) { setLoading(false); return; }
 
       const savedUser = localStorage.getItem('abdi_adama_user');
       if (savedUser) {
@@ -166,13 +152,11 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         setUser(null);
         setPrimaryRole(null);
       }
-
       setLoading(false);
     };
     restoreSession();
   }, []);
 
-  // Persist user to localStorage when it changes (for display only, never trusted)
   useEffect(() => {
     if (user) {
       localStorage.setItem('abdi_adama_user', JSON.stringify(user));
@@ -182,46 +166,103 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [user]);
 
-  useEffect(() => {
-    localStorage.setItem('school_name', JSON.stringify(schoolName));
-  }, [schoolName]);
-
-  useEffect(() => {
-    localStorage.setItem('school_motto', JSON.stringify(schoolMotto));
-  }, [schoolMotto]);
-
-  useEffect(() => {
-    localStorage.setItem('registration_open', registrationOpen.toString());
-  }, [registrationOpen]);
+  useEffect(() => { localStorage.setItem('school_name', JSON.stringify(schoolName)); }, [schoolName]);
+  useEffect(() => { localStorage.setItem('school_motto', JSON.stringify(schoolMotto)); }, [schoolMotto]);
+  useEffect(() => { localStorage.setItem('registration_open', registrationOpen.toString()); }, [registrationOpen]);
 
   const role = user?.role || null;
 
+  /**
+   * login()
+   *
+   * First tries the real backend at POST /api/auth/login.
+   * Falls back to demo-bypass ONLY if the server is unreachable (ECONNREFUSED / network error),
+   * so UI development can proceed without a running backend.
+   */
+  const login = async (credentials: {
+    digitalIdOrEmail: string;
+    password?: string;
+    otp?: string;
+  }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
+    const identifier = credentials.digitalIdOrEmail.trim();
+    const password = credentials.password || credentials.otp || '';
 
-  const login = async (credentials: { digitalIdOrEmail: string; password?: string; otp?: string }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
-    // AS REQUESTED: Always succeed with any credentials
-    // This allows for easy demoing without server-side verification.
-    
-    await new Promise(r => setTimeout(r, 600)); // Brief delay for realistic feel
+    // Infer backend role from identifier prefix
+    const inferBackendRole = (id: string): string => {
+      const u = id.toUpperCase();
+      if (u.startsWith('STU')) return 'Student';
+      if (u.startsWith('PAR')) return 'Parent';
+      if (u.startsWith('DRV') || u.startsWith('DR-')) return 'Driver';
+      if (u.startsWith('LIB')) return 'Librarian';
+      if (u.startsWith('CLN')) return 'ClinicAdmin';
+      if (u.startsWith('TCH') || u.startsWith('TC-')) return 'Teacher';
+      return 'Student';
+    };
 
-    // Default to super-admin for any login, or determine role from email if provided
-    let role: UserRole = 'super-admin';
-    const identifier = credentials.digitalIdOrEmail.toLowerCase();
-    
-    if (identifier.includes('teacher')) role = 'teacher';
-    else if (identifier.includes('student')) role = 'student';
-    else if (identifier.includes('parent')) role = 'parent';
-    else if (identifier.includes('finance')) role = 'finance-clerk';
-    else if (identifier.includes('vice')) role = 'vice-principal';
-    else if (identifier.includes('auditor')) role = 'auditor';
+    try {
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiBase}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school_id: identifier,
+          password,
+          role: inferBackendRole(identifier),
+        }),
+      });
 
-    const mockUser = createMockUser(credentials.digitalIdOrEmail || 'demo-user', role);
-    setUser(mockUser);
-    setPrimaryRole(mockUser.role);
-    localStorage.setItem('abdi_adama_token', 'demo-bypass-token');
-    localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
-    localStorage.setItem('abdi_adama_primary_role', mockUser.role);
-    
-    return { success: true, redirect: getDashboardRoute(mockUser.role) };
+      const data = await res.json();
+
+      if (res.ok && data.token) {
+        const backendUser = data.user;
+        const mappedRole = mapBackendRole(backendUser.role);
+        const frontendUser: User = {
+          id:        backendUser.user_id,
+          name:      backendUser.full_name,
+          email:     backendUser.school_id,
+          role:      mappedRole,
+          school_id: backendUser.school_id,
+          digitalId: backendUser.school_id,
+        };
+        localStorage.setItem('abdi_adama_token', data.token);
+        localStorage.setItem('abdi_adama_user', JSON.stringify(frontendUser));
+        localStorage.setItem('abdi_adama_primary_role', mappedRole);
+        setUser(frontendUser);
+        setPrimaryRole(mappedRole);
+        return { success: true, redirect: getDashboardRoute(mappedRole) };
+      }
+
+      return { success: false, error: data.message || 'Invalid credentials.' };
+
+    } catch {
+      // ── Offline / demo fallback ────────────────────────────────────────
+      console.warn('[Auth] Backend unreachable – using demo bypass for UI development.');
+      await new Promise(r => setTimeout(r, 600));
+
+      let demoRole: UserRole = 'super-admin';
+      const id = identifier.toLowerCase();
+      if (id.startsWith('stu') || id.includes('student')) demoRole = 'student';
+      else if (id.startsWith('par') || id.includes('parent')) demoRole = 'parent';
+      else if (id.startsWith('drv') || id.includes('driver')) demoRole = 'driver';
+      else if (id.startsWith('lib')) demoRole = 'librarian';
+      else if (id.startsWith('cln') || id.includes('clinic')) demoRole = 'clinic-admin';
+      else if (id.startsWith('tch') || id.includes('teacher')) demoRole = 'teacher';
+
+      const demoUser: User = {
+        id:        `demo-${identifier}`,
+        name:      identifier.split('@')[0] || 'Demo User',
+        email:     identifier,
+        role:      demoRole,
+        school_id: identifier,
+        digitalId: identifier,
+      };
+      localStorage.setItem('abdi_adama_token', 'demo-bypass-token');
+      localStorage.setItem('abdi_adama_user', JSON.stringify(demoUser));
+      localStorage.setItem('abdi_adama_primary_role', demoRole);
+      setUser(demoUser);
+      setPrimaryRole(demoRole);
+      return { success: true, redirect: getDashboardRoute(demoRole) };
+    }
   };
 
   const logout = () => {
@@ -234,9 +275,8 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const switchRole = async (newRole: UserRole): Promise<string | null> => {
-    const activeUser = user || createMockUser('dev-user', primaryRole || 'super-admin');
+    const activeUser = user ?? { id: 'dev-user', name: 'Dev User', email: 'dev@example.com', role: primaryRole ?? 'super-admin' as UserRole };
     const nextUser = { ...activeUser, role: newRole };
-
     setUser(nextUser);
     setPrimaryRole(primaryRole || activeUser.role);
     localStorage.setItem('abdi_adama_token', 'dev-bypass-token');

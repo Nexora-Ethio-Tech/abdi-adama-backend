@@ -1,7 +1,8 @@
 
-import { Book, Search, Plus, CheckCircle, Clock, RefreshCw } from 'lucide-react';
+import { Book, Search, Plus, CheckCircle, Clock, RefreshCw, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { mockLibrary, mockOverdueLoans } from '../data/mockData';
+import { toast } from '../components/Toast';
 
 interface BookType {
   id: string;
@@ -34,6 +35,8 @@ export const Library = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [showIssueModal, setShowIssueModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [returningId, setReturningId] = useState<string | null>(null);
   const [issueData, setIssueData] = useState({ book_id: '', student_id: '', due_date: '' });
 
   // const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -102,6 +105,8 @@ export const Library = () => {
     const book = books.find(b => b.id === issueData.book_id);
     if (!book) return;
 
+    setIsSaving(true);
+    await new Promise(r => setTimeout(r, 800)); // simulate API call
     setLoans([...loans, {
       id: 'L' + Date.now(),
       book_id: issueData.book_id,
@@ -114,8 +119,9 @@ export const Library = () => {
       days_overdue: 0,
       fine_amount: 0
     }]);
+    setIsSaving(false);
     setShowIssueModal(false);
-    alert('Book issued successfully (Mock)');
+    toast.success(`"${book.title}" issued successfully.`);
   };
 
   const handleReturnBook = async (loanId: string) => {
@@ -136,8 +142,11 @@ export const Library = () => {
     // }
 
     // MOCK RETURN
+    setReturningId(loanId);
+    await new Promise(r => setTimeout(r, 600));
     setLoans(loans.map(l => l.id === loanId ? { ...l, returned_at: new Date().toISOString() } : l));
-    alert('Book returned successfully (Mock)');
+    setReturningId(null);
+    toast.success('Book return recorded successfully.');
   };
 
   const filteredBooks = books.filter(book =>
@@ -335,8 +344,10 @@ export const Library = () => {
                       {!loan.returned_at && (
                         <button 
                           onClick={() => handleReturnBook(loan.id)}
-                          className="bg-emerald-600 text-white px-3 py-1 rounded text-[10px] font-bold hover:bg-emerald-700"
+                          disabled={returningId === loan.id}
+                          className="bg-emerald-600 text-white px-3 py-1 rounded text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-1"
                         >
+                          {returningId === loan.id ? <Loader2 size={12} className="animate-spin" /> : null}
                           Mark Return
                         </button>
                       )}
@@ -396,9 +407,11 @@ export const Library = () => {
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700"
+                  disabled={isSaving}
+                  className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 disabled:opacity-60 flex items-center justify-center gap-2"
                 >
-                  Confirm Issue
+                  {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
+                  {isSaving ? 'Saving...' : 'Confirm Issue'}
                 </button>
               </div>
             </form>

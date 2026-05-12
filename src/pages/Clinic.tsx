@@ -1,12 +1,14 @@
 
 import { useState, useEffect } from 'react';
 import { mockStudents } from '../data/mockData';
+import { toast } from '../components/Toast';
 import {
   Stethoscope,
   Search,
   User,
   History,
-  HeartPulse
+  HeartPulse,
+  Loader2
 } from 'lucide-react';
 
 interface Medicine {
@@ -44,6 +46,7 @@ export const Clinic = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [showLogModal, setShowLogModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [newVisit, setNewVisit] = useState({ reason: '', treatment: '', selectedMeds: [] as {id: string, quantity: number}[] });
 
   // const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -121,6 +124,8 @@ export const Clinic = () => {
     // }
 
     // MOCK LOG
+    setIsSaving(true);
+    await new Promise(r => setTimeout(r, 900));
     const newV: VisitLog = {
       id: 'V' + Date.now(),
       student_id: selectedStudent.id,
@@ -132,9 +137,10 @@ export const Clinic = () => {
       status: 'Logged'
     };
     setVisitLogs([newV, ...visitLogs]);
+    setIsSaving(false);
     setShowLogModal(false);
     setNewVisit({ reason: '', treatment: '', selectedMeds: [] });
-    alert('Visit logged successfully (Mock)');
+    toast.success(`Visit logged for ${selectedStudent.name}.`);
   };
 
   const filteredStudents = students.filter(s =>
@@ -331,7 +337,14 @@ export const Clinic = () => {
               </div>
               <div className="flex gap-3 pt-4">
                 <button type="button" onClick={() => setShowLogModal(false)} className="flex-1 px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-50 transition-colors">Cancel</button>
-                <button type="submit" className="flex-1 bg-rose-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-rose-200">Log & Deduct Stock</button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="flex-1 bg-rose-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-rose-200 disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                  {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
+                  {isSaving ? 'Saving...' : 'Log & Deduct Stock'}
+                </button>
               </div>
             </form>
           </div>

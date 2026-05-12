@@ -28,6 +28,12 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  // ── PIN length guard (prevents 1-3 digit PINs from reaching bcrypt) ─────────
+  if (password.length < 4) {
+    res.status(400).json({ message: 'PIN must be at least 4 digits.' });
+    return;
+  }
+
   if (!ALL_ROLES.includes(role as UserRole)) {
     res.status(400).json({ message: `Invalid role. Must be one of: ${ALL_ROLES.join(', ')}.` });
     return;
