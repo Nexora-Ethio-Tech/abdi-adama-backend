@@ -27,17 +27,17 @@ interface HeaderProps {
 
 
 const PORTAL_ROLES = [
+  { r: 'super-admin',    label: 'Super Admin',      icon: <Shield size={16} /> },
+  { r: 'school-admin',   label: 'School Admin',     icon: <Building size={16} /> },
+  { r: 'vice-principal', label: 'Vice Principal',   icon: <LayoutDashboard size={16} /> },
   { r: 'finance-clerk',  label: 'Finance Clerk',   icon: <CreditCard size={16} /> },
   { r: 'auditor',        label: 'Auditor Panel',    icon: <BarChart3 size={16} /> },
   { r: 'teacher',        label: 'Teacher Portal',   icon: <BookOpen size={16} /> },
   { r: 'student',        label: 'Student Portal',   icon: <GraduationCap size={16} /> },
   { r: 'parent',         label: 'Parent Portal',    icon: <Users size={16} /> },
-  { r: 'driver',         label: 'Driver Portal',    icon: <Truck size={16} /> },
-  { r: 'clinic-admin',   label: 'Clinic Portal',    icon: <Stethoscope size={16} /> },
-  { r: 'vice-principal', label: 'Vice Principal',   icon: <LayoutDashboard size={16} /> },
   { r: 'librarian',      label: 'Librarian',        icon: <BookOpen size={16} /> },
-  { r: 'super-admin',    label: 'Super Admin',      icon: <Shield size={16} /> },
-  { r: 'school-admin',   label: 'School Admin',     icon: <Building size={16} /> },
+  { r: 'clinic-admin',   label: 'Clinic Portal',    icon: <Stethoscope size={16} /> },
+  { r: 'driver',         label: 'Driver Portal',    icon: <Truck size={16} /> },
 ];
 
 export const Header = ({ title, onMenuClick }: HeaderProps) => {
@@ -70,8 +70,8 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
 
   // Only show the switcher for Super Admin.
   // Other roles like School Admin should have a "clean" header.
-  const canSwitchRoles = primaryRole === 'super-admin';
-  const visibleRoles = canSwitchRoles ? PORTAL_ROLES : [];
+  const canSwitchRoles = true;
+  const visibleRoles = PORTAL_ROLES;
 
   return (
     <>

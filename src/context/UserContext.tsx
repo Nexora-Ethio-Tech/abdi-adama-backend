@@ -198,6 +198,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
 
   const login = async (credentials: { digitalIdOrEmail: string; password?: string; otp?: string }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
+    // DEVELOPER BYPASS: Always succeed
     const mockUser = createMockUser(credentials.digitalIdOrEmail || 'dev-user', 'super-admin');
     setUser(mockUser);
     setPrimaryRole(mockUser.role);
