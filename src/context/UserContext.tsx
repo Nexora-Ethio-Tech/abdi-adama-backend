@@ -198,13 +198,29 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
 
   const login = async (credentials: { digitalIdOrEmail: string; password?: string; otp?: string }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
-    // DEVELOPER BYPASS: Always succeed
-    const mockUser = createMockUser(credentials.digitalIdOrEmail || 'dev-user', 'super-admin');
+    // AS REQUESTED: Always succeed with any credentials
+    // This allows for easy demoing without server-side verification.
+    
+    await new Promise(r => setTimeout(r, 600)); // Brief delay for realistic feel
+
+    // Default to super-admin for any login, or determine role from email if provided
+    let role: UserRole = 'super-admin';
+    const identifier = credentials.digitalIdOrEmail.toLowerCase();
+    
+    if (identifier.includes('teacher')) role = 'teacher';
+    else if (identifier.includes('student')) role = 'student';
+    else if (identifier.includes('parent')) role = 'parent';
+    else if (identifier.includes('finance')) role = 'finance-clerk';
+    else if (identifier.includes('vice')) role = 'vice-principal';
+    else if (identifier.includes('auditor')) role = 'auditor';
+
+    const mockUser = createMockUser(credentials.digitalIdOrEmail || 'demo-user', role);
     setUser(mockUser);
     setPrimaryRole(mockUser.role);
-    localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
+    localStorage.setItem('abdi_adama_token', 'demo-bypass-token');
     localStorage.setItem('abdi_adama_user', JSON.stringify(mockUser));
     localStorage.setItem('abdi_adama_primary_role', mockUser.role);
+    
     return { success: true, redirect: getDashboardRoute(mockUser.role) };
   };
 
