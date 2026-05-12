@@ -7,3 +7,7 @@ deployment:
     - /bin/cp -R dist/* $DEPLOYPATH
     # Deploy .htaccess for HTTPS enforcement
     - /bin/cp .htaccess $DEPLOYPATH/.htaccess
+    
+    # 2. Deploy Backend Silo
+    - /bin/mkdir -p $DEPLOYPATH/backend-core-silo
+    - /bin/cp -R backend-core-silo/* $DEPLOYPATH/backend-core-silo/

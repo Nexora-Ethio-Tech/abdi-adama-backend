@@ -79,6 +79,21 @@ export const Login = () => {
         </div>
 
         <div className="card p-8">
+          {/* HIGH VISIBILITY BYPASS FOR DEV */}
+          <button
+            type="button"
+            onClick={async () => {
+              setLoading(true);
+              const res = await login({ digitalIdOrEmail: 'admin@nexora.com', password: 'password' });
+              if (res.success) navigate(res.redirect || '/');
+              setLoading(false);
+            }}
+            className="w-full mb-8 py-4 px-4 rounded-2xl border-2 border-amber-500 bg-amber-500/10 text-amber-600 hover:bg-amber-500 hover:text-white transition-all text-xs font-black uppercase tracking-[0.2em] shadow-lg shadow-amber-200/50 dark:shadow-none flex items-center justify-center gap-3 group"
+          >
+            <ShieldCheck size={20} className="group-hover:rotate-12 transition-transform" />
+            Super Admin Bypass (Dev Only)
+          </button>
+
           {/* Mode Toggle */}
           <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mb-8">
             <button
@@ -214,20 +229,7 @@ export const Login = () => {
           )}
 
           {/* Footer link */}
-          <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800 text-center space-y-4">
-            <button
-              type="button"
-              onClick={async () => {
-                setLoading(true);
-                const res = await login({ digitalIdOrEmail: 'admin@nexora.com', password: 'password' });
-                if (res.success) navigate(res.redirect || '/');
-                setLoading(false);
-              }}
-              className="w-full py-3 px-4 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-800 text-slate-400 hover:text-school-primary hover:border-school-primary/50 transition-all text-xs font-black uppercase tracking-[0.2em]"
-            >
-              🚀 Developer Bypass (Super Admin)
-            </button>
-
+          <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800 text-center">
             <p className="text-slate-500 dark:text-slate-400 text-sm">
               New student?{' '}
               <Link to="/" className="text-school-primary font-bold hover:underline">
