@@ -230,39 +230,42 @@ export const studentAcademicHistory = [
     year: '2024/2025',
     semester: 'Semester 2',
     average: '92.4%',
+    gpa: '3.85',
     courses: [
-      { name: 'Amharic', score: 92 },
-      { name: 'English', score: 95 },
-      { name: 'Chemistry', score: 88 },
-      { name: 'Civics', score: 90 },
-      { name: 'Biology', score: 94 },
-      { name: 'Physics', score: 91 },
-      { name: 'Mathematics', score: 96 }
+      { name: 'Amharic', score: 92, grade: 'A' },
+      { name: 'English', score: 95, grade: 'A+' },
+      { name: 'Chemistry', score: 88, grade: 'A-' },
+      { name: 'Civics', score: 90, grade: 'A' },
+      { name: 'Biology', score: 94, grade: 'A' },
+      { name: 'Physics', score: 91, grade: 'A' },
+      { name: 'Mathematics', score: 96, grade: 'A+' }
     ]
   },
   {
     year: '2024/2025',
     semester: 'Semester 1',
     average: '89.6%',
+    gpa: '3.72',
     courses: [
-      { name: 'Amharic', score: 89 },
-      { name: 'English', score: 93 },
-      { name: 'General Science', score: 84 },
-      { name: 'Art', score: 98 },
-      { name: 'Physical Education', score: 95 },
-      { name: 'Geography', score: 82 }
+      { name: 'Amharic', score: 89, grade: 'A-' },
+      { name: 'English', score: 93, grade: 'A' },
+      { name: 'General Science', score: 84, grade: 'B+' },
+      { name: 'Art', score: 98, grade: 'A+' },
+      { name: 'Physical Education', score: 95, grade: 'A' },
+      { name: 'Geography', score: 82, grade: 'B' }
     ]
   },
   {
     year: '2023/2024',
     semester: 'Semester 2',
     average: '87.2%',
+    gpa: '3.65',
     courses: [
-      { name: 'Grade 9 Mathematics', score: 87 },
-      { name: 'Grade 9 Physics', score: 90 },
-      { name: 'Grade 9 Biology', score: 94 },
-      { name: 'Geography', score: 82 },
-      { name: 'History', score: 85 }
+      { name: 'Grade 9 Mathematics', score: 87, grade: 'A-' },
+      { name: 'Grade 9 Physics', score: 90, grade: 'A' },
+      { name: 'Grade 9 Biology', score: 94, grade: 'A' },
+      { name: 'Geography', score: 82, grade: 'B' },
+      { name: 'History', score: 85, grade: 'B+' }
     ]
   }
 ];
