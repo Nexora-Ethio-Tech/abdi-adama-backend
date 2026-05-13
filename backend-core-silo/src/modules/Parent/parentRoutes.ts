@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getParentDashboard } from './parentController';
+import { getParentDashboard, getChildCommunicationLogs } from './parentController';
 import { authenticateToken, authorizeRoles } from '../../middleware/authMiddleware';
 
 const router = Router();
@@ -9,5 +9,6 @@ router.use(authorizeRoles('Parent'));
 
 // GET /api/parent/dashboard
 router.get('/dashboard', getParentDashboard);
+router.get('/child/:studentId/communication', getChildCommunicationLogs);
 
 export default router;

@@ -1,18 +1,14 @@
 import { Response } from 'express';
 import pool from '../../config/db';
 import { AuthRequest } from '../../middleware/authMiddleware';
+import { sendSuccess, sendError } from '../../shared/responseUtils';
 
 /**
  * GET /api/parent/dashboard
  * Returns the parent's linked children list + recent announcements.
- * Parents can ONLY see children linked to them in silo_family_links.
  */
 export const getParentDashboard = async (req: AuthRequest, res: Response) => {
   const parentUserId = req.user?.user_id;
-
-  if (!parentUserId) {
-    return res.status(401).json({ message: 'Identity context missing.' });
-  }
 
   try {
     // 1. Get all children linked to this parent
@@ -37,12 +33,43 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
        LIMIT 10`
     );
 
-    res.json({
+    return sendSuccess(res, {
       children: childrenResult.rows,
       announcements: announcementsResult.rows,
     });
-  } catch (err) {
-    console.error('Error fetching parent dashboard:', err);
-    res.status(500).json({ message: 'Internal server error.' });
+  } catch (err: any) {
+    return sendError(res, 'Internal server error.', 500, err.message);
+  }
+};
+
+/**
+ * GET /api/parent/child/:studentId/communication
+ * Returns the communication book logs for a specific child.
+ */
+export const getChildCommunicationLogs = async (req: AuthRequest, res: Response) => {
+  const { studentId } = req.params;
+  const parentUserId = req.user?.user_id;
+
+  try {
+    // Security: Check if child is linked to parent
+    const checkResult = await pool.query(
+      'SELECT 1 FROM silo_family_links WHERE parent_user_id = $1 AND student_identity_id = $2',
+      [parentUserId, studentId]
+    );
+    if (checkResult.rows.length === 0) {
+      return sendError(res, 'Access denied: student not linked to your account.', 403);
+    }
+
+    const result = await pool.query(
+      `SELECT l.*, i.full_name as sender_name 
+       FROM silo_communication_logs l
+       JOIN silo_identities i ON i.id = l.sender_id
+       WHERE l.student_id = $1
+       ORDER BY l.week_ending DESC`,
+      [studentId]
+    );
+    return sendSuccess(res, result.rows);
+  } catch (err: any) {
+    return sendError(res, 'Failed to fetch communication logs.', 500, err.message);
   }
 };

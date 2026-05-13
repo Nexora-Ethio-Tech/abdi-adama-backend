@@ -11,6 +11,7 @@ import driverRoutes from './modules/Driver/driverRoutes';
 import studentRoutes from './modules/Student/studentRoutes';
 import parentRoutes from './modules/Parent/parentRoutes';
 import examRoutes from './modules/Exam/examRoutes';
+import teacherRoutes from './modules/Teacher/teacherRoutes';
 
 dotenv.config();
 
@@ -414,7 +415,8 @@ app.use('/api/driver',    driverRoutes);
 app.use('/api/transport', driverRoutes);  // Frontend alias → same Driver controller
 app.use('/api/student',   studentRoutes);
 app.use('/api/parent',    parentRoutes);
-app.use('/api/exams',     examRoutes);    // Official Exam Secure Environment
+app.use('/api/exams',     examRoutes);
+app.use('/api/teacher',   teacherRoutes);    // Official Exam Secure Environment
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/health', async (req: Request, res: Response) => {

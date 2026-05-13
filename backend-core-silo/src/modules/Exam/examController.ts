@@ -44,7 +44,7 @@ export const listExams = async (req: AuthRequest, res: Response) => {
          er.start_time AS my_start_time,
          NOW()::timestamptz AS server_time
        FROM silo_official_exams e
-       LEFT JOIN silo_subjects       s   ON s.id  = e.subject_id
+       LEFT JOIN silo_courses        s   ON s.id  = e.subject_id
        LEFT JOIN silo_identities     si  ON si.id = e.examiner_id
        LEFT JOIN silo_exam_results   er  ON er.exam_id = e.id AND er.student_id = $1
        WHERE e.is_published = TRUE
@@ -321,9 +321,12 @@ export const approveResult = async (req: AuthRequest, res: Response) => {
     // 3. Push to silo_student_grades.final_50
     if (subject_id) {
       await client.query(
-        `UPDATE silo_student_grades
+        `UPDATE silo_student_grades g
             SET final_50 = $1
-          WHERE student_id = $2 AND subject_id = $3`,
+           FROM silo_enrollments e
+          WHERE g.enrollment_id = e.id
+            AND e.student_id = $2
+            AND e.course_id = $3`,
         [score, student_id, subject_id]
       );
     }

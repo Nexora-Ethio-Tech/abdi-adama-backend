@@ -1,9 +1,9 @@
 // ─── Role Enum ─────────────────────────────────────────────────────────────
-export type UserRole = 'Student' | 'Parent' | 'Driver' | 'Librarian' | 'ClinicAdmin';
+export type UserRole = 'Student' | 'Parent' | 'Driver' | 'Librarian' | 'ClinicAdmin' | 'Teacher' | 'Admin';
 
-export const STAFF_ROLES: UserRole[] = ['Driver', 'Librarian', 'ClinicAdmin'];
+export const STAFF_ROLES: UserRole[] = ['Driver', 'Librarian', 'ClinicAdmin', 'Teacher', 'Admin'];
 export const SHARED_IDENTITY_ROLES: UserRole[] = ['Student', 'Parent'];
-export const ALL_ROLES: UserRole[] = [...SHARED_IDENTITY_ROLES, ...STAFF_ROLES];
+export const ALL_ROLES: UserRole[] = ['Student', 'Parent', 'Driver', 'Librarian', 'ClinicAdmin', 'Teacher', 'Admin'];
 
 // ─── Identity / User Row Shapes ─────────────────────────────────────────────
 export interface SiloIdentity {

@@ -16,7 +16,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 -- examiner_id → identity_id of the Teacher/Admin who created it.
 CREATE TABLE IF NOT EXISTS silo_official_exams (
   id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-  subject_id       UUID         REFERENCES silo_subjects(id) ON DELETE SET NULL,
+  subject_id       UUID         REFERENCES silo_courses(id) ON DELETE SET NULL,
   title            VARCHAR(300) NOT NULL,
   start_window     TIMESTAMPTZ  NOT NULL,          -- earliest allowed start time
   duration_minutes INTEGER      NOT NULL CHECK (duration_minutes > 0),
