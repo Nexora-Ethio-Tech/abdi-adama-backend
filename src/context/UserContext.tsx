@@ -75,6 +75,7 @@ const getDashboardRoute = (role: UserRole) => {
  * Map backend silo_role enum values to frontend UserRole.
  * Backend uses PascalCase enums; frontend uses kebab-case strings.
  */
+// @ts-ignore - keeping for future reference when backend is re-enabled
 const mapBackendRole = (backendRole: string): UserRole => {
   const map: Record<string, UserRole> = {
     Student:    'student',
@@ -185,9 +186,10 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     otp?: string;
   }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
     const identifier = credentials.digitalIdOrEmail.trim();
-    const password = credentials.password || credentials.otp || '';
+    // const password = credentials.password || credentials.otp || '';
 
     // Infer backend role from identifier prefix
+    /*
     const inferBackendRole = (id: string): string => {
       const u = id.toUpperCase();
       if (u.startsWith('STU')) return 'Student';
@@ -198,45 +200,46 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       if (u.startsWith('TCH') || u.startsWith('TC-')) return 'Teacher';
       return 'Student';
     };
+    */
 
-    try {
-      const apiBase = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiBase}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          school_id: identifier,
-          password,
-          role: inferBackendRole(identifier),
-        }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok && data.token) {
-        const backendUser = data.user;
-        const mappedRole = mapBackendRole(backendUser.role);
-        const frontendUser: User = {
-          id:        backendUser.user_id,
-          name:      backendUser.full_name,
-          email:     backendUser.school_id,
-          role:      mappedRole,
-          school_id: backendUser.school_id,
-          digitalId: backendUser.school_id,
-        };
-        localStorage.setItem('abdi_adama_token', data.token);
-        localStorage.setItem('abdi_adama_user', JSON.stringify(frontendUser));
-        localStorage.setItem('abdi_adama_primary_role', mappedRole);
-        setUser(frontendUser);
-        setPrimaryRole(mappedRole);
-        return { success: true, redirect: getDashboardRoute(mappedRole) };
-      }
-
-      return { success: false, error: data.message || 'Invalid credentials.' };
-
-    } catch {
+    // try {
+    //   const apiBase = import.meta.env.VITE_API_URL || '';
+    //   const res = await fetch(`${apiBase}/api/auth/login`, {
+    //     method: 'POST',
+    //     headers: { 'Content-Type': 'application/json' },
+    //     body: JSON.stringify({
+    //       school_id: identifier,
+    //       password,
+    //       role: inferBackendRole(identifier),
+    //     }),
+    //   });
+    //
+    //   const data = await res.json();
+    //
+    //   if (res.ok && data.token) {
+    //     const backendUser = data.user;
+    //     const mappedRole = mapBackendRole(backendUser.role);
+    //     const frontendUser: User = {
+    //       id:        backendUser.user_id,
+    //       name:      backendUser.full_name,
+    //       email:     backendUser.school_id,
+    //       role:      mappedRole,
+    //       school_id: backendUser.school_id,
+    //       digitalId: backendUser.school_id,
+    //     };
+    //     localStorage.setItem('abdi_adama_token', data.token);
+    //     localStorage.setItem('abdi_adama_user', JSON.stringify(frontendUser));
+    //     localStorage.setItem('abdi_adama_primary_role', mappedRole);
+    //     setUser(frontendUser);
+    //     setPrimaryRole(mappedRole);
+    //     return { success: true, redirect: getDashboardRoute(mappedRole) };
+    //   }
+    //
+    //   return { success: false, error: data.message || 'Invalid credentials.' };
+    //
+    // } catch {
       // ── Offline / demo fallback ────────────────────────────────────────
-      console.warn('[Auth] Backend unreachable – using demo bypass for UI development.');
+      console.warn('[Auth] Backend bypass active – using demo login for UI development.');
       await new Promise(r => setTimeout(r, 600));
 
       let demoRole: UserRole = 'super-admin';
@@ -247,6 +250,9 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       else if (id.startsWith('lib')) demoRole = 'librarian';
       else if (id.startsWith('cln') || id.includes('clinic')) demoRole = 'clinic-admin';
       else if (id.startsWith('tch') || id.includes('teacher')) demoRole = 'teacher';
+      else if (id.startsWith('fin') || id.includes('finance')) demoRole = 'finance-clerk';
+      else if (id.startsWith('vp') || id.includes('principal')) demoRole = 'vice-principal';
+      else if (id.startsWith('aud') || id.includes('auditor')) demoRole = 'auditor';
 
       const demoUser: User = {
         id:        `demo-${identifier}`,
@@ -262,7 +268,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       setUser(demoUser);
       setPrimaryRole(demoRole);
       return { success: true, redirect: getDashboardRoute(demoRole) };
-    }
+    // }
   };
 
   const logout = () => {
