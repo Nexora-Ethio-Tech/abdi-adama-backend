@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
+import { apiFetch } from '../utils/apiClient';
 
 interface DashboardData {
   schedule: Array<{
@@ -42,13 +43,10 @@ export const StudentPortal = () => {
 
   useEffect(() => {
     const fetchData = async () => {
-      const token = localStorage.getItem('abdi_adama_token');
-      const headers = { 'Authorization': `Bearer ${token}` };
-
       try {
         const [dashRes, profRes] = await Promise.all([
-          fetch('/api/student/dashboard', { headers }),
-          fetch('/api/student/profile', { headers })
+          apiFetch('/api/student/dashboard'),
+          apiFetch('/api/student/profile')
         ]);
 
         if (dashRes.ok && profRes.ok) {
@@ -259,4 +257,3 @@ export const StudentPortal = () => {
     </div>
   );
 };
-

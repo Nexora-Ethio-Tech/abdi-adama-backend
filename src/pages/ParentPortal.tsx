@@ -1,8 +1,8 @@
 
-import { Calendar, BookOpen, Award, User, History, Megaphone, HeartPulse, Star, ChevronRight, ClipboardList, TrendingUp, Loader2 } from 'lucide-react';
-import { useState, useMemo, useEffect } from 'react';
+import { Calendar, BookOpen, Award, User, History, Megaphone, HeartPulse, Star, ChevronRight, ClipboardList, TrendingUp, Loader2, ChevronLeft } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { mockCommunicationLogs, commFields, ratingLabels } from '../data/mockData';
+import { commFields, ratingLabels } from '../data/mockData';
 import { useTranslation } from 'react-i18next';
 import { apiFetch } from '../utils/apiClient';
 import { toast } from '../components/Toast';
@@ -19,21 +19,13 @@ export const ParentPortal = () => {
   const [children, setChildren] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
+  
+  // Child-specific live data
+  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [commLogs, setCommLogs] = useState<any[]>([]);
+  const [childDataLoading, setChildDataLoading] = useState(false);
 
-  // ─── Academic history (still using rich mock until history API is wired) ──
-  const academicYears = ['2015', '2016', '2017'];
-  const historyData: Record<string, any[]> = {
-    '2015': [
-      { name: 'Mathematics', teacher: 'Ato Solomon', grades: { mid: '25/30', quiz: '8/10', assignment: '9/10', final: '42/50', total: '84%' } },
-      { name: 'Amharic', teacher: 'W/ro Aster', grades: { mid: '28/30', quiz: '9/10', assignment: '10/10', final: '45/50', total: '92%' } },
-    ],
-    '2016': [
-      { name: 'Physics', teacher: 'Ato Solomon', grades: { mid: '22/30', quiz: '7/10', assignment: '8/10', final: '40/50', total: '77%' } },
-      { name: 'English', teacher: 'W/ro Aster', grades: { mid: '29/30', quiz: '10/10', assignment: '10/10', final: '48/50', total: '97%' } },
-    ]
-  };
-
-  // ─── Fetch real data from backend ─────────────────────────────────────────
+  // ─── Fetch global dashboard (children + announcements) ─────────────────────
   useEffect(() => {
     const fetchDashboard = async () => {
       setDataLoading(true);
@@ -46,19 +38,17 @@ export const ParentPortal = () => {
           return;
         }
 
-        // Map backend keys (fullName, identity_id) to frontend shape
-        const mappedChildren = (data.children || []).map((c: any) => ({
+        const mappedChildren = (data.data?.children || []).map((c: any) => ({
           id:          c.identity_id,
           name:        c.fullName || c.full_name,
           grade:       c.grade || '—',
           school_id:   c.school_id,
-          attendance:  c.attendance || '—',
-          performance: c.performance || '—',
-          courses:     c.courses || [],
+          attendance:  '98%', // Mocked for now until attendance module is live
+          performance: 'Top 10%', 
+          courses:     [], // Will be fetched when child is selected
         }));
 
-        // Format announcement timestamps
-        const mappedNotices = (data.announcements || []).map((n: any) => ({
+        const mappedNotices = (data.data?.announcements || []).map((n: any) => ({
           ...n,
           time: n.timestamp ? new Date(n.timestamp).toLocaleDateString() : '—',
         }));
@@ -74,25 +64,66 @@ export const ParentPortal = () => {
     fetchDashboard();
   }, []);
 
-  const CommunicationBook = ({ studentId }: { studentId: string }) => {
-    const studentLogs = useMemo(() => {
-      return mockCommunicationLogs.filter(log => log.studentId === studentId);
-    }, [studentId]);
+  // ─── Fetch child-specific data ─────────────────────────────────────────────
+  const fetchChildDetails = async (studentId: string) => {
+    setChildDataLoading(true);
+    try {
+      // 1. Fetch current grades/courses
+      const gradesRes = await apiFetch(`/api/student/grades?semester=2&student_id=${studentId}`);
+      const gradesData = await gradesRes.json();
+      
+      // 2. Fetch academic history (legacy or main)
+      const historyRes = await apiFetch(`/api/student/history?year=2024/2025&student_id=${studentId}`);
+      const historyJson = await historyRes.json();
 
+      // 3. Fetch comm logs
+      const commRes = await apiFetch(`/api/parent/child/${studentId}/communication`);
+      const commData = await commRes.json();
+
+      if (gradesRes.ok) {
+        setSelectedChild(prev => ({
+          ...prev,
+          courses: (gradesData.data?.courses || []).map((c: any) => ({
+            name: c.name,
+            teacher: c.teacher,
+            grades: {
+              mid: `${c.mid_30}/30`,
+              quiz: `${c.quiz_10}/10`,
+              assignment: `${c.assignment_10}/10`,
+              final: c.final_50 ? `${c.final_50}/50` : 'Not Yet',
+              total: `${c.total}%`
+            }
+          }))
+        }));
+      }
+
+      setHistoryData(historyJson.data || []);
+      setCommLogs(commData.data || []);
+    } catch {
+      toast.error('Failed to sync child academic data.');
+    } finally {
+      setChildDataLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedChild?.id) {
+      fetchChildDetails(selectedChild.id);
+    }
+  }, [selectedChild?.id]);
+
+  const CommunicationBook = () => {
     const [currentLogIndex, setCurrentLogIndex] = useState(0);
-    const currentLog = studentLogs[currentLogIndex];
+    const currentLog = commLogs[currentLogIndex];
 
     const getRatingColor = (rating: number) => {
-      switch (rating) {
-        case 3: return 'bg-emerald-500';
-        case 2: return 'bg-blue-500';
-        case 1: return 'bg-amber-500';
-        case 0: return 'bg-rose-500';
-        default: return 'bg-slate-200';
-      }
+      if (rating >= 3) return 'bg-emerald-500';
+      if (rating === 2) return 'bg-blue-500';
+      if (rating === 1) return 'bg-amber-500';
+      return 'bg-rose-500';
     };
 
-    if (studentLogs.length === 0) {
+    if (commLogs.length === 0) {
       return (
         <div className="p-12 text-center border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-2xl">
           <div className="bg-slate-50 dark:bg-slate-800 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -119,15 +150,17 @@ export const ParentPortal = () => {
               onClick={() => setCurrentLogIndex(prev => prev - 1)}
               className="p-1 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all disabled:opacity-30"
             >
-              <ChevronRight size={20} />
+              <ChevronLeft size={20} />
             </button>
             <div className="flex flex-col items-center min-w-[120px]">
                <span className="text-[10px] uppercase font-black text-slate-400">{t('parentPortal.weekEnding')}</span>
-               <span className="text-xs font-bold text-blue-600 dark:text-blue-400">{currentLog.weekEnding}</span>
+               <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                 {new Date(currentLog.week_ending).toLocaleDateString()}
+               </span>
             </div>
             <button
-              disabled={currentLogIndex === 0}
-              onClick={() => setCurrentLogIndex(prev => prev - 1)}
+              disabled={currentLogIndex >= commLogs.length - 1}
+              onClick={() => setCurrentLogIndex(prev => prev + 1)}
               className="p-1 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all disabled:opacity-30"
             >
               <ChevronRight size={20} />
@@ -137,7 +170,7 @@ export const ParentPortal = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
           {commFields.map(field => {
-            const rating = (currentLog.ratings as any)[field.id];
+            const rating = (currentLog.ratings as any)[field.id] || 0;
             return (
               <div key={field.id} className="group bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
                 <div className="flex flex-col items-center text-center">
@@ -162,8 +195,9 @@ export const ParentPortal = () => {
               {t('parentPortal.teacherObservation')}
             </h4>
             <p className="text-base text-blue-800 dark:text-blue-300 leading-relaxed italic font-medium relative z-10">
-              "{currentLog.teacherNote || "Student has shown consistent engagement this week. Maintain current focus on home assignments for continued progress."}"
+              "{currentLog.teacher_note || "No specific note for this week."}"
             </p>
+            <p className="text-[10px] text-blue-400 mt-4 font-bold uppercase tracking-widest">— {currentLog.sender_name}</p>
             <Star size={100} className="absolute -bottom-10 -right-10 text-blue-600/5 rotate-12 group-hover:scale-110 transition-transform duration-700" />
           </div>
 
@@ -246,6 +280,7 @@ export const ParentPortal = () => {
               <h2 className="text-2xl md:text-3xl font-bold text-slate-800 dark:text-slate-100">{selectedChild.name}</h2>
               <p className="text-slate-500 dark:text-slate-400 text-base md:text-lg">Grade {selectedChild.grade} Student</p>
             </div>
+            {childDataLoading && <Loader2 className="w-5 h-5 text-blue-600 animate-spin ml-auto" />}
           </div>
 
           {activePortalTab === 'academic' ? (
@@ -264,7 +299,7 @@ export const ParentPortal = () => {
                     <BookOpen size={18} />
                     <span className="text-sm font-medium">{t('parentPortal.activeCourses')}</span>
                   </div>
-                  <p className="text-2xl font-bold text-blue-600">{selectedChild.courses.length}</p>
+                  <p className="text-2xl font-bold text-blue-600">{selectedChild.courses?.length || 0}</p>
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700">
                   <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400 mb-2">
@@ -292,7 +327,7 @@ export const ParentPortal = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {selectedChild.courses.map((course: any, i: number) => (
+                        {selectedChild.courses?.length > 0 ? selectedChild.courses.map((course: any, i: number) => (
                           <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
                             <td className="px-6 py-4 font-medium text-slate-800 dark:text-slate-200">{course.name}</td>
                             <td className="px-4 py-4 text-slate-600 dark:text-slate-400">{course.grades.mid}</td>
@@ -309,7 +344,9 @@ export const ParentPortal = () => {
                             </td>
                             <td className="px-6 py-4 text-right text-slate-500 dark:text-slate-400">{course.teacher}</td>
                           </tr>
-                        ))}
+                        )) : (
+                          <tr><td colSpan={6} className="py-12 text-center text-slate-400 italic">No courses found for this semester.</td></tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -318,67 +355,42 @@ export const ParentPortal = () => {
             ) : (
               <div className="space-y-6">
                 <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100">{t('parentPortal.academicHistory')}</h3>
-                <div className="flex gap-4">
-                  {academicYears.map(year => (
-                    <button
-                      key={year}
-                      onClick={() => setSelectedYear(year)}
-                      className={`px-6 py-3 rounded-xl border transition-all ${
-                        selectedYear === year
-                          ? 'bg-blue-600 border-blue-600 text-white shadow-md'
-                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-blue-400'
-                      }`}
-                    >
-                      EC {year}
-                    </button>
-                  ))}
-                </div>
-
-                {selectedYear && historyData[selectedYear] ? (
+                
+                {historyData.length > 0 ? (
                   <div className="animate-in slide-in-from-bottom-4 duration-500">
                     <div className="overflow-x-auto border border-slate-100 dark:border-slate-800 rounded-xl">
                       <table className="w-full text-left text-sm min-w-[500px]">
                         <thead className="bg-slate-50 dark:bg-slate-800 border-b border-slate-100 dark:border-slate-800">
                           <tr>
-                            <th className="px-6 py-4 font-semibold text-slate-500 dark:text-slate-400 uppercase">Course</th>
-                            <th className="px-4 py-4 font-semibold text-slate-500 dark:text-slate-400 uppercase">Mid</th>
-                            <th className="px-4 py-4 font-semibold text-slate-500 dark:text-slate-400 uppercase">Quiz</th>
-                            <th className="px-4 py-4 font-semibold text-slate-500 dark:text-slate-400 uppercase">Assig.</th>
-                            <th className="px-4 py-4 font-semibold text-slate-500 dark:text-slate-400 uppercase">Final</th>
-                            <th className="px-6 py-4 font-semibold text-slate-500 dark:text-slate-400 uppercase text-right">Total</th>
+                            <th className="px-6 py-4 font-semibold text-slate-500 dark:text-slate-400 uppercase">Year</th>
+                            <th className="px-6 py-4 font-semibold text-slate-500 dark:text-slate-400 uppercase">Semester</th>
+                            <th className="px-6 py-4 font-semibold text-slate-500 dark:text-slate-400 uppercase">Course Average</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                          {historyData[selectedYear].map((course: any, i: number) => (
+                          {historyData.map((h: any, i: number) => (
                             <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
-                              <td className="px-6 py-4 font-medium text-slate-800 dark:text-slate-200">{course.name}</td>
-                              <td className="px-4 py-4 text-slate-600 dark:text-slate-400">{course.grades.mid}</td>
-                              <td className="px-4 py-4 text-slate-600 dark:text-slate-400">{course.grades.quiz}</td>
-                              <td className="px-4 py-4 text-slate-600 dark:text-slate-400">{course.grades.assignment}</td>
-                              <td className="px-4 py-4 text-slate-600 dark:text-slate-400">{course.grades.final}</td>
-                              <td className="px-6 py-4 text-right font-bold text-blue-600 dark:text-blue-400">{course.grades.total}</td>
+                              <td className="px-6 py-4 font-medium text-slate-800 dark:text-slate-200">{h.year}</td>
+                              <td className="px-6 py-4 text-slate-600 dark:text-slate-400">{h.semester}</td>
+                              <td className="px-6 py-4 font-bold text-blue-600 dark:text-blue-400">{h.average}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
                   </div>
-                ) : selectedYear ? (
-                  <div className="p-12 text-center border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-2xl">
-                    <p className="text-slate-500">{t('parentPortal.noRecords', { year: selectedYear })}</p>
-                  </div>
                 ) : (
                   <div className="p-12 text-center border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-2xl">
                     <div className="bg-slate-50 dark:bg-slate-800 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
                       <History className="text-slate-400" size={32} />
                     </div>
-                    <p className="text-slate-500">{t('parentPortal.selectYear')}</p>
+                    <p className="text-slate-500">No historical academic records found.</p>
                   </div>
                 )}
               </div>
             )
           ) : (
-            <CommunicationBook studentId={selectedChild.id} />
+            <CommunicationBook />
           )}
         </div>
       </div>
@@ -387,7 +399,7 @@ export const ParentPortal = () => {
 
   return (
     <div className="space-y-12 animate-in fade-in duration-1000">
-      {/* Hero Welcome Section - Enhanced Visuals */}
+      {/* Hero Welcome Section */}
       <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 rounded-[2rem] sm:rounded-[3rem] p-6 sm:p-10 md:p-16 text-white shadow-2xl relative overflow-hidden border border-slate-700/30">
         <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-10">
           <div className="space-y-4 sm:space-y-6">
@@ -407,7 +419,7 @@ export const ParentPortal = () => {
               <User size={40} />
             </div>
             <div>
-              <p className="text-lg font-black text-white">{t('parentPortal.familyId')}: #8824</p>
+              <p className="text-lg font-black text-white">Family Access</p>
               <div className="flex items-center gap-2 mt-1">
                 <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
                 <p className="text-xs text-blue-300 font-bold uppercase tracking-widest">{t('parentPortal.verified')}</p>
@@ -416,12 +428,11 @@ export const ParentPortal = () => {
           </div>
         </div>
 
-        {/* Abstract Background Art */}
         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-500/10 rounded-full blur-[150px] -mr-64 -mt-64" />
         <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-indigo-500/10 rounded-full blur-[120px] -ml-48 -mb-48" />
       </div>
 
-      {/* Primary Navigation: My Children (Promoted to Top) */}
+      {/* Primary Navigation: My Children */}
       <div className="space-y-8">
         <div className="flex items-center justify-between px-4">
           <div className="flex items-center gap-4">
@@ -482,8 +493,8 @@ export const ParentPortal = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-        {/* School Notices - Balanced Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 pb-20">
+        {/* Announcements */}
         <div className="lg:col-span-8 space-y-6">
           <div className="flex items-center gap-3 px-2">
             <Megaphone className="text-blue-600 dark:text-blue-400" size={24} />
@@ -509,7 +520,7 @@ export const ParentPortal = () => {
           </div>
         </div>
 
-        {/* Clinic Support - Unified Card */}
+        {/* Clinic Support */}
         <div className="lg:col-span-4">
           <div
             className="h-full bg-slate-900 dark:bg-slate-800 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden group hover:scale-[1.02] transition-all cursor-pointer border border-white/5"
@@ -520,9 +531,9 @@ export const ParentPortal = () => {
                 <div className="w-16 h-16 bg-blue-600 rounded-[1.5rem] flex items-center justify-center mb-8 shadow-xl shadow-blue-900/50 group-hover:scale-110 transition-transform">
                   <HeartPulse size={32} />
                 </div>
-                <h3 className="text-3xl font-black mb-4 leading-tight">{t('parentPortal.clinicSupport').split(' ')[0]}<br />{t('parentPortal.clinicSupport').split(' ')[1]}</h3>
+                <h3 className="text-3xl font-black mb-4 leading-tight">Clinic<br />Support</h3>
                 <p className="text-slate-400 text-sm font-medium leading-relaxed">
-                  {t('parentPortal.clinicDesc')}
+                  Direct encrypted line to school medical staff.
                 </p>
               </div>
               <div className="mt-12">
@@ -531,7 +542,6 @@ export const ParentPortal = () => {
                 </button>
               </div>
             </div>
-            {/* Background Decoration */}
             <HeartPulse size={200} className="absolute -bottom-20 -right-20 text-white/5 rotate-12 opacity-50 group-hover:scale-110 group-hover:rotate-0 transition-all duration-1000" />
           </div>
         </div>

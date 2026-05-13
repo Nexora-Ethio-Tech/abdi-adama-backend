@@ -1,3 +1,4 @@
+
 import { BookOpen, Users, Calendar, ArrowRight, Award, ClipboardList, Star, Save, CheckCircle, ChevronRight, History, FileText, CheckSquare, MessageSquare, X, Plus, Loader2 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { WeeklyPlan } from '../data/mockData';
@@ -25,11 +26,25 @@ export const TeacherPortal = () => {
     setSearchParams({ tab });
     setActiveTab(tab as any);
   };
+
+  const [assignedSections, setAssignedSections] = useState<any[]>([]);
+  const [plans, setPlans] = useState<any[]>([]);
+  const [students, setStudents] = useState<any[]>([]);
+  const [examList, setExamList] = useState<any[]>([]);
+  
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const [teacherNote, setTeacherNote] = useState('');
   const [isSaved, setIsSaved] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // Exam state
+  const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
+  const [examResults, setExamResults] = useState<any[]>([]);
+  const [examLoading, setExamLoading] = useState(false);
+  const [resultLoading, setResultLoading] = useState(false);
+  const [editingScores, setEditingScores] = useState<Record<string, string>>({});
 
   const commFields = [
     { id: 'discipline', label: 'Discipline', description: 'Behavior and following rules' },
@@ -45,55 +60,49 @@ export const TeacherPortal = () => {
     0: 'Needs Improvement'
   };
 
-  // Smart Lesson Planning State
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
-  const [newPlan, setNewPlan] = useState<Partial<WeeklyPlan>>({
-    date: new Date().toISOString().split('T')[0],
-    content: '',
-    objectives: '',
-    teacherActivity: '',
-    time: '',
-    studentActivity: '',
-    teachingMethod: '',
-    teachingAids: '',
-    evaluation: '',
-    remark: '',
-    status: 'Pending'
+  const [newPlan, setNewPlan] = useState<any>({
+    section_id: '',
+    week_number: 1,
+    content: {
+      topic: '',
+      objectives: '',
+      teacherActivity: '',
+      time: '',
+      studentActivity: '',
+      teachingMethod: '',
+      teachingAids: '',
+      evaluation: '',
+      remark: ''
+    }
   });
 
-  const [assignedSections, setAssignedSections] = useState<any[]>([]);
-  const [plans, setPlans] = useState<any[]>([]);
-  const [students, setStudents] = useState<any[]>([]);
-  const [examList, setExamList] = useState<any[]>([]);
-  const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
-  const [examResults, setExamResults] = useState<any[]>([]);
-  const [examLoading, setExamLoading] = useState(false);
-  const [resultLoading, setResultLoading] = useState(false);
-  const [editingScores, setEditingScores] = useState<Record<string, string>>({});
+  // ─── Data Fetching ──────────────────────────────────────────────────────────
+  
+  const fetchSections = async () => {
+    try {
+      const res = await apiFetch('/api/teacher/sections');
+      const data = await res.json();
+      if (res.ok) setAssignedSections(data.data || []);
+    } catch { toast.error('Failed to load classes.'); }
+  };
 
-  const fetchData = async () => {
-    // MOCK DATA
-    setAssignedSections([
-      { id: '1', grade_level: '10', section_name: 'A' },
-      { id: '2', grade_level: '9', section_name: 'B' }
-    ]);
-    setPlans([
-      {
-        id: 'P1',
-        teacherId: 'T1',
-        date: '2026-05-24',
-        content: 'Mathematics: Quadratic Equations',
-        objectives: 'Solve complex quadratic equations.',
-        teacherActivity: 'Explaining formula.',
-        time: '45 mins',
-        studentActivity: 'Board work.',
-        teachingMethod: 'Interactive.',
-        teachingAids: 'Textbook.',
-        evaluation: 'Quiz.',
-        remark: 'Good.',
-        status: 'Approved'
-      }
-    ]);
+  const fetchPlans = async () => {
+    try {
+      const res = await apiFetch('/api/teacher/plans');
+      const data = await res.json();
+      if (res.ok) setPlans(data.data || []);
+    } catch { toast.error('Failed to load lesson plans.'); }
+  };
+
+  const fetchStudentsForClass = async (sectionId: string) => {
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/teacher/students?section_id=${sectionId}`);
+      const data = await res.json();
+      if (res.ok) setStudents(data.data || []);
+    } catch { toast.error('Failed to load student roster.'); }
+    finally { setLoading(false); }
   };
 
   const fetchExams = async () => {
@@ -104,11 +113,8 @@ export const TeacherPortal = () => {
         const data = await res.json();
         setExamList(data.data || []);
       }
-    } catch {
-      toast.error('Failed to load exams.');
-    } finally {
-      setExamLoading(false);
-    }
+    } catch { toast.error('Failed to load exams.'); }
+    finally { setExamLoading(false); }
   };
 
   const fetchExamResults = async (examId: string) => {
@@ -119,11 +125,61 @@ export const TeacherPortal = () => {
         const data = await res.json();
         setExamResults(data.data || []);
       }
-    } catch {
-      toast.error('Failed to load exam results.');
-    } finally {
-      setResultLoading(false);
+    } catch { toast.error('Failed to load exam results.'); }
+    finally { setResultLoading(false); }
+  };
+
+  useEffect(() => {
+    fetchSections();
+    fetchPlans();
+    fetchExams();
+  }, []);
+
+  // ─── Handlers ─────────────────────────────────────────────────────────────
+
+  const handleAddPlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await apiFetch('/api/teacher/plans', {
+        method: 'POST',
+        body: JSON.stringify(newPlan)
+      });
+      if (res.ok) {
+        toast.success('Weekly plan submitted for review.');
+        setIsPlanModalOpen(false);
+        fetchPlans();
+      } else {
+        const d = await res.json();
+        toast.error(d.message || 'Submission failed.');
+      }
+    } catch { toast.error('Network error.'); }
+  };
+
+  const handleSaveCommunication = async () => {
+    if (!selectedStudent || Object.keys(ratings).length === 0) {
+      toast.error('Please select a student and provide ratings.');
+      return;
     }
+
+    try {
+      const res = await apiFetch('/api/teacher/communication', {
+        method: 'POST',
+        body: JSON.stringify({
+          student_id: selectedStudent.id,
+          week_ending: new Date().toISOString().split('T')[0], // Current week
+          ratings: ratings,
+          teacher_note: teacherNote
+        })
+      });
+      if (res.ok) {
+        setIsSaved(true);
+        toast.success('Communication book updated.');
+        setTimeout(() => setIsSaved(false), 3000);
+      } else {
+        const d = await res.json();
+        toast.error(d.message || 'Update failed.');
+      }
+    } catch { toast.error('Failed to reach server.'); }
   };
 
   const handleApproveResult = async (resultId: string) => {
@@ -145,40 +201,7 @@ export const TeacherPortal = () => {
         const data = await res.json();
         toast.error(data.message || 'Approval failed.');
       }
-    } catch {
-      toast.error('Network error during approval.');
-    }
-  };
-
-  useEffect(() => { 
-    fetchData(); 
-    fetchExams();
-  }, []);
-
-  const handleAddPlan = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPlans([...plans, { id: Date.now().toString(), ...newPlan, teacherId: user?.id || 'T1' }]);
-    setIsPlanModalOpen(false);
-    toast.success('Plan submitted successfully (Mock)');
-  };
-
-  const fetchStudentsForClass = async (_sectionId: string) => {
-    setStudents([
-      { id: '1', name: 'Abebe Bikila' },
-      { id: '2', name: 'Sara Kebede' }
-    ]);
-  };
-
-  const pendingAssignments = 0; 
-
-  const handleRating = (fieldId: string, rating: number) => {
-    setRatings(prev => ({ ...prev, [fieldId]: rating }));
-    setIsSaved(false);
-  };
-
-  const handleSave = () => {
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 3000);
+    } catch { toast.error('Network error during approval.'); }
   };
 
   const getRatingColor = (rating: number) => {
@@ -232,102 +255,44 @@ export const TeacherPortal = () => {
             <form onSubmit={handleAddPlan} className="p-5 sm:p-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Date</label>
-                  <input
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Section</label>
+                  <select
                     required
-                    type="date"
-                    value={newPlan.date}
-                    onChange={e => setNewPlan({...newPlan, date: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-bold"
-                  />
-                </div>
-                <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Content / Topic</label>
-                  <input
-                    required
-                    placeholder="e.g. Mathematics: Quadratic Equations"
-                    value={newPlan.content}
-                    onChange={e => setNewPlan({...newPlan, content: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-bold"
-                  />
+                    value={newPlan.section_id}
+                    onChange={e => setNewPlan({...newPlan, section_id: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-sm font-bold"
+                  >
+                    <option value="">Select Section</option>
+                    {assignedSections.map(s => <option key={s.id} value={s.id}>{s.grade} - {s.name}</option>)}
+                  </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Time (Duration)</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Week Number</label>
                   <input
                     required
-                    placeholder="e.g. 45 mins"
-                    value={newPlan.time}
-                    onChange={e => setNewPlan({...newPlan, time: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-bold"
+                    type="number"
+                    value={newPlan.week_number}
+                    onChange={e => setNewPlan({...newPlan, week_number: parseInt(e.target.value)})}
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-sm font-bold"
                   />
                 </div>
-                <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Specific Objectives</label>
-                  <textarea
-                    required
-                    placeholder="What should students achieve?"
-                    value={newPlan.objectives}
-                    onChange={e => setNewPlan({...newPlan, objectives: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-medium h-20 resize-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Teacher Activity</label>
-                  <textarea
-                    required
-                    placeholder="What will you do?"
-                    value={newPlan.teacherActivity}
-                    onChange={e => setNewPlan({...newPlan, teacherActivity: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-medium h-20 resize-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Student Activity</label>
-                  <textarea
-                    required
-                    placeholder="What will students do?"
-                    value={newPlan.studentActivity}
-                    onChange={e => setNewPlan({...newPlan, studentActivity: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-medium h-20 resize-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Teaching Method</label>
+                <div className="space-y-1 lg:col-span-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Topic</label>
                   <input
                     required
-                    placeholder="e.g. Interactive Lecture"
-                    value={newPlan.teachingMethod}
-                    onChange={e => setNewPlan({...newPlan, teachingMethod: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-bold"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Teaching Aids</label>
-                  <input
-                    required
-                    placeholder="e.g. Textbook, Whiteboard"
-                    value={newPlan.teachingAids}
-                    onChange={e => setNewPlan({...newPlan, teachingAids: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-bold"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Evaluation</label>
-                  <input
-                    required
-                    placeholder="e.g. Short Quiz"
-                    value={newPlan.evaluation}
-                    onChange={e => setNewPlan({...newPlan, evaluation: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-bold"
+                    placeholder="Topic Title"
+                    value={newPlan.content.topic}
+                    onChange={e => setNewPlan({...newPlan, content: {...newPlan.content, topic: e.target.value}})}
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-sm font-bold"
                   />
                 </div>
                 <div className="space-y-1 lg:col-span-3">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Remark (Optional)</label>
-                  <input
-                    placeholder="Any additional notes..."
-                    value={newPlan.remark}
-                    onChange={e => setNewPlan({...newPlan, remark: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 outline-none text-sm font-bold"
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Specific Objectives</label>
+                  <textarea
+                    required
+                    value={newPlan.content.objectives}
+                    onChange={e => setNewPlan({...newPlan, content: {...newPlan.content, objectives: e.target.value}})}
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-sm font-medium h-20 resize-none"
                   />
                 </div>
               </div>
@@ -357,8 +322,8 @@ export const TeacherPortal = () => {
           <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-[2.5rem] p-10 text-white shadow-2xl shadow-slate-900/20 relative overflow-hidden group">
             <div className="relative z-10">
               <span className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-400 mb-4 block">Teacher Dashboard</span>
-              <h2 className="text-4xl font-black mb-2 tracking-tight">Welcome back, Solomon!</h2>
-              <p className="text-slate-400 max-w-md font-medium text-lg leading-relaxed">Your next session: <span className="text-white">Grade 10A Mathematics</span> starts in 15 minutes.</p>
+              <h2 className="text-4xl font-black mb-2 tracking-tight">Welcome back, {user?.fullName}!</h2>
+              <p className="text-slate-400 max-w-md font-medium text-lg leading-relaxed">Manage your classes, lesson plans, and communication book records.</p>
               <div className="mt-10 flex flex-wrap gap-4">
                 <Link
                   to="/attendance"
@@ -366,12 +331,6 @@ export const TeacherPortal = () => {
                 >
                   Take Attendance
                   <ArrowRight size={16} />
-                </Link>
-                <Link
-                  to="/schedule"
-                  className="bg-white/5 text-white border border-white/10 px-8 py-3.5 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-white/10 transition-all active:scale-95"
-                >
-                  Schedule
                 </Link>
                 <Link
                   to="/grades"
@@ -387,59 +346,23 @@ export const TeacherPortal = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/40 dark:shadow-none group hover:-translate-y-2 transition-all duration-500">
               <div className="bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 w-14 h-14 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                 <Users size={28} />
               </div>
-              <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Total Students</p>
-              <h3 className="text-3xl font-black text-slate-800 dark:text-white">87</h3>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-4">Across 2 classes</p>
+              <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Total Classes</p>
+              <h3 className="text-3xl font-black text-slate-800 dark:text-white">{assignedSections.length}</h3>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-4">Current Semester</p>
             </div>
 
             <div className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/40 dark:shadow-none group hover:-translate-y-2 transition-all duration-500">
               <div className="bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 w-14 h-14 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                 <Calendar size={28} />
               </div>
-              <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Classes Today</p>
-              <h3 className="text-3xl font-black text-slate-800 dark:text-white">4</h3>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-4">Next: 10:00 AM</p>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/40 dark:shadow-none group hover:-translate-y-2 transition-all duration-500">
-              <div className="bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 w-14 h-14 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                <ClipboardList size={28} />
-              </div>
-              <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Assignments</p>
-              <h3 className="text-3xl font-black text-slate-800 dark:text-white">{pendingAssignments}</h3>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-4">Pending submissions</p>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <div className="flex items-center justify-between px-4">
-              <h3 className="text-xl font-black text-slate-800 dark:text-white uppercase tracking-tight">Assigned Roster</h3>
-              <button className="text-blue-600 dark:text-blue-400 text-[10px] font-black uppercase tracking-widest hover:underline">View All Classes</button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {assignedSections.map((cls) => (
-                <div key={cls.id} className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/40 dark:shadow-none flex items-center justify-between group hover:border-blue-500/50 transition-all duration-500">
-                  <div className="flex items-center gap-6">
-                    <div className="bg-slate-50 dark:bg-slate-800 p-5 rounded-[2rem] text-slate-600 dark:text-slate-400 group-hover:bg-blue-600 group-hover:text-white transition-all duration-500">
-                      <Users size={28} />
-                    </div>
-                    <div>
-                      <h4 className="text-xl font-black text-slate-800 dark:text-white tracking-tight">Grade {cls.grade_level} - {cls.section_name}</h4>
-                    </div>
-                  </div>
-                  <Link
-                    to="/attendance"
-                    className="p-4 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-2xl transition-all group-hover:translate-x-1"
-                  >
-                    <ArrowRight size={24} />
-                  </Link>
-                </div>
-              ))}
+              <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Weekly Plans</p>
+              <h3 className="text-3xl font-black text-slate-800 dark:text-white">{plans.length}</h3>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-4">Total Submitted</p>
             </div>
           </div>
         </>
@@ -460,48 +383,27 @@ export const TeacherPortal = () => {
               </button>
             </div>
 
-            <div className="overflow-x-auto -mx-4 sm:-mx-8 relative">
-              <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-white dark:from-slate-900 to-transparent z-10 pointer-events-none sm:hidden"></div>
-              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white dark:from-slate-900 to-transparent z-10 pointer-events-none sm:hidden"></div>
-              <table className="w-full text-left border-collapse min-w-[1500px]">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead>
                   <tr className="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
-                    <th className="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Date</th>
-                    <th className="px-4 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Content</th>
-                    <th className="px-4 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Objectives</th>
-                    <th className="px-4 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Teacher Act.</th>
-                    <th className="px-4 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Time</th>
-                    <th className="px-4 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Student Act.</th>
-                    <th className="px-4 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Method</th>
-                    <th className="px-4 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Aids</th>
-                    <th className="px-4 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Evaluation</th>
-                    <th className="px-4 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Remark</th>
-                    <th className="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 text-right">Status</th>
+                    <th className="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400">Week</th>
+                    <th className="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400">Section</th>
+                    <th className="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400">Content</th>
+                    <th className="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {plans.filter(p => p.teacherId === user?.id || p.teacherId === 'T1').map(plan => (
+                  {plans.map(plan => (
                     <tr key={plan.id} className="group hover:bg-blue-50/30 dark:hover:bg-blue-900/5 transition-colors">
-                      <td className="px-6 py-5">
-                        <p className="text-xs font-bold text-slate-800 dark:text-slate-200">{plan.date}</p>
+                      <td className="px-6 py-5 font-bold text-slate-800 dark:text-slate-200">{plan.week_number}</td>
+                      <td className="px-6 py-5 text-blue-600 font-medium">{plan.section_name}</td>
+                      <td className="px-6 py-5 text-slate-600 dark:text-slate-400">
+                        {typeof plan.content === 'object' ? plan.content.topic : plan.content}
                       </td>
-                      <td className="px-4 py-5">
-                        <p className="text-xs text-blue-600 font-medium">{plan.content}</p>
-                      </td>
-                      <td className="px-4 py-5"><p className="text-xs text-slate-600 dark:text-slate-400 max-w-[150px] line-clamp-2">{plan.objectives}</p></td>
-                      <td className="px-4 py-5"><p className="text-xs text-slate-600 dark:text-slate-400 max-w-[150px] line-clamp-2">{plan.teacherActivity}</p></td>
-                      <td className="px-4 py-5"><p className="text-xs text-slate-600 dark:text-slate-400 font-bold">{plan.time}</p></td>
-                      <td className="px-4 py-5"><p className="text-xs text-slate-600 dark:text-slate-400 max-w-[150px] line-clamp-2">{plan.studentActivity}</p></td>
-                      <td className="px-4 py-5"><p className="text-xs text-slate-600 dark:text-slate-400 max-w-[150px] line-clamp-2">{plan.teachingMethod}</p></td>
-                      <td className="px-4 py-5"><p className="text-xs text-slate-600 dark:text-slate-400 max-w-[150px] line-clamp-2">{plan.teachingAids}</p></td>
-                      <td className="px-4 py-5"><p className="text-xs text-slate-600 dark:text-slate-400 max-w-[150px] line-clamp-2">{plan.evaluation}</p></td>
-                      <td className="px-4 py-5"><p className="text-xs text-slate-600 dark:text-slate-400 max-w-[150px] line-clamp-2 italic">{plan.remark}</p></td>
                       <td className="px-6 py-5 text-right">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter ${
-                          plan.status === 'Approved' ? 'bg-emerald-100 text-emerald-600' :
-                          plan.status === 'Pending' ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-600'
-                        }`}>
-                          {plan.status}
+                        <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter bg-amber-100 text-amber-600">
+                          {plan.status || 'Pending'}
                         </span>
                       </td>
                     </tr>
@@ -533,7 +435,6 @@ export const TeacherPortal = () => {
                       <p className={`text-[10px] font-bold mt-1 ${selectedExamId === exam.id ? 'text-blue-100' : 'text-slate-500'}`}>Duration: {exam.duration_minutes}m</p>
                     </button>
                   ))}
-                  {examList.length === 0 && <p className="text-center py-8 text-slate-400 font-bold italic">No exams found.</p>}
                 </div>
               )}
             </div>
@@ -562,125 +463,37 @@ export const TeacherPortal = () => {
                         </div>
 
                         <div className="flex items-center gap-3">
-                           <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter ${
-                             res.status === 'submitted' ? 'bg-blue-100 text-blue-600' : 
-                             res.status === 'active' ? 'bg-amber-100 text-amber-600' : 'bg-rose-100 text-rose-600'
-                           }`}>
-                             {res.status}
-                           </span>
-
-                           <div className="flex items-center gap-2">
-                             <input
-                               type="number"
-                               placeholder="Score"
-                               value={editingScores[res.id] || ''}
-                               onChange={(e) => setEditingScores(prev => ({ ...prev, [res.id]: e.target.value }))}
-                               className="w-20 px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold"
-                             />
-                             <button
-                               onClick={() => handleApproveResult(res.id)}
-                               className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
-                             >
-                               Approve
-                             </button>
-                           </div>
+                           <input
+                             type="number"
+                             placeholder="Score"
+                             value={editingScores[res.id] || ''}
+                             onChange={(e) => setEditingScores(prev => ({ ...prev, [res.id]: e.target.value }))}
+                             className="w-20 px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold"
+                           />
+                           <button
+                             onClick={() => handleApproveResult(res.id)}
+                             className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg"
+                           >
+                             Approve
+                           </button>
                         </div>
-                      </div>
-
-                      <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-                         <details className="group">
-                           <summary className="text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors list-none flex items-center gap-2">
-                             <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
-                             View Student Answers
-                           </summary>
-                           <div className="mt-4 p-4 bg-white dark:bg-slate-900 rounded-2xl text-xs font-mono text-slate-600 dark:text-slate-400 overflow-x-auto">
-                             <pre>{JSON.stringify(res.answers_json, null, 2)}</pre>
-                           </div>
-                         </details>
                       </div>
                     </div>
                   ))}
-                  {examResults.length === 0 && (
-                    <div className="text-center py-20 text-slate-400">
-                       <CheckSquare size={48} className="mx-auto mb-4 opacity-20" />
-                       <p className="font-bold italic">No results yet for this exam.</p>
-                    </div>
-                  )}
                 </div>
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center p-12 text-center bg-slate-50/50 dark:bg-slate-900/20 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800">
-                <CheckSquare className="text-slate-300 dark:text-slate-700 mb-4" size={48} />
-                <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">Exam Results Review</h3>
-                <p className="text-slate-500 max-w-xs mx-auto mt-2 font-medium">Select an exam from the left panel to review student submissions and approve final scores.</p>
+              <div className="h-full flex flex-col items-center justify-center p-12 text-center bg-slate-50/50 dark:bg-slate-900/20 rounded-3xl border-2 border-dashed border-slate-200">
+                <CheckSquare className="text-slate-300 mb-4" size={48} />
+                <h3 className="text-xl font-bold text-slate-800 uppercase tracking-wider">Exam Results Review</h3>
+                <p className="text-slate-500 max-w-xs mx-auto mt-2 font-medium">Select an exam to review submissions.</p>
               </div>
             )}
           </div>
         </div>
-      ) : activeTab === 'review' ? (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between px-2">
-            <div>
-              <h3 className="text-xl font-black text-slate-900 dark:text-white">Departmental Plan Review</h3>
-              <p className="text-slate-500 text-sm font-medium">Review and approve lesson plans from your department staff.</p>
-            </div>
-            <div className="bg-blue-600 px-4 py-2 rounded-xl text-white text-xs font-bold shadow-lg shadow-blue-200">
-              Science Department Dean
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {plans.filter(p => p.teacherId !== user?.id && p.teacherId !== 'T1').map(plan => (
-              <div key={plan.id} className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm group hover:border-blue-200 transition-all">
-                <div className="flex justify-between items-start mb-6">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center text-slate-600 font-bold">
-                      {plan.teacherId === 'T2' ? 'WS' : 'TK'}
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-slate-900 dark:text-white">{plan.teacherId === 'T2' ? 'W/ro Selam' : 'Ato Kebede'}</h4>
-                      <p className="text-xs text-slate-500">Submitted: Monday, 8:00 AM</p>
-                    </div>
-                  </div>
-                  <span className={`px-3 py-1 rounded-lg text-[10px] font-black ${plan.status === 'Pending' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                    {plan.status.toUpperCase()}
-                  </span>
-                </div>
-
-                <div className="space-y-4 mb-8">
-                  <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl">
-                    <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Date & Content</p>
-                    <p className="text-sm font-bold text-slate-800 dark:text-slate-200">{plan.date}: {plan.content}</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl">
-                      <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Specific Objectives</p>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">{plan.objectives}</p>
-                    </div>
-                    <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl">
-                      <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Evaluation</p>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">{plan.evaluation}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-6 border-t border-slate-100 dark:border-slate-800 flex gap-4">
-                  <button className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2">
-                    <CheckSquare size={14} />
-                    Approve Plan
-                  </button>
-                  <button className="flex-1 py-3 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 text-slate-600 dark:text-slate-300 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border border-slate-100 dark:border-slate-700">
-                    <MessageSquare size={14} />
-                    Add Feedback
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
+      ) : activeTab === 'communication' ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          <div className={`${selectedStudent ? 'hidden lg:block' : 'block'} lg:col-span-4 space-y-6`}>
+          <div className="lg:col-span-4 space-y-6">
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
               <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Select Class</h3>
               <div className="space-y-2">
@@ -694,7 +507,7 @@ export const TeacherPortal = () => {
                     }}
                     className={`w-full p-4 flex items-center justify-between rounded-xl transition-all ${selectedClass === cls.id ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-blue-50 dark:hover:bg-slate-700'}`}
                   >
-                    <span className="font-bold">Grade {cls.grade_level} - {cls.section_name}</span>
+                    <span className="font-bold">Grade {cls.grade} - {cls.name}</span>
                     <ChevronRight size={18} />
                   </button>
                 ))}
@@ -702,7 +515,7 @@ export const TeacherPortal = () => {
             </div>
 
             {selectedClass && (
-              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm animate-in slide-in-from-top-4">
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
                 <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Students</h3>
                 <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar">
                   {students.map(student => (
@@ -716,9 +529,9 @@ export const TeacherPortal = () => {
                       className={`w-full p-3 flex items-center gap-3 rounded-xl transition-all ${selectedStudent?.id === student.id ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-600' : 'hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
                       <div className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-500 font-bold text-xs">
-                        {student.name[0]}
+                        {student.full_name[0]}
                       </div>
-                      <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{student.name}</span>
+                      <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{student.full_name}</span>
                     </button>
                   ))}
                 </div>
@@ -726,45 +539,27 @@ export const TeacherPortal = () => {
             )}
           </div>
 
-          <div className={`${selectedStudent ? 'block' : 'hidden lg:block'} lg:col-span-8`}>
-            {selectedStudent ? (
-              <div className="lg:hidden mb-6">
-                <button
-                  onClick={() => setSelectedStudent(null)}
-                  className="flex items-center gap-2 text-blue-600 font-bold"
-                >
-                  <ArrowRight size={18} className="rotate-180" />
-                  Back to Students
-                </button>
-              </div>
-            ) : null}
+          <div className="lg:col-span-8">
             {selectedStudent ? (
               <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-xl space-y-8">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex justify-between items-center">
                   <div className="flex items-center gap-4">
                     <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center text-blue-600 font-black text-2xl">
-                      {selectedStudent.name[0]}
+                      {selectedStudent.full_name[0]}
                     </div>
                     <div>
-                      <h2 className="text-2xl font-black text-slate-900 dark:text-white">{selectedStudent.name}</h2>
-                      <p className="text-slate-500 font-bold">Weekly Performance Rating (May 24-30)</p>
+                      <h2 className="text-2xl font-black text-slate-900 dark:text-white">{selectedStudent.full_name}</h2>
+                      <p className="text-slate-500 font-bold">Weekly Performance Rating</p>
                     </div>
                   </div>
                   <button
-                    onClick={handleSave}
-                    className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-lg shadow-blue-200 dark:shadow-none"
+                    onClick={handleSaveCommunication}
+                    className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-lg"
                   >
                     <Save size={18} />
                     Submit Week Rating
                   </button>
                 </div>
-
-                {isSaved && (
-                  <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center gap-2 border border-emerald-100 dark:border-emerald-800 animate-in fade-in zoom-in-95">
-                    <CheckCircle size={20} />
-                    <span className="font-bold text-sm">Communication book updated successfully!</span>
-                  </div>
-                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {commFields.map(field => (
@@ -784,7 +579,7 @@ export const TeacherPortal = () => {
                         {[0, 1, 2, 3].map(rating => (
                           <button
                             key={rating}
-                            onClick={() => handleRating(field.id, rating)}
+                            onClick={() => setRatings(prev => ({ ...prev, [field.id]: rating }))}
                             className={`py-2 rounded-lg text-[10px] font-black transition-all ${ratings[field.id] === rating ? getRatingColor(rating) : 'bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-blue-400'}`}
                           >
                             {rating + 1}
@@ -796,33 +591,29 @@ export const TeacherPortal = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">Teacher's Remark (Optional)</label>
+                  <label className="text-sm font-bold text-slate-700 dark:text-slate-300 ml-1">Teacher's Remark</label>
                   <textarea
+                    placeholder="Add observations..."
                     value={teacherNote}
-                    onChange={(e) => setTeacherNote(e.target.value)}
-                    placeholder="Write a brief observation about the student's week..."
-                    className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus:border-blue-600 focus:ring-4 focus:ring-blue-600/10 transition-all outline-none text-sm min-h-[100px] resize-none"
+                    onChange={e => setTeacherNote(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-sm font-medium h-32 resize-none"
                   />
-                </div>
-
-                <div className="p-6 bg-amber-50 dark:bg-amber-900/10 rounded-2xl border border-amber-100 dark:border-amber-900/20 flex gap-4">
-                  <History className="text-amber-600 flex-shrink-0" size={24} />
-                  <div>
-                    <h4 className="font-bold text-amber-900 dark:text-amber-400 text-sm">History Tracking</h4>
-                    <p className="text-xs text-amber-800 dark:text-amber-500/80 mt-1 leading-relaxed">
-                      Ratings submitted here are archived weekly. Parents can view past performance trends in their portal to track long-term behavioral and academic readiness.
-                    </p>
-                  </div>
                 </div>
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center p-12 text-center bg-slate-50/50 dark:bg-slate-900/20 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800">
-                <Star className="text-slate-300 dark:text-slate-700 mb-4" size={48} />
-                <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">Communication Book</h3>
-                <p className="text-slate-500 max-w-xs mx-auto mt-2 font-medium">Select a student from the left panel to begin the weekly performance evaluation.</p>
+              <div className="h-full flex flex-col items-center justify-center p-20 text-center bg-slate-50/50 rounded-3xl border-2 border-dashed border-slate-200">
+                <MessageSquare className="text-slate-300 mb-4" size={48} />
+                <h3 className="text-xl font-bold text-slate-800 uppercase">Communication Book</h3>
+                <p className="text-slate-500 max-w-xs mx-auto mt-2 font-medium">Select a class and student to record weekly observations.</p>
               </div>
             )}
           </div>
+        </div>
+      ) : (
+        <div className="p-12 text-center bg-slate-50 rounded-3xl border border-slate-100">
+          <History className="text-slate-300 mx-auto mb-4" size={48} />
+          <h3 className="text-xl font-bold text-slate-800 uppercase tracking-tight">Review Workflow</h3>
+          <p className="text-slate-500 font-medium">Dean-only view for lesson plan approvals.</p>
         </div>
       )}
     </div>

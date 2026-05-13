@@ -1,9 +1,8 @@
 
-import { Megaphone, Plus, X, Bus, Users, RefreshCw } from 'lucide-react';
+import { Megaphone, Plus, X, Bus, Users, RefreshCw, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
 import { useTranslation } from 'react-i18next';
-import { useStore } from '../context/useStore';
 import { apiFetch } from '../utils/apiClient';
 import { toast } from '../components/Toast';
 
@@ -14,36 +13,40 @@ interface ManifestItem {
   route_name: string;
 }
 
+interface Notice {
+  id: string;
+  title: string;
+  content: string;
+  time: string;
+  driverName: string;
+  category: string;
+}
+
 export const DriverPortal = () => {
   const { t } = useTranslation();
   const { user } = useUser();
-  const { notices, addNotice } = useStore();
   const [activeTab, setActiveTab] = useState<'notices' | 'manifest'>('manifest');
   const [manifest, setManifest] = useState<ManifestItem[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
   const [routeInfo, setRouteInfo] = useState<{ bus_number?: string; route_name?: string } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [noticesLoading, setNoticesLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [stations, setStations] = useState('');
-
-  // const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
   const fetchManifest = async () => {
     setLoading(true);
     try {
       const res = await apiFetch('/api/driver/manifest');
       const data = await res.json();
-
-      if (!res.ok) {
-        // 404 = no route assigned yet; show friendly message
-        toast.error(data.message || 'Failed to fetch manifest.');
+      if (res.ok) {
+        setRouteInfo({ bus_number: data.data?.bus_number, route_name: data.data?.route_name });
+        setManifest(data.data?.manifest || []);
+      } else {
         setManifest([]);
-        return;
       }
-
-      setRouteInfo({ bus_number: data.data?.bus_number, route_name: data.data?.route_name });
-      setManifest(data.data?.manifest || []);
     } catch {
       toast.error('Network error — could not reach the transport server.');
     } finally {
@@ -51,27 +54,51 @@ export const DriverPortal = () => {
     }
   };
 
+  const fetchNotices = async () => {
+    setNoticesLoading(true);
+    try {
+      const res = await apiFetch('/api/driver/notices');
+      const data = await res.json();
+      if (res.ok) {
+        // Map backend 'time' to string
+        const mapped = (data.data || []).map((n: any) => ({
+          ...n,
+          time: n.time ? new Date(n.time).toLocaleDateString() : 'Today'
+        }));
+        setNotices(mapped);
+      }
+    } catch {
+      toast.error('Failed to fetch notices.');
+    } finally {
+      setNoticesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'manifest') fetchManifest();
+    if (activeTab === 'notices') fetchNotices();
   }, [activeTab]);
 
-  const driverNotices = notices.filter(n => n.category === 'Logistics');
-
-  const handlePost = (e: React.FormEvent) => {
+  const handlePost = async (e: React.FormEvent) => {
     e.preventDefault();
-    addNotice({
-      title,
-      content,
-      stations,
-      driverName: user?.name || t('driverPortal.defaultName'),
-      category: 'Logistics',
-      priority: 'Normal',
-      audience: ['super-admin', 'school-admin', 'vice-principal', 'parent', 'student']
-    });
-    setTitle('');
-    setContent('');
-    setStations('');
-    setShowForm(false);
+    try {
+      const res = await apiFetch('/api/driver/notice', {
+        method: 'POST',
+        body: JSON.stringify({ title, content, stations })
+      });
+      if (res.ok) {
+        toast.success('Notice broadcasted successfully.');
+        setTitle('');
+        setContent('');
+        setStations('');
+        setShowForm(false);
+        fetchNotices();
+      } else {
+        toast.error('Failed to post notice.');
+      }
+    } catch {
+      toast.error('Network error.');
+    }
   };
 
   return (
@@ -141,7 +168,9 @@ export const DriverPortal = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {manifest.length > 0 ? manifest.map((student, i) => (
+                  {loading ? (
+                    <tr><td colSpan={3} className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-orange-500" /></td></tr>
+                  ) : manifest.length > 0 ? manifest.map((student, i) => (
                     <tr key={i} className="hover:bg-orange-50/30 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
@@ -181,7 +210,9 @@ export const DriverPortal = () => {
           </button>
 
           <div className="space-y-3">
-            {driverNotices.map((notice, i) => (
+            {noticesLoading ? (
+               <Loader2 className="w-8 h-8 animate-spin mx-auto text-orange-500 mt-8" />
+            ) : notices.map((notice, i) => (
               <div key={i} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-5 shadow-sm">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black uppercase rounded-full">Logistics</span>
@@ -189,6 +220,7 @@ export const DriverPortal = () => {
                 </div>
                 <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1">{notice.title}</h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{notice.content}</p>
+                <p className="text-[9px] text-slate-400 mt-2 italic">Broadcast by {notice.driverName}</p>
               </div>
             ))}
           </div>
@@ -208,22 +240,22 @@ export const DriverPortal = () => {
                 placeholder="Title" 
                 value={title} 
                 onChange={e => setTitle(e.target.value)} 
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border rounded-xl text-sm font-bold"
+                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border rounded-xl text-sm font-bold focus:ring-2 ring-orange-500 outline-none transition-all"
               />
               <textarea 
                 required 
                 placeholder="Details..." 
                 value={content} 
                 onChange={e => setContent(e.target.value)} 
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border rounded-xl text-sm h-24 resize-none"
+                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border rounded-xl text-sm h-24 resize-none focus:ring-2 ring-orange-500 outline-none transition-all"
               />
               <input 
                 placeholder="Stations (comma separated)" 
                 value={stations} 
                 onChange={e => setStations(e.target.value)} 
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border rounded-xl text-sm"
+                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border rounded-xl text-sm focus:ring-2 ring-orange-500 outline-none transition-all"
               />
-              <button type="submit" className="w-full py-4 bg-orange-500 text-white font-black text-sm uppercase rounded-xl shadow-lg shadow-orange-200">Broadcast Update</button>
+              <button type="submit" className="w-full py-4 bg-orange-500 text-white font-black text-sm uppercase rounded-xl shadow-lg shadow-orange-200 hover:bg-orange-600 transition-colors">Broadcast Update</button>
             </form>
           </div>
         </div>
