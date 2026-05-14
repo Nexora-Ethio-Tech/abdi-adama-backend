@@ -4,35 +4,32 @@ class AuditorService {
   // View all payments (READ ONLY)
   async getPayments(branchId: string, filters?: { studentId?: string; startDate?: string; endDate?: string }) {
     let query = `
-      SELECT p.*, s.name as student_name, s.digital_id as student_digital_id, 
-             u.name as recorded_by_name
-      FROM finance_transactions p
-      JOIN students s ON p.student_id = s.id
-      JOIN users u ON p.recorded_by = u.id
-      WHERE s.branch_id = $1
+      SELECT ft.*
+      FROM finance_transactions ft
+      WHERE ft.branch_id = $1
     `;
     const params: any[] = [branchId];
     let paramIndex = 2;
 
     if (filters?.studentId) {
-      query += ` AND p.student_id = $${paramIndex}`;
+      query += ` AND ft.student_id = $${paramIndex}`;
       params.push(filters.studentId);
       paramIndex++;
     }
 
     if (filters?.startDate) {
-      query += ` AND p.date >= $${paramIndex}`;
+      query += ` AND ft.date >= $${paramIndex}`;
       params.push(filters.startDate);
       paramIndex++;
     }
 
     if (filters?.endDate) {
-      query += ` AND p.date <= $${paramIndex}`;
+      query += ` AND ft.date <= $${paramIndex}`;
       params.push(filters.endDate);
       paramIndex++;
     }
 
-    query += ` ORDER BY p.date DESC`;
+    query += ` ORDER BY ft.date DESC, ft.created_at DESC`;
 
     const result = await pool.query(query, params);
     return result.rows;
@@ -41,12 +38,13 @@ class AuditorService {
   // View fee reduction requests
   async getFeeReductionRequests(branchId: string, status?: string) {
     let query = `
-      SELECT s.id, s.digital_id, s.name, s.grade, s.fee_reduction_percentage,
-             s.fee_approval_status, s.fee_reduction_reason, s.fee_reduction_reviewed_by,
-             s.fee_reduction_reviewed_at, u.name as reviewed_by_name
+      SELECT 
+        s.id, s.grade, s.monthly_fee, s.bus_fee, s.penalty_fee,
+        s.fee_status, s.fee_approval_status, s.fee_notes,
+        u.name, u.email, u.digital_id
       FROM students s
-      LEFT JOIN users u ON s.fee_reduction_reviewed_by = u.id
-      WHERE s.branch_id = $1 AND s.fee_reduction_percentage > 0
+      JOIN users u ON s.user_id = u.id
+      WHERE s.branch_id = $1 AND s.fee_status = 'reduced'
     `;
     const params: any[] = [branchId];
 
@@ -55,27 +53,20 @@ class AuditorService {
       params.push(status);
     }
 
-    query += ` ORDER BY s.created_at DESC`;
+    query += ` ORDER BY s.updated_at DESC`;
 
     const result = await pool.query(query, params);
     return result.rows;
   }
 
   // Approve/Reject fee reduction (ONLY write permission)
-  async updateFeeReductionStatus(studentId: string, branchId: string, status: string, auditorId: string) {
-    const validStatuses = ['Pending', 'Approved', 'Rejected'];
-    if (!validStatuses.includes(status)) {
-      throw new Error('Invalid status. Must be Pending, Approved, or Rejected');
-    }
-
+  async updateFeeReductionStatus(studentId: string, branchId: string, status: string, _auditorId: string) {
     const result = await pool.query(
       `UPDATE students 
-       SET fee_approval_status = $1, 
-           fee_reduction_reviewed_by = $2,
-           fee_reduction_reviewed_at = NOW()
-       WHERE id = $3 AND branch_id = $4
-       RETURNING *`,
-      [status, auditorId, studentId, branchId]
+       SET fee_approval_status = $1, updated_at = NOW()
+       WHERE id = $2 AND branch_id = $3
+       RETURNING id, grade, monthly_fee, bus_fee, penalty_fee, fee_status, fee_approval_status, fee_notes`,
+      [status, studentId, branchId]
     );
 
     if (result.rows.length === 0) {
@@ -87,81 +78,75 @@ class AuditorService {
 
   // View financial reports
   async getFinancialReport(branchId: string, startDate: string, endDate: string) {
-    const paymentsResult = await pool.query(
+    const summaryResult = await pool.query(
       `SELECT 
          COUNT(*) as total_transactions,
-         SUM(amount) as total_collected,
-         SUM(CASE WHEN type = 'Tuition' THEN amount ELSE 0 END) as tuition_collected,
-         SUM(CASE WHEN type = 'Registration' THEN amount ELSE 0 END) as registration_collected,
-         SUM(CASE WHEN type = 'Bus Fee' THEN amount ELSE 0 END) as bus_collected,
-         SUM(CASE WHEN type = 'Penalty' THEN amount ELSE 0 END) as penalty_collected
-       FROM finance_transactions p
-       JOIN students s ON p.student_id = s.id
-       WHERE s.branch_id = $1 AND p.date BETWEEN $2 AND $3`,
+         COALESCE(SUM(amount), 0) as total_collected
+       FROM finance_transactions
+       WHERE branch_id = $1 AND date BETWEEN $2 AND $3`,
       [branchId, startDate, endDate]
     );
 
-    const expensesResult = await pool.query(
+    const byTypeResult = await pool.query(
       `SELECT 
-         COUNT(*) as total_expenses,
-         SUM(amount) as total_spent
-       FROM expenses
-       WHERE branch_id = $1 AND expense_date BETWEEN $2 AND $3`,
+         type,
+         COUNT(*) as count,
+         COALESCE(SUM(amount), 0) as total
+       FROM finance_transactions
+       WHERE branch_id = $1 AND date BETWEEN $2 AND $3
+       GROUP BY type
+       ORDER BY total DESC`,
       [branchId, startDate, endDate]
     );
 
-    const revenueTargetResult = await pool.query(
-      `SELECT target_amount, achieved_amount
-       FROM revenue_targets
-       WHERE branch_id = $1 AND target_month BETWEEN $2 AND $3
-       ORDER BY target_month DESC LIMIT 1`,
+    const dailyResult = await pool.query(
+      `SELECT 
+         date,
+         COUNT(*) as transactions,
+         COALESCE(SUM(amount), 0) as total
+       FROM finance_transactions
+       WHERE branch_id = $1 AND date BETWEEN $2 AND $3
+       GROUP BY date
+       ORDER BY date DESC`,
       [branchId, startDate, endDate]
     );
 
     return {
       period: { startDate, endDate },
-      income: paymentsResult.rows[0],
-      expenses: expensesResult.rows[0],
-      revenueTarget: revenueTargetResult.rows[0] || null
+      summary: {
+        totalTransactions: parseInt(summaryResult.rows[0].total_transactions),
+        totalCollected: parseFloat(summaryResult.rows[0].total_collected)
+      },
+      byType: byTypeResult.rows,
+      dailyBreakdown: dailyResult.rows
     };
   }
 
   // View audit trail
   async getAuditTrail(branchId: string, filters?: { userId?: string; action?: string; startDate?: string; endDate?: string }) {
     let query = `
-      SELECT al.*, u.name as user_name, u.digital_id as user_digital_id
-      FROM audit_logs al
-      JOIN users u ON al.user_id = u.id
-      WHERE u.branch_id = $1
+      SELECT al.*
+      FROM audit_log al
+      WHERE al.student_id IN (
+        SELECT id FROM students WHERE branch_id = $1
+      )
     `;
     const params: any[] = [branchId];
     let paramIndex = 2;
 
-    if (filters?.userId) {
-      query += ` AND al.user_id = $${paramIndex}`;
-      params.push(filters.userId);
-      paramIndex++;
-    }
-
-    if (filters?.action) {
-      query += ` AND al.action = $${paramIndex}`;
-      params.push(filters.action);
-      paramIndex++;
-    }
-
     if (filters?.startDate) {
-      query += ` AND al.created_at >= $${paramIndex}`;
+      query += ` AND al.timestamp >= $${paramIndex}`;
       params.push(filters.startDate);
       paramIndex++;
     }
 
     if (filters?.endDate) {
-      query += ` AND al.created_at <= $${paramIndex}`;
+      query += ` AND al.timestamp <= $${paramIndex}`;
       params.push(filters.endDate);
       paramIndex++;
     }
 
-    query += ` ORDER BY al.created_at DESC LIMIT 100`;
+    query += ` ORDER BY al.timestamp DESC LIMIT 100`;
 
     const result = await pool.query(query, params);
     return result.rows;
@@ -169,41 +154,48 @@ class AuditorService {
 
   // Dashboard
   async getDashboard(branchId: string) {
-    const totalPaymentsResult = await pool.query(
-      `SELECT COUNT(*) as count, SUM(amount) as total
-       FROM finance_transactions p
-       JOIN students s ON p.student_id = s.id
-       WHERE s.branch_id = $1`,
+    const totalResult = await pool.query(
+      `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
+       FROM finance_transactions
+       WHERE branch_id = $1`,
       [branchId]
     );
 
-    const monthlyPaymentsResult = await pool.query(
-      `SELECT COUNT(*) as count, SUM(amount) as total
-       FROM finance_transactions p
-       JOIN students s ON p.student_id = s.id
-       WHERE s.branch_id = $1 AND p.date >= DATE_TRUNC('month', CURRENT_DATE)`,
+    const monthlyResult = await pool.query(
+      `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
+       FROM finance_transactions
+       WHERE branch_id = $1
+       AND EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE)
+       AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)`,
       [branchId]
     );
 
-    const pendingReductionsResult = await pool.query(
+    const pendingResult = await pool.query(
       `SELECT COUNT(*) as count
        FROM students
-       WHERE branch_id = $1 AND fee_approval_status = 'Pending' AND fee_reduction_percentage > 0`,
+       WHERE branch_id = $1 AND fee_approval_status = 'pending'`,
       [branchId]
     );
 
-    const revenueTargetResult = await pool.query(
-      `SELECT target_amount, achieved_amount
-       FROM revenue_targets
-       WHERE branch_id = $1 AND target_month = DATE_TRUNC('month', CURRENT_DATE)`,
+    const recentResult = await pool.query(
+      `SELECT * FROM finance_transactions
+       WHERE branch_id = $1
+       ORDER BY created_at DESC
+       LIMIT 5`,
       [branchId]
     );
 
     return {
-      totalPayments: totalPaymentsResult.rows[0],
-      monthlyPayments: monthlyPaymentsResult.rows[0],
-      pendingFeeReductions: parseInt(pendingReductionsResult.rows[0].count),
-      revenueTarget: revenueTargetResult.rows[0] || null
+      totalPayments: {
+        count: parseInt(totalResult.rows[0].count),
+        total: parseFloat(totalResult.rows[0].total)
+      },
+      monthlyPayments: {
+        count: parseInt(monthlyResult.rows[0].count),
+        total: parseFloat(monthlyResult.rows[0].total)
+      },
+      pendingFeeReductions: parseInt(pendingResult.rows[0].count),
+      recentTransactions: recentResult.rows
     };
   }
 }

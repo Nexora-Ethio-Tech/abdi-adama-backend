@@ -56,7 +56,14 @@ const financialPolicySchema = Joi.object({
 router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
 router.get('/users', schoolAdminController.getBranchUsers);
 router.get('/users/:id', schoolAdminController.getUserById);
+router.patch('/users/:id', validate(schemas.updateUser), schoolAdminController.updateUser);
 router.patch('/users/:id/status', validate(schemas.updateUserStatus), schoolAdminController.updateUserStatus);
+router.post('/users/:id/reset-pin', schoolAdminController.resetUserPIN);
+router.delete('/users/:id', schoolAdminController.deleteUser);
+
+// Student-Class Management
+router.post('/students/assign-class', validate(schemas.assignStudentToClass), schoolAdminController.assignStudentToClass);
+router.delete('/students/:studentId/remove-class', schoolAdminController.removeStudentFromClass);
 
 // Class Management
 router.post('/classes', validate(createClassSchema), schoolAdminController.createClass);

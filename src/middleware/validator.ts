@@ -48,6 +48,17 @@ export const schemas = {
     status: Joi.string().valid('Pending', 'Approved', 'Revoked').required()
   }),
 
+  updateUser: Joi.object({
+    name: Joi.string().min(2).max(150).optional(),
+    email: Joi.string().email().optional(),
+    grade: Joi.string().optional()
+  }),
+
+  assignStudentToClass: Joi.object({
+    studentId: Joi.string().uuid().required(),
+    classId: Joi.string().uuid().required()
+  }),
+
   changePassword: Joi.object({
     currentPassword: Joi.string().required(),
     newPassword: Joi.string().min(8).required()

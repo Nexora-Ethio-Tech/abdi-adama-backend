@@ -73,6 +73,96 @@ class SchoolAdminController {
     }
   }
 
+  // Delete User
+  async deleteUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+      const schoolAdminId = req.user!.id;
+
+      await schoolAdminService.deleteUser(id, branchId!, schoolAdminId);
+
+      res.json({
+        success: true,
+        message: 'User deleted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Update User (Edit student/teacher/parent details)
+  async updateUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+      const updateData = req.body;
+
+      const user = await schoolAdminService.updateUser(id, branchId!, updateData);
+
+      res.json({
+        success: true,
+        data: user,
+        message: 'User updated successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Assign Student to Class
+  async assignStudentToClass(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { studentId, classId } = req.body;
+
+      const result = await schoolAdminService.assignStudentToClass(studentId, classId, branchId!);
+
+      res.json({
+        success: true,
+        data: result,
+        message: 'Student assigned to class successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Remove Student from Class
+  async removeStudentFromClass(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { studentId } = req.params;
+      const branchId = req.user!.branch_id;
+
+      await schoolAdminService.removeStudentFromClass(studentId, branchId!);
+
+      res.json({
+        success: true,
+        message: 'Student removed from class successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Reset user PIN
+  async resetUserPIN(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+
+      const result = await schoolAdminService.resetUserPIN(id, branchId!);
+
+      res.json({
+        success: true,
+        data: result,
+        message: `PIN reset successfully. New PIN: ${result.newPIN}`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Class Management
   async createClass(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

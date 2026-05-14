@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import userService from './user.service';
+import { generate4DigitPIN, hashPassword } from '../utils/password';
 
 class SchoolAdminService {
   // User Management (existing methods)
@@ -84,6 +85,181 @@ class SchoolAdminService {
     );
 
     return result.rows[0];
+  }
+
+  // Delete User (teachers, students, parents, staff in their branch)
+  async deleteUser(userId: string, branchId: string, _schoolAdminId: string) {
+    // Verify user belongs to School Admin's branch
+    const userCheck = await pool.query(
+      `SELECT id, role, name FROM users 
+       WHERE id = $1 AND branch_id = $2`,
+      [userId, branchId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      throw new Error('User not found in your branch');
+    }
+
+    const user = userCheck.rows[0];
+
+    // Prevent School Admin from deleting admin roles
+    const restrictedRoles = ['school-admin', 'vice-principal', 'auditor', 'super-admin'];
+    if (restrictedRoles.includes(user.role)) {
+      throw new Error('You cannot delete admin roles. Contact Super Admin.');
+    }
+
+    // Delete user (CASCADE will handle related records)
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+
+    return { message: `User ${user.name} deleted successfully` };
+  }
+
+  // Update User (Edit student/teacher/parent details)
+  async updateUser(userId: string, branchId: string, updateData: any) {
+    // Verify user belongs to School Admin's branch
+    const userCheck = await pool.query(
+      `SELECT id, role FROM users 
+       WHERE id = $1 AND branch_id = $2`,
+      [userId, branchId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      throw new Error('User not found in your branch');
+    }
+
+    const user = userCheck.rows[0];
+
+    // Prevent School Admin from editing admin roles
+    const restrictedRoles = ['school-admin', 'vice-principal', 'auditor', 'super-admin'];
+    if (restrictedRoles.includes(user.role)) {
+      throw new Error('You cannot edit admin roles. Contact Super Admin.');
+    }
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramCount = 0;
+
+    if (updateData.name) {
+      paramCount++;
+      fields.push(`name = $${paramCount}`);
+      values.push(updateData.name);
+    }
+
+    if (updateData.email) {
+      paramCount++;
+      fields.push(`email = $${paramCount}`);
+      values.push(updateData.email);
+    }
+
+    if (fields.length === 0) {
+      throw new Error('No fields to update');
+    }
+
+    paramCount++;
+    fields.push(`updated_at = NOW()`);
+    values.push(userId);
+
+    const result = await pool.query(
+      `UPDATE users SET ${fields.join(', ')}
+       WHERE id = $${paramCount}
+       RETURNING id, digital_id, name, email, role, status, branch_id`,
+      values
+    );
+
+    // If student, update grade in students table
+    if (user.role === 'student' && updateData.grade) {
+      await pool.query(
+        `UPDATE students SET grade = $1 WHERE user_id = $2`,
+        [updateData.grade, userId]
+      );
+    }
+
+    return result.rows[0];
+  }
+
+  // Assign Student to Class
+  async assignStudentToClass(studentId: string, classId: string, branchId: string) {
+    // Verify student exists and belongs to branch
+    const studentCheck = await pool.query(
+      `SELECT s.id, s.user_id, u.role 
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       WHERE s.user_id = $1 AND s.branch_id = $2`,
+      [studentId, branchId]
+    );
+
+    if (studentCheck.rows.length === 0) {
+      throw new Error('Student not found in your branch');
+    }
+
+    // Verify class exists and belongs to branch
+    const classCheck = await pool.query(
+      'SELECT id, name FROM classes WHERE id = $1 AND branch_id = $2',
+      [classId, branchId]
+    );
+
+    if (classCheck.rows.length === 0) {
+      throw new Error('Class not found in your branch');
+    }
+
+    const className = classCheck.rows[0].name;
+
+    // Update student's grade to match class name
+    const result = await pool.query(
+      `UPDATE students 
+       SET grade = $1, updated_at = NOW()
+       WHERE user_id = $2
+       RETURNING *`,
+      [className, studentId]
+    );
+
+    // Update class student count
+    await pool.query(
+      `UPDATE classes 
+       SET student_count = (SELECT COUNT(*) FROM students WHERE grade = $1 AND branch_id = $2)
+       WHERE id = $3`,
+      [className, branchId, classId]
+    );
+
+    return {
+      student: result.rows[0],
+      class: classCheck.rows[0]
+    };
+  }
+
+  // Remove Student from Class
+  async removeStudentFromClass(studentId: string, branchId: string) {
+    // Verify student exists and belongs to branch
+    const studentCheck = await pool.query(
+      `SELECT s.id, s.grade 
+       FROM students s
+       WHERE s.user_id = $1 AND s.branch_id = $2`,
+      [studentId, branchId]
+    );
+
+    if (studentCheck.rows.length === 0) {
+      throw new Error('Student not found in your branch');
+    }
+
+    const currentGrade = studentCheck.rows[0].grade;
+
+    // Remove student from class (set grade to null)
+    await pool.query(
+      `UPDATE students 
+       SET grade = NULL, updated_at = NOW()
+       WHERE user_id = $1`,
+      [studentId]
+    );
+
+    // Update class student count if student was in a class
+    if (currentGrade) {
+      await pool.query(
+        `UPDATE classes 
+         SET student_count = (SELECT COUNT(*) FROM students WHERE grade = $1 AND branch_id = $2)
+         WHERE name = $1 AND branch_id = $2`,
+        [currentGrade, branchId]
+      );
+    }
   }
 
   // Class Management
@@ -207,19 +383,31 @@ class SchoolAdminService {
       throw new Error('Class not found or access denied');
     }
 
-    // Verify teacher belongs to branch
-    const teacherCheck = await pool.query(
+    // Check if teacherId is from users table or teachers table
+    // First try to find in teachers table by id
+    let teacherRecord = await pool.query(
       'SELECT id FROM teachers WHERE id = $1 AND branch_id = $2',
       [teacherId, branchId]
     );
 
-    if (teacherCheck.rows.length === 0) {
+    // If not found, try to find by user_id (in case frontend sends user.id)
+    if (teacherRecord.rows.length === 0) {
+      teacherRecord = await pool.query(
+        'SELECT id FROM teachers WHERE user_id = $1 AND branch_id = $2',
+        [teacherId, branchId]
+      );
+    }
+
+    if (teacherRecord.rows.length === 0) {
       throw new Error('Teacher not found or not in this branch');
     }
 
+    // Use the actual teacher table id
+    const actualTeacherId = teacherRecord.rows[0].id;
+
     const result = await pool.query(
       'UPDATE classes SET teacher_id = $1 WHERE id = $2 RETURNING *',
-      [teacherId, classId]
+      [actualTeacherId, classId]
     );
 
     return result.rows[0];
@@ -499,6 +687,35 @@ class SchoolAdminService {
       pendingApplications: parseInt(applicationsResult.rows[0].count),
       activeAcademicYear: academicYearResult.rows[0] || null
     };
+  }
+
+  // Reset user PIN (for teachers, students, parents, staff)
+  async resetUserPIN(userId: string, branchId: string) {
+    const userCheck = await pool.query(
+      `SELECT id, role, name FROM users WHERE id = $1 AND branch_id = $2`,
+      [userId, branchId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      throw new Error('User not found in your branch');
+    }
+
+    const user = userCheck.rows[0];
+
+    const restrictedRoles = ['school-admin', 'vice-principal', 'auditor', 'super-admin'];
+    if (restrictedRoles.includes(user.role)) {
+      throw new Error('Cannot reset PIN for admin roles');
+    }
+
+    const newPIN = generate4DigitPIN();
+    const hashedPIN = await hashPassword(newPIN);
+
+    await pool.query(
+      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [hashedPIN, userId]
+    );
+
+    return { userId, name: user.name, newPIN };
   }
 
   // Get branch teachers
