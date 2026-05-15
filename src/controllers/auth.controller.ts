@@ -6,6 +6,7 @@ class AuthController {
   async login(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { email, password } = req.body as LoginDTO;
+      // email field now accepts both email and digital_id
       const result = await authService.login(email, password);
 
       res.json({

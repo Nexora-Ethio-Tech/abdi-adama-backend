@@ -6,18 +6,19 @@ import logger from '../utils/logger';
 import { User, JWTPayload } from '../types';
 
 class AuthService {
-  async login(email: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
+  async login(emailOrDigitalId: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
     try {
+      // Query by email OR digital_id
       const result = await pool.query<User>(
         `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.password_hash, 
                 u.role, u.branch_id, u.status, u.is_active
          FROM users u
-         WHERE u.email = $1`,
-        [email]
+         WHERE u.email = $1 OR u.digital_id = $1`,
+        [emailOrDigitalId]
       );
 
       if (result.rows.length === 0) {
-        throw new Error('Invalid email or password');
+        throw new Error('Invalid credentials');
       }
 
       const user = result.rows[0];
@@ -37,7 +38,7 @@ class AuthService {
       const isPasswordValid = await comparePassword(password, user.password_hash!);
       
       if (!isPasswordValid) {
-        throw new Error('Invalid email or password');
+        throw new Error('Invalid credentials');
       }
 
       const payload: JWTPayload = {
@@ -52,7 +53,7 @@ class AuthService {
 
       delete user.password_hash;
 
-      logger.info(`User logged in: ${user.email} (${user.role})`);
+      logger.info(`User logged in: ${user.email} (${user.digital_id}) - ${user.role}`);
 
       return {
         user,

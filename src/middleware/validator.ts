@@ -23,7 +23,10 @@ export const validate = (schema: Joi.ObjectSchema) => {
 
 export const schemas = {
   login: Joi.object({
-    email: Joi.string().email().required(),
+    email: Joi.string().required().messages({
+      'string.empty': 'Email or Digital ID is required',
+      'any.required': 'Email or Digital ID is required'
+    }),
     password: Joi.string().required()
   }),
 
