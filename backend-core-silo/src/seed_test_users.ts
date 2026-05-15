@@ -65,6 +65,27 @@ async function run() {
   await seedUser('Test ClinicAdmin', 'ClinicAdmin', 'CLN-1111', '1234');
 
   console.log('--- SEEDING COMPLETE ---');
+
+  // 3. Link Student and Parent for testing
+  console.log('--- LINKING FAMILY ---');
+  try {
+    const studentRes = await pool.query('SELECT id FROM silo_identities WHERE school_id = $1', ['STU-1111']);
+    const parentRes = await pool.query('SELECT u.id FROM silo_users u JOIN silo_identities i ON u.identity_id = i.id WHERE i.school_id = $1 AND u.role = $2', ['PAR-1111', 'Parent']);
+    
+    if (studentRes.rowCount && studentRes.rowCount > 0 && parentRes.rowCount && parentRes.rowCount > 0) {
+      const studentId = (studentRes.rows[0] as any).id;
+      const parentUserId = (parentRes.rows[0] as any).id;
+      
+      await pool.query(
+        'INSERT INTO silo_family_links (student_identity_id, parent_user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [studentId, parentUserId]
+      );
+      console.log('✓ Linked STU-1111 to PAR-1111');
+    }
+  } catch (err) {
+    console.error('[!] Failed to link family:', err);
+  }
+  console.log('--- ALL DONE ---');
   process.exit(0);
 }
 

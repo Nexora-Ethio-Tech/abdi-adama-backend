@@ -21,19 +21,21 @@ router.get(
 
 // ── Grades (filterable by semester + subject_id) ──────────────────────────────
 // ?semester=1|2  &  ?subject_id=<uuid>
+// Parent role is also allowed — the controller verifies the parent-child link
 router.get(
   '/grades',
   authenticateToken,
-  authorizeRoles('Student'),
+  authorizeRoles('Student', 'Parent'),
   studentController.getGrades
 );
 
 // ── Academic History (filterable by year + semester) ─────────────────────────
 // ?year=2024/2025  &  ?semester=1|2
+// Parent role is also allowed — the controller verifies the parent-child link
 router.get(
   '/history',
   authenticateToken,
-  authorizeRoles('Student'),
+  authorizeRoles('Student', 'Parent'),
   studentController.getHistory
 );
 

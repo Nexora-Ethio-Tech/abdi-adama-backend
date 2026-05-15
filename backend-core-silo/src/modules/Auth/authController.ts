@@ -109,6 +109,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       },
     });
   } catch (err: unknown) {
+    console.error('[authController] login error:', err);
     const message = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ message: 'Internal server error.', detail: message });
   }

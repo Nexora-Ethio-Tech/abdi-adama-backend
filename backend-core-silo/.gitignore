@@ -3,3 +3,22 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# Scratch / diagnostic / debug files (dev only, never commit)
+scratch/
+src/check_*.ts
+src/check_*.js
+src/inspect_*.ts
+src/inspect_*.js
+src/list_*.ts
+src/list_*.js
+src/compare_*.ts
+src/compare_*.js
+src/seed_clinic_admin.ts
+src/seed_comm_logs.ts
+src/seed_final_setup.ts
+src/seed_user_request.ts
+src/verify_*.ts
+*.txt
+*.log
+check_assignments.js

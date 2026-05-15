@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import pool from '../../config/db';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { sendSuccess, sendError, getPagination } from '../../shared/responseUtils';
+import { getNextSaturday } from '../../shared/dateUtils';
+import { broadcast } from '../../shared/sseManager';
 
 /**
  * GET /api/driver/manifest  (also aliased at /api/transport/manifest)
@@ -75,15 +77,35 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
     );
     const driverName = driverResult.rows[0]?.full_name || 'Driver';
 
+    const expiresAt = getNextSaturday(new Date());
+    // Set expiration to end of Saturday (e.g., 11:59 PM)
+    expiresAt.setHours(23, 59, 59, 999);
+
     const result = await pool.query(
-      `INSERT INTO silo_logistics_notices (sender_id, message, title, stations)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO silo_logistics_notices (sender_id, message, title, stations, published_at, expires_at)
+       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5)
        RETURNING *`,
-      [identity_id, content, title || null, stations || null]
+      [identity_id, content, title || null, stations || null, expiresAt]
     );
 
+    const notice = result.rows[0];
+    const broadcastPayload = {
+      id:         notice.id,
+      title:      notice.title || 'Logistics Update',
+      content:    notice.message,
+      stations:   notice.stations,
+      driverName,
+      timestamp:  notice.published_at,
+      category:   'Logistics',
+      priority:   'Normal',
+      expires_at: notice.expires_at,
+    };
+
+    // Push to all connected SSE clients instantly (Student, Parent, Admin portals)
+    broadcast('LOGISTICS_NOTICE', broadcastPayload);
+
     return sendSuccess(res, {
-      ...result.rows[0],
+      ...notice,
       driverName,
     }, 'Notice posted successfully.', 201);
   } catch (err: any) {
@@ -103,13 +125,18 @@ export const getNotices = async (req: Request, res: Response) => {
       `SELECT 
          n.id,
          n.title,
-         n.message   AS content,
+         n.message      AS content,
          n.stations,
-         n.timestamp AS time,
-         i.full_name AS driverName,
-         'Logistics'::text AS category
+         n.timestamp    AS time,
+         n.published_at,
+         n.expires_at,
+         i.full_name    AS driverName,
+         'Logistics'::text AS category,
+         false AS is_pending
        FROM silo_logistics_notices n
        LEFT JOIN silo_identities i ON i.id = n.sender_id
+       WHERE n.deleted_at IS NULL
+         AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
        ORDER BY n.timestamp DESC
        LIMIT $1 OFFSET $2`,
       [limit, offset]
@@ -118,5 +145,51 @@ export const getNotices = async (req: Request, res: Response) => {
     return sendSuccess(res, result.rows);
   } catch (err: any) {
     return sendError(res, 'Failed to fetch notices.', 500, err.message);
+  }
+};
+
+/**
+ * DELETE /api/driver/notice/:id
+ * Soft deletes a notice. Only the sender can delete their own notice.
+ */
+export const deleteNotice = async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const identity_id = req.user?.identity_id;
+
+  try {
+    const checkResult = await pool.query(
+      'SELECT sender_id FROM silo_logistics_notices WHERE id = $1',
+      [id]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return sendError(res, 'Notice not found.', 404);
+    }
+
+    const notice = checkResult.rows[0];
+
+    // Ownership check:
+    // 1. If it's their notice, allow.
+    // 2. If it's a "legacy" notice (created before recent identity cleanup), 
+    //    and the current user is a driver, we'll allow it for now to let them clean up.
+    if (notice.sender_id !== identity_id) {
+       // Check if sender_id exists in identities
+       const senderExists = await pool.query('SELECT 1 FROM silo_identities WHERE id = $1', [notice.sender_id]);
+       if (senderExists.rows.length > 0) {
+         // Sender exists and it's NOT the current driver. Block.
+         return sendError(res, 'You do not have permission to delete this notice.', 403);
+       }
+       // If sender_id doesn't exist, it's an orphaned legacy notice. 
+       // Since the route is restricted to drivers (via middleware), we allow them to clean up orphaned logistics notices.
+    }
+
+    await pool.query(
+      'UPDATE silo_logistics_notices SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [id]
+    );
+
+    return sendSuccess(res, null, 'Notice deleted successfully.');
+  } catch (err: any) {
+    return sendError(res, 'Failed to delete notice.', 500, err.message);
   }
 };

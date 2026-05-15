@@ -1,6 +1,8 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import cron from 'node-cron';
+import jwt from 'jsonwebtoken';
 import swaggerUi from 'swagger-ui-express';
 import pool from './config/db';
 import adminRoutes from './modules/Admin/adminRoutes';
@@ -12,6 +14,7 @@ import studentRoutes from './modules/Student/studentRoutes';
 import parentRoutes from './modules/Parent/parentRoutes';
 import examRoutes from './modules/Exam/examRoutes';
 import teacherRoutes from './modules/Teacher/teacherRoutes';
+import { addClient, removeClient, startKeepalive } from './shared/sseManager';
 
 dotenv.config();
 
@@ -416,7 +419,30 @@ app.use('/api/transport', driverRoutes);  // Frontend alias → same Driver cont
 app.use('/api/student',   studentRoutes);
 app.use('/api/parent',    parentRoutes);
 app.use('/api/exams',     examRoutes);
-app.use('/api/teacher',   teacherRoutes);    // Official Exam Secure Environment
+app.use('/api/teacher',   teacherRoutes);
+
+// ─── SSE: Real-time event stream ──────────────────────────────────────────────
+// Authenticated users (Student, Parent, Admin, Teacher) connect here once on
+// login. When a Driver posts a notice, all connected clients receive it instantly.
+const JWT_SECRET_SSE = process.env.JWT_SECRET || 'fallback_secret';
+
+app.get('/api/events/stream', (req: Request, res: Response) => {
+  // SSE cannot set custom headers, so the JWT is passed as ?token=...
+  const token = req.query.token as string;
+  if (!token) {
+    res.status(401).json({ message: 'Authentication token required.' });
+    return;
+  }
+  try {
+    jwt.verify(token, JWT_SECRET_SSE);
+  } catch {
+    res.status(403).json({ message: 'Invalid or expired token.' });
+    return;
+  }
+
+  addClient(res);
+  req.on('close', () => removeClient(res));
+});
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/health', async (req: Request, res: Response) => {
@@ -453,6 +479,7 @@ app.listen(PORT, async () => {
   console.log(`✓ Server running at http://localhost:${PORT}`);
   console.log(`✓ Swagger UI       → http://localhost:${PORT}/api-docs`);
   console.log(`✓ Health Check     → http://localhost:${PORT}/health`);
+  console.log(`✓ SSE Stream       → GET  http://localhost:${PORT}/api/events/stream?token=<jwt>`);
   console.log(`✓ Admin API        → POST http://localhost:${PORT}/api/admin/create-user`);
   console.log(`✓ Login API        → POST http://localhost:${PORT}/api/auth/login`);
   console.log(`✓ Library API      → GET  http://localhost:${PORT}/api/library/stats`);
@@ -468,4 +495,26 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error('✘ Database Connection Failed:', err instanceof Error ? err.message : err);
   }
+
+  // Start SSE keepalive pings — prevents proxy/browser from closing idle connections
+  startKeepalive();
+
+  // ── Saturday midnight cleanup: hard-delete expired logistics notices ──────────
+  // Cron: every Saturday at 00:01 AM server time.
+  // Keeps silo_logistics_notices lean; reduces query overhead on all portals.
+  cron.schedule('1 0 * * 6', async () => {
+    console.log('[Cron] Saturday cleanup — deleting expired logistics notices...');
+    try {
+      const result = await pool.query(
+        `DELETE FROM silo_logistics_notices
+         WHERE expires_at IS NOT NULL AND expires_at < NOW()
+         RETURNING id`
+      );
+      console.log(`[Cron] Deleted ${result.rowCount ?? 0} expired notice(s).`);
+    } catch (err) {
+      console.error('[Cron] Cleanup failed:', err instanceof Error ? err.message : err);
+    }
+  });
+  console.log('✓ Saturday cleanup cron scheduled (every Saturday 00:01 AM)\n');
 });
+

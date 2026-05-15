@@ -8,9 +8,9 @@ import { sendError, getPagination } from '../../shared/responseUtils';
 export const getStats = async (req: Request, res: Response) => {
   try {
     const [coll, loans, avail] = await Promise.all([
-      pool.query('SELECT COUNT(*) as total FROM silo_books'),
+      pool.query('SELECT SUM(total_copies) as total FROM silo_books'),
       pool.query('SELECT COUNT(*) as active FROM silo_loans WHERE returned_at IS NULL'),
-      pool.query("SELECT SUM(stock) as available FROM silo_books WHERE status = 'Available'"),
+      pool.query("SELECT SUM(stock) as available FROM silo_books"),
     ]);
 
     res.json({
@@ -53,9 +53,10 @@ export const getBooks = async (req: Request, res: Response) => {
            author,
            isbn,
            shelf_location AS shelf,
-           stock           AS total,
+           total_copies    AS total,
            stock           AS available,
            status,
+           book_code,
            created_at
          FROM silo_books
          ${searchFilter}
@@ -89,11 +90,15 @@ export const addBook = async (req: Request, res: Response) => {
   }
 
   try {
+    const stockNum = parseInt(stock || '1', 10);
+    // Generate a permanent short Book ID (e.g., BK-1234)
+    const bookCode = `BK-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const result = await pool.query(
-      `INSERT INTO silo_books (title, author, isbn, shelf_location, stock, status)
-       VALUES ($1, $2, $3, $4, $5, 'Available')
-       RETURNING id, title, author, isbn, shelf_location AS shelf, stock AS total, status, created_at`,
-      [title, author, isbn, shelf_location, stock || 1]
+      `INSERT INTO silo_books (title, author, isbn, shelf_location, stock, total_copies, status, book_code)
+       VALUES ($1, $2, $3, $4, $5, $5, 'Available', $6)
+       RETURNING id, title, author, isbn, shelf_location AS shelf, total_copies AS total, stock AS available, status, book_code, created_at`,
+      [title, author, isbn && isbn.trim() !== '' ? isbn.trim() : null, shelf_location, stockNum, bookCode]
     );
 
     res.status(201).json({
@@ -132,6 +137,8 @@ export const getLoans = async (req: Request, res: Response) => {
            l.student_id,
            l.student_name,
            l.book_title,
+           l.book_code,
+           l.student_school_id,
            l.loan_date     AS borrowed_at,
            l.due_date,
            l.returned_at,
@@ -147,7 +154,10 @@ export const getLoans = async (req: Request, res: Response) => {
            END AS fine_amount
          FROM silo_loans l
          ${searchFilter}
-         ORDER BY l.loan_date DESC
+         ORDER BY 
+           CASE WHEN l.returned_at IS NULL THEN 0 ELSE 1 END,
+           l.loan_date DESC,
+           l.created_at DESC
          LIMIT $1 OFFSET $2`,
         params
       ),
@@ -181,7 +191,7 @@ export const issueBook = async (req: Request, res: Response) => {
 
     // Check book exists and has stock
     const bookResult = await client.query(
-      'SELECT id, title, stock, status FROM silo_books WHERE id = $1',
+      'SELECT id, title, stock, status, book_code FROM silo_books WHERE id = $1',
       [book_id]
     );
     if (bookResult.rows.length === 0) {
@@ -194,29 +204,30 @@ export const issueBook = async (req: Request, res: Response) => {
       return sendError(res, 'This book is out of stock.', 409);
     }
 
-    // Resolve student identity
+    // Resolve student identity (handle both UUID and School ID)
     const studentResult = await client.query(
-      'SELECT id, full_name, school_id FROM silo_identities WHERE id = $1 OR school_id = $1',
+      'SELECT id, full_name, school_id FROM silo_identities WHERE id::text = $1 OR school_id = $1',
       [student_id]
     );
     if (studentResult.rows.length === 0) {
       await client.query('ROLLBACK');
-      return sendError(res, 'Student not found.', 404);
+      return sendError(res, `Student with ID "${student_id}" not found.`, 404);
     }
     const student = studentResult.rows[0];
 
     // Create loan record
+    // Create loan record with permanent Book ID and real Student School ID
     const loanResult = await client.query(
-      `INSERT INTO silo_loans (book_id, student_id, loan_date, due_date, student_name, book_title)
-       VALUES ($1, $2, CURRENT_DATE, $3, $4, $5)
+      `INSERT INTO silo_loans (book_id, student_id, loan_date, due_date, student_name, book_title, book_code, student_school_id)
+       VALUES ($1, $2, CURRENT_DATE, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [book.id, student.id, due_date, student.full_name, book.title]
+      [book.id, student.id, due_date, student.full_name, book.title, (book as any).book_code || 'N/A', student.school_id]
     );
 
     // Decrement stock and update status if needed
     const newStock = book.stock - 1;
     await client.query(
-      `UPDATE silo_books SET stock = $1, status = CASE WHEN $1 = 0 THEN 'Out of Stock'::book_status ELSE 'Borrowed'::book_status END WHERE id = $2`,
+      `UPDATE silo_books SET stock = $1, status = CASE WHEN $1 = 0 THEN 'Out of Stock'::silo_book_status ELSE 'Borrowed'::silo_book_status END WHERE id = $2`,
       [newStock, book.id]
     );
 
@@ -230,7 +241,8 @@ export const issueBook = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     await client.query('ROLLBACK');
-    sendError(res, 'Failed to issue book.', 500, err.message);
+    console.error('[Library] IssueBook error:', err);
+    sendError(res, `Failed to issue book: ${err.message}`, 500);
   } finally {
     client.release();
   }
@@ -271,7 +283,7 @@ export const returnBook = async (req: Request, res: Response) => {
     await client.query(
       `UPDATE silo_books
        SET stock = stock + 1,
-           status = CASE WHEN stock + 1 > 0 THEN 'Available'::book_status ELSE status END
+           status = CASE WHEN stock + 1 > 0 THEN 'Available'::silo_book_status ELSE status END
        WHERE id = $1`,
       [loan.book_id]
     );

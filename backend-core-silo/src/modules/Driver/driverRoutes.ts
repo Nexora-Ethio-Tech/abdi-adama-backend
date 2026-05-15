@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getManifest, postNotice, getNotices } from './driverController';
+import { getManifest, postNotice, getNotices, deleteNotice } from './driverController';
 import { authenticateToken, authorizeRoles } from '../../middleware/authMiddleware';
 
 const router = Router();
@@ -14,5 +14,6 @@ router.get('/manifest',  getManifest);
 // Notices
 router.post('/notice',   postNotice);
 router.get('/notices',   getNotices);
+router.delete('/notice/:id', deleteNotice);
 
 export default router;

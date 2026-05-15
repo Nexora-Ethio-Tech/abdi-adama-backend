@@ -6,6 +6,97 @@ import { sendSuccess, sendError } from '../../shared/responseUtils';
 // ─── Utility ──────────────────────────────────────────────────────────────────
 const SERVER_NOW = `CURRENT_TIMESTAMP AT TIME ZONE 'UTC'`;
 
+// ─── Management ───────────────────────────────────────────────────────────────
+/**
+ * GET /api/exams/management
+ * Returns all exams for the school (VP/Admin view).
+ */
+export const getManagementExams = async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         e.*,
+         s.name        AS subject_name,
+         s.code        AS subject_code,
+         si.full_name  AS examiner_name
+       FROM silo_official_exams e
+       LEFT JOIN silo_courses    s   ON s.id  = e.subject_id
+       LEFT JOIN silo_identities si  ON si.id = e.examiner_id
+       ORDER BY e.start_window DESC`
+    );
+    return sendSuccess(res, result.rows);
+  } catch (err: any) {
+    return sendError(res, 'Failed to fetch management exams.', 500, err.message);
+  }
+};
+
+/**
+ * POST /api/exams
+ * Create a new official exam.
+ */
+export const createExam = async (req: AuthRequest, res: Response) => {
+  const { title, subject_id, start_window, duration_minutes, examiner_id, section_id } = req.body;
+
+  if (!title || !subject_id || !start_window || !duration_minutes) {
+    return sendError(res, 'Missing required fields (title, subject_id, start_window, duration_minutes).', 400);
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO silo_official_exams (title, subject_id, start_window, duration_minutes, examiner_id, section_id, is_published)
+       VALUES ($1, $2, $3, $4, $5, $6, FALSE)
+       RETURNING *`,
+      [title, subject_id, start_window, duration_minutes, examiner_id || req.user?.identity_id, section_id || null]
+    );
+    return sendSuccess(res, result.rows[0], 'Exam created successfully.', 201);
+  } catch (err: any) {
+    return sendError(res, 'Failed to create exam.', 500, err.message);
+  }
+};
+
+/**
+ * PATCH /api/exams/:examId
+ * Update exam details.
+ */
+export const updateExam = async (req: AuthRequest, res: Response) => {
+  const { examId } = req.params;
+  const { title, subject_id, start_window, duration_minutes, examiner_id, section_id, is_published } = req.body;
+
+  try {
+    const result = await pool.query(
+      `UPDATE silo_official_exams
+          SET title            = COALESCE($1, title),
+              subject_id       = COALESCE($2, subject_id),
+              start_window     = COALESCE($3, start_window),
+              duration_minutes = COALESCE($4, duration_minutes),
+              examiner_id      = COALESCE($5, examiner_id),
+              section_id       = $6,
+              is_published     = COALESCE($7, is_published)
+        WHERE id = $8
+        RETURNING *`,
+      [title, subject_id, start_window, duration_minutes, examiner_id, section_id, is_published, examId]
+    );
+    if (result.rowCount === 0) return sendError(res, 'Exam not found.', 404);
+    return sendSuccess(res, result.rows[0], 'Exam updated successfully.');
+  } catch (err: any) {
+    return sendError(res, 'Failed to update exam.', 500, err.message);
+  }
+};
+
+/**
+ * DELETE /api/exams/:examId
+ */
+export const deleteExam = async (req: AuthRequest, res: Response) => {
+  const { examId } = req.params;
+  try {
+    const result = await pool.query('DELETE FROM silo_official_exams WHERE id = $1 RETURNING id', [examId]);
+    if (result.rowCount === 0) return sendError(res, 'Exam not found.', 404);
+    return sendSuccess(res, { id: examId }, 'Exam deleted successfully.');
+  } catch (err: any) {
+    return sendError(res, 'Failed to delete exam.', 500, err.message);
+  }
+};
+
 /**
  * GET /api/exams
  * Returns exams available to the logged-in student based on their section.
@@ -14,19 +105,36 @@ const SERVER_NOW = `CURRENT_TIMESTAMP AT TIME ZONE 'UTC'`;
  * without trusting the client clock.
  */
 export const listExams = async (req: AuthRequest, res: Response) => {
-  const identityId = req.user?.identity_id;
+  const role = req.user?.role;
+  let identityId = req.user?.identity_id;
+
+  // If Parent, they must specify which child (student_id)
+  if (role?.toLowerCase() === 'parent') {
+    const { student_id } = req.query;
+    if (!student_id) {
+      return sendError(res, 'student_id query parameter is required for parents.', 400);
+    }
+    
+    // Verify parent-child relationship via silo_family_links
+    try {
+      const relationCheck = await pool.query(
+        `SELECT 1 FROM silo_family_links 
+         WHERE student_identity_id = $1 AND parent_user_id = $2`,
+        [student_id, req.user?.user_id]
+      );
+      if (relationCheck.rowCount === 0) {
+        return sendError(res, 'Unauthorized: This student is not linked to your account.', 403);
+      }
+      identityId = student_id as string;
+    } catch (err: any) {
+      return sendError(res, 'Failed to verify parent-child relationship.', 500, err.message);
+    }
+  }
 
   try {
-    // Resolve student's current section
-    const sectionResult = await pool.query(
-      `SELECT DISTINCT section_id
-         FROM silo_enrollments
-        WHERE student_id = $1
-          AND academic_year = '2025/2026'
-        LIMIT 1`,
-      [identityId]
-    );
-    const sectionId = sectionResult.rows[0]?.section_id ?? null;
+    // Note: silo_enrollments does not have section_id. 
+    // For now, we set sectionId to null until the schema is updated or link found.
+    const sectionId = null;
 
     // Fetch published exams for this section (or school-wide exams where section_id IS NULL)
     const result = await pool.query(
@@ -42,6 +150,9 @@ export const listExams = async (req: AuthRequest, res: Response) => {
          -- Include existing result for this student (if any)
          er.status     AS my_status,
          er.start_time AS my_start_time,
+         er.score      AS my_score,
+         er.approval_status AS my_approval_status,
+         e.questions_json,
          NOW()::timestamptz AS server_time
        FROM silo_official_exams e
        LEFT JOIN silo_courses        s   ON s.id  = e.subject_id
@@ -53,9 +164,16 @@ export const listExams = async (req: AuthRequest, res: Response) => {
       [identityId, sectionId]
     );
 
+    const formattedExams = result.rows.map(exam => {
+      const q = Array.isArray(exam.questions_json) ? exam.questions_json : [];
+      // Only include question count for the list view, not the questions themselves
+      const { questions_json, ...rest } = exam;
+      return { ...rest, questions_count: q.length };
+    });
+
     return sendSuccess(res, {
       server_time: new Date().toISOString(),
-      exams: result.rows,
+      exams: formattedExams,
     });
   } catch (err: any) {
     return sendError(res, 'Failed to fetch exams.', 500, err.message);
@@ -77,7 +195,7 @@ export const startExam = async (req: AuthRequest, res: Response) => {
   try {
     // 1. Fetch exam
     const examResult = await pool.query(
-      `SELECT id, title, start_window, duration_minutes, is_published
+      `SELECT id, title, start_window, duration_minutes, is_published, questions_json
          FROM silo_official_exams WHERE id = $1`,
       [examId]
     );
@@ -123,6 +241,7 @@ export const startExam = async (req: AuthRequest, res: Response) => {
         title:           exam.title,
         duration_minutes: exam.duration_minutes,
         server_time:     new Date().toISOString(),
+        questions:       exam.questions_json,
         resumed:         true,
       });
     }
@@ -142,6 +261,7 @@ export const startExam = async (req: AuthRequest, res: Response) => {
       duration_minutes: exam.duration_minutes,
       server_time:      new Date().toISOString(),
       start_time:       resultRow.rows[0].start_time,
+      questions:        exam.questions_json,
       resumed:          false,
     }, 'Exam started.', 201);
   } catch (err: any) {
@@ -267,10 +387,10 @@ export const getExamResults = async (req: AuthRequest, res: Response) => {
        FROM silo_exam_results er
        JOIN silo_official_exams e  ON e.id  = er.exam_id
        JOIN silo_identities     si ON si.id = er.student_id
-       WHERE e.examiner_id = $1
+       WHERE (e.examiner_id = $1 OR $3 = TRUE)
          AND ($2::uuid IS NULL OR er.exam_id = $2::uuid)
        ORDER BY er.start_time DESC`,
-      [examinerId, exam_id || null]
+      [examinerId, exam_id || null, ['viceprincipal', 'schooladmin', 'admin'].includes((req.user?.role || '').toLowerCase())]
     );
 
     return sendSuccess(res, result.rows);

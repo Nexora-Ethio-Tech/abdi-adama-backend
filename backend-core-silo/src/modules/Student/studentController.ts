@@ -21,6 +21,17 @@ const getStudentSection = async (studentIdentityId: string): Promise<string | nu
   return result.rows[0]?.section_id ?? null;
 };
 
+/**
+ * Verify that a parent is linked to a specific student.
+ */
+const verifyParentLink = async (parentUserId: string, studentId: string): Promise<boolean> => {
+  const result = await pool.query(
+    'SELECT 1 FROM silo_family_links WHERE parent_user_id = $1 AND student_identity_id = $2',
+    [parentUserId, studentId]
+  );
+  return result.rows.length > 0;
+};
+
 // ─── GET /api/student/profile ─────────────────────────────────────────────────
 /**
  * Returns the authenticated student's own profile including full_name for the
@@ -121,10 +132,55 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
        LIMIT 3`
     );
 
+    // ── Combined Announcements (General + Logistics) ───────────────────────────
+    const announcementsResult = await pool.query(
+      `SELECT 
+         id, 
+         priority, 
+         title, 
+         content, 
+         timestamp,
+         'Academic'::text AS category
+       FROM silo_announcements
+       
+       UNION ALL
+       
+       SELECT 
+         n.id::text, 
+         'Normal'::text AS priority, 
+         n.title, 
+         n.message      AS content, 
+         n.published_at AS timestamp,
+         'Logistics'::text AS category
+       FROM silo_logistics_notices n
+       WHERE n.deleted_at IS NULL
+         AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
+       ORDER BY timestamp DESC
+       LIMIT 10`
+    );
+
+    // ── Additional Stats (Attendance, Rank, Courses) ─────────────────────────
+    const statsResult = await pool.query(
+      `SELECT
+         (SELECT ROUND(COUNT(*) FILTER (WHERE status = 'Present')::numeric / NULLIF(COUNT(*), 0) * 100, 1)::text || '%' 
+          FROM silo_attendance WHERE student_id = $1) AS attendance,
+         CASE 
+           WHEN s.academic_rank IS NOT NULL THEN '#' || s.academic_rank::text
+           ELSE 'Pending'
+         END AS rank,
+         (SELECT json_agg(c.name) FROM silo_enrollments e JOIN silo_courses c ON e.course_id = c.id WHERE e.student_id = $1) AS active_courses
+       FROM silo_identities i
+       LEFT JOIN silo_student_stats s ON i.id = s.student_id
+       WHERE i.id = $1`,
+      [studentIdentityId]
+    );
+
     return sendSuccess(res, {
       schedule:           scheduleResult.rows,
       deadlines:          deadlineResult.rows,
       teacherOfTheMonth:  teacherResult.rows,
+      announcements:      announcementsResult.rows,
+      stats:              statsResult.rows[0]
     });
   } catch (err: any) {
     return sendError(res, 'Failed to fetch dashboard.', 500, err.message);
@@ -140,7 +196,16 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
  * Response includes mid_30, quiz_10, assignment_10, final_50, and computed total.
  */
 export const getGrades = async (req: AuthRequest, res: Response) => {
-  const studentIdentityId = req.user?.identity_id;
+  let studentIdentityId = req.user?.identity_id;
+  const targetStudentId = req.query.student_id as string;
+
+  // ── Support Parent Viewing Child ───────────────────────────────────────────
+  if (req.user?.role === 'Parent' && targetStudentId) {
+    const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
+    if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
+    studentIdentityId = targetStudentId;
+  }
+
   const semester  = Number(req.query.semester)  || 2;
   const subjectId = req.query.subject_id as string | undefined;
 
@@ -203,7 +268,16 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
  * year+semester so the frontend summary header can display it directly.
  */
 export const getHistory = async (req: AuthRequest, res: Response) => {
-  const studentIdentityId = req.user?.identity_id;
+  let studentIdentityId = req.user?.identity_id;
+  const targetStudentId = req.query.student_id as string;
+
+  // ── Support Parent Viewing Child ───────────────────────────────────────────
+  if (req.user?.role === 'Parent' && targetStudentId) {
+    const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
+    if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
+    studentIdentityId = targetStudentId;
+  }
+
   const year     = (req.query.year     as string) || '';
   const semester = req.query.semester  ? Number(req.query.semester) : null;
 

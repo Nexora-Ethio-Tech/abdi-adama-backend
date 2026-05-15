@@ -102,12 +102,14 @@ export const getWeeklyPlans = async (req: AuthRequest, res: Response) => {
   }
 };
 
+import { performCommunicationCleanup } from '../../shared/commBookUtils';
+
 /**
  * POST /api/teacher/communication
- * Body: { student_id, week_ending, ratings, teacher_note }
+ * Body: { student_id, week_ending, ratings, teacher_note, progress_insight, report_url }
  */
 export const submitCommunicationLog = async (req: AuthRequest, res: Response) => {
-  const { student_id, week_ending, ratings, teacher_note } = req.body;
+  const { student_id, week_ending, ratings, teacher_note, progress_insight, report_url } = req.body;
   const sender_id = req.user?.identity_id;
 
   if (!student_id || !week_ending || !ratings) {
@@ -115,13 +117,22 @@ export const submitCommunicationLog = async (req: AuthRequest, res: Response) =>
   }
 
   try {
+    // 1. Run cleanup to remove old records from other weeks
+    await performCommunicationCleanup();
+
+    // 2. Insert/Update current record
     const result = await pool.query(
-      `INSERT INTO silo_communication_logs (student_id, sender_id, week_ending, ratings, teacher_note)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO silo_communication_logs 
+        (student_id, sender_id, week_ending, ratings, teacher_note, progress_insight, report_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (student_id, week_ending) 
-       DO UPDATE SET ratings = $4, teacher_note = $5
+       DO UPDATE SET 
+         ratings = $4, 
+         teacher_note = $5,
+         progress_insight = $6,
+         report_url = $7
        RETURNING *`,
-      [student_id, sender_id, week_ending, JSON.stringify(ratings), teacher_note]
+      [student_id, sender_id, week_ending, JSON.stringify(ratings), teacher_note, progress_insight, report_url]
     );
     return sendSuccess(res, result.rows[0], 'Communication log updated.', 201);
   } catch (err: any) {

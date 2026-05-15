@@ -1,21 +1,30 @@
 import { Router } from 'express';
-import { getStudents, logVisit, getVisitHistory, getMedicines, deductMedicine } from './clinicController';
+import { 
+  getStudents, 
+  logVisit, 
+  getVisitHistory, 
+  getMedicines, 
+  deductMedicine,
+  getChatMessages,
+  sendChatMessage
+} from './clinicController';
 import { authenticateToken, authorizeRoles } from '../../middleware/authMiddleware';
 
 const router = Router();
 
 router.use(authenticateToken);
-router.use(authorizeRoles('ClinicAdmin'));
 
-// Student directory
-router.get('/students',               getStudents);
+// Student directory & visit management - ClinicAdmin only
+router.get('/students',               authorizeRoles('ClinicAdmin'), getStudents);
+router.post('/visits',                authorizeRoles('ClinicAdmin'), logVisit);
+router.get('/visits/history',         authorizeRoles('ClinicAdmin'), getVisitHistory);
 
-// Visit management
-router.post('/visits',                logVisit);
-router.get('/visits/history',         getVisitHistory);
+// Medicine inventory - ClinicAdmin only
+router.get('/medicine',               authorizeRoles('ClinicAdmin'), getMedicines);
+router.post('/medicine/deduct',       authorizeRoles('ClinicAdmin'), deductMedicine);
 
-// Medicine inventory
-router.get('/medicine',               getMedicines);
-router.post('/medicine/deduct',       deductMedicine);
+// Chat - ClinicAdmin and Parent
+router.get('/chat',                   authorizeRoles('ClinicAdmin', 'Parent'), getChatMessages);
+router.post('/chat',                  authorizeRoles('ClinicAdmin', 'Parent'), sendChatMessage);
 
 export default router;
