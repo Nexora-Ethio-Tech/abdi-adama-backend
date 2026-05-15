@@ -78,6 +78,48 @@ class TeacherController {
     }
   }
 
+  // Update grade
+  async updateGrade(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const teacherId = req.user!.id;
+      const { score, total, type, weight } = req.body;
+
+      const grade = await teacherService.updateGrade(id, teacherId, {
+        score,
+        total,
+        type,
+        weight
+      });
+
+      res.json({
+        success: true,
+        data: grade,
+        message: 'Grade updated successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Delete grade
+  async deleteGrade(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const teacherId = req.user!.id;
+
+      const result = await teacherService.deleteGrade(id, teacherId);
+
+      res.json({
+        success: true,
+        data: result,
+        message: 'Grade deleted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Get assigned classes
   async getAssignedClasses(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

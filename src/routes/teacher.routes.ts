@@ -32,6 +32,13 @@ const enterGradeSchema = Joi.object({
   weight: Joi.string().allow('')
 });
 
+const updateGradeSchema = Joi.object({
+  score: Joi.number().min(0).required(),
+  total: Joi.number().positive().required(),
+  type: Joi.string().optional(),
+  weight: Joi.string().allow('').optional()
+});
+
 const weeklyPlanSchema = Joi.object({
   date: Joi.date().iso().required(),
   content: Joi.string().required(),
@@ -65,6 +72,8 @@ router.post('/attendance', validate(markAttendanceSchema), teacherController.mar
 router.get('/attendance/:classId', teacherController.getAttendance);
 router.post('/grades', validate(enterGradeSchema), teacherController.enterGrades);
 router.get('/grades/:courseId', teacherController.getGrades);
+router.patch('/grades/:id', validate(updateGradeSchema), teacherController.updateGrade);
+router.delete('/grades/:id', teacherController.deleteGrade);
 router.get('/classes', teacherController.getAssignedClasses);
 router.get('/students/:classId', teacherController.getStudentRoster);
 router.post('/weekly-plans', validate(weeklyPlanSchema), teacherController.submitWeeklyPlan);

@@ -88,6 +88,144 @@ class TeacherService {
     return result.rows;
   }
 
+  // Update grade
+  async updateGrade(gradeId: string, teacherId: string, data: {
+    score: number;
+    total: number;
+    type?: string;
+    weight?: string;
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get grade with student and course info
+      const gradeResult = await client.query(
+        `SELECT g.*, s.grade as grade_level, s.branch_id, c.teacher_id
+         FROM grades g
+         JOIN students s ON g.student_id = s.id
+         JOIN courses c ON g.course_id = c.id
+         WHERE g.id = $1`,
+        [gradeId]
+      );
+
+      if (gradeResult.rows.length === 0) {
+        throw new Error('Grade not found');
+      }
+
+      const grade = gradeResult.rows[0];
+
+      // Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id FROM teachers WHERE user_id = $1',
+        [teacherId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+
+      // Verify teacher owns this course
+      if (grade.teacher_id !== teacherResult.rows[0].id) {
+        throw new Error('You can only update grades for courses you teach');
+      }
+
+      // Check if grades are locked for this grade level
+      const lockResult = await client.query(
+        `SELECT is_locked FROM grade_locks 
+         WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
+        [grade.grade_level, grade.branch_id]
+      );
+
+      if (lockResult.rows.length > 0) {
+        throw new Error(`Grades are locked for ${grade.grade_level}. Contact Vice Principal to unlock.`);
+      }
+
+      // Validate score doesn't exceed total
+      if (data.score > data.total) {
+        throw new Error('Score cannot exceed total marks');
+      }
+
+      // Update grade
+      const updateResult = await client.query(
+        `UPDATE grades SET
+         score = $1, total = $2, type = COALESCE($3, type), weight = COALESCE($4, weight)
+         WHERE id = $5
+         RETURNING *`,
+        [data.score, data.total, data.type, data.weight, gradeId]
+      );
+
+      await client.query('COMMIT');
+      return updateResult.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Delete grade
+  async deleteGrade(gradeId: string, teacherId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get grade with student and course info
+      const gradeResult = await client.query(
+        `SELECT g.*, s.grade as grade_level, s.branch_id, c.teacher_id
+         FROM grades g
+         JOIN students s ON g.student_id = s.id
+         JOIN courses c ON g.course_id = c.id
+         WHERE g.id = $1`,
+        [gradeId]
+      );
+
+      if (gradeResult.rows.length === 0) {
+        throw new Error('Grade not found');
+      }
+
+      const grade = gradeResult.rows[0];
+
+      // Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id FROM teachers WHERE user_id = $1',
+        [teacherId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+
+      // Verify teacher owns this course
+      if (grade.teacher_id !== teacherResult.rows[0].id) {
+        throw new Error('You can only delete grades for courses you teach');
+      }
+
+      // Check if grades are locked for this grade level
+      const lockResult = await client.query(
+        `SELECT is_locked FROM grade_locks 
+         WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
+        [grade.grade_level, grade.branch_id]
+      );
+
+      if (lockResult.rows.length > 0) {
+        throw new Error(`Grades are locked for ${grade.grade_level}. Contact Vice Principal to unlock.`);
+      }
+
+      // Delete grade
+      await client.query('DELETE FROM grades WHERE id = $1', [gradeId]);
+
+      await client.query('COMMIT');
+      return { id: gradeId, deleted: true };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   // Get assigned classes
   async getAssignedClasses(teacherId: string) {
     // Get teacher record
