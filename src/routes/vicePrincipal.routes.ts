@@ -42,5 +42,6 @@ router.get('/teachers', vicePrincipalController.getBranchTeachers);
 router.get('/attendance-summary', vicePrincipalController.getAttendanceSummary);
 router.get('/academic-performance', vicePrincipalController.getAcademicPerformance);
 router.get('/dashboard', vicePrincipalController.getDashboard);
+router.get('/students/:studentId/transcript', vicePrincipalController.getStudentTranscript);
 
 export default router;

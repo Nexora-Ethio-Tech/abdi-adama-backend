@@ -296,6 +296,123 @@ class VicePrincipalService {
       recentPendingPlans: recentPlansResult.rows
     };
   }
+
+  // Get student transcript
+  async getStudentTranscript(studentId: string, branchId: string) {
+    // Get student info
+    const studentResult = await pool.query(
+      `SELECT 
+        s.id, s.grade, s.status,
+        u.name, u.email, u.digital_id
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.id = $1 AND s.branch_id = $2`,
+      [studentId, branchId]
+    );
+
+    if (studentResult.rows.length === 0) {
+      throw new Error('Student not found or not in your branch');
+    }
+
+    const student = studentResult.rows[0];
+
+    // Get all grades grouped by course
+    const gradesResult = await pool.query(
+      `SELECT 
+        g.id, g.type, g.score, g.total, g.weight, g.created_at,
+        c.id as course_id, c.name as course_name, c.code as course_code,
+        t.id as teacher_id,
+        u.name as teacher_name
+      FROM grades g
+      JOIN courses c ON g.course_id = c.id
+      LEFT JOIN teachers t ON c.teacher_id = t.id
+      LEFT JOIN users u ON t.user_id = u.id
+      WHERE g.student_id = $1
+      ORDER BY c.name, g.created_at DESC`,
+      [studentId]
+    );
+
+    // Group grades by course and calculate averages
+    const courseMap = new Map();
+    let totalWeightedScore = 0;
+    let totalWeight = 0;
+
+    for (const grade of gradesResult.rows) {
+      const courseId = grade.course_id;
+
+      if (!courseMap.has(courseId)) {
+        courseMap.set(courseId, {
+          courseId: grade.course_id,
+          courseName: grade.course_name,
+          courseCode: grade.course_code,
+          teacherId: grade.teacher_id,
+          teacherName: grade.teacher_name,
+          grades: [],
+          totalScore: 0,
+          totalPossible: 0,
+          average: 0,
+          gradeCount: 0
+        });
+      }
+
+      const course = courseMap.get(courseId);
+      const percentage = grade.total > 0 ? (grade.score / grade.total) * 100 : 0;
+
+      course.grades.push({
+        id: grade.id,
+        type: grade.type,
+        score: grade.score,
+        total: grade.total,
+        weight: grade.weight,
+        percentage: parseFloat(percentage.toFixed(2)),
+        createdAt: grade.created_at
+      });
+
+      course.totalScore += grade.score;
+      course.totalPossible += grade.total;
+      course.gradeCount++;
+
+      // Calculate weighted contribution for overall average
+      if (grade.weight) {
+        const weight = parseFloat(grade.weight);
+        totalWeightedScore += percentage * weight;
+        totalWeight += weight;
+      }
+    }
+
+    // Calculate course averages
+    const courses = Array.from(courseMap.values()).map(course => {
+      course.average = course.totalPossible > 0 
+        ? parseFloat(((course.totalScore / course.totalPossible) * 100).toFixed(2))
+        : 0;
+      return course;
+    });
+
+    // Calculate overall average
+    const overallAverage = totalWeight > 0 
+      ? parseFloat((totalWeightedScore / totalWeight).toFixed(2))
+      : courses.length > 0
+        ? parseFloat((courses.reduce((sum, c) => sum + c.average, 0) / courses.length).toFixed(2))
+        : 0;
+
+    return {
+      student: {
+        id: student.id,
+        name: student.name,
+        email: student.email,
+        digitalId: student.digital_id,
+        grade: student.grade,
+        status: student.status
+      },
+      courses,
+      summary: {
+        totalCourses: courses.length,
+        totalGrades: gradesResult.rows.length,
+        overallAverage,
+        gradeStatus: overallAverage >= 50 ? 'Passing' : 'Needs Improvement'
+      }
+    };
+  }
 }
 
 export default new VicePrincipalService();
