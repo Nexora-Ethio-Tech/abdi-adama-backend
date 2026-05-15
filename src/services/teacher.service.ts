@@ -70,6 +70,104 @@ class TeacherService {
     return result.rows[0];
   }
 
+  // Bulk enter grades
+  async bulkEnterGrades(teacherId: string, courseId: string, grades: Array<{
+    studentId: string;
+    type: string;
+    score: number;
+    total: number;
+    weight?: string;
+  }>) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id, branch_id FROM teachers WHERE user_id = $1',
+        [teacherId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+
+      const teacher = teacherResult.rows[0];
+
+      // Verify teacher owns this course
+      const courseResult = await client.query(
+        'SELECT teacher_id FROM courses WHERE id = $1',
+        [courseId]
+      );
+
+      if (courseResult.rows.length === 0) {
+        throw new Error('Course not found');
+      }
+
+      if (courseResult.rows[0].teacher_id !== teacher.id) {
+        throw new Error('You can only enter grades for courses you teach');
+      }
+
+      // Get all students' grade levels to check locks
+      const studentIds = grades.map(g => g.studentId);
+      const studentsResult = await client.query(
+        `SELECT DISTINCT s.grade, s.branch_id 
+         FROM students s 
+         WHERE s.id = ANY($1::uuid[])`,
+        [studentIds]
+      );
+
+      // Check if any grade level is locked
+      for (const student of studentsResult.rows) {
+        const lockResult = await client.query(
+          `SELECT is_locked FROM grade_locks 
+           WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
+          [student.grade, student.branch_id]
+        );
+
+        if (lockResult.rows.length > 0) {
+          throw new Error(`Grades are locked for ${student.grade}. Contact Vice Principal to unlock.`);
+        }
+      }
+
+      // Validate all grades
+      for (const grade of grades) {
+        if (grade.score > grade.total) {
+          throw new Error(`Score (${grade.score}) cannot exceed total (${grade.total}) for student ${grade.studentId}`);
+        }
+        if (grade.score < 0) {
+          throw new Error(`Score cannot be negative for student ${grade.studentId}`);
+        }
+        if (grade.total <= 0) {
+          throw new Error(`Total must be positive for student ${grade.studentId}`);
+        }
+      }
+
+      // Bulk insert grades
+      const insertedGrades = [];
+      for (const grade of grades) {
+        const result = await client.query(
+          `INSERT INTO grades (student_id, course_id, type, score, total, weight)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING *`,
+          [grade.studentId, courseId, grade.type, grade.score, grade.total, grade.weight || null]
+        );
+        insertedGrades.push(result.rows[0]);
+      }
+
+      await client.query('COMMIT');
+      return {
+        count: insertedGrades.length,
+        grades: insertedGrades
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   // Get grades by course
   async getGradesByCourse(courseId: string) {
     const result = await pool.query(

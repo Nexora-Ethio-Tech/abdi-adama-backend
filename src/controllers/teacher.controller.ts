@@ -62,6 +62,24 @@ class TeacherController {
     }
   }
 
+  // Bulk enter grades
+  async bulkEnterGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherId = req.user!.id;
+      const { courseId, grades } = req.body;
+
+      const result = await teacherService.bulkEnterGrades(teacherId, courseId, grades);
+
+      res.status(201).json({
+        success: true,
+        data: result,
+        message: `${result.count} grades entered successfully`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Get grades for a course
   async getGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

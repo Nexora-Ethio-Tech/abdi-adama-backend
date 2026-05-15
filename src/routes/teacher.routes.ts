@@ -32,6 +32,19 @@ const enterGradeSchema = Joi.object({
   weight: Joi.string().allow('')
 });
 
+const bulkEnterGradesSchema = Joi.object({
+  courseId: Joi.string().uuid().required(),
+  grades: Joi.array().items(
+    Joi.object({
+      studentId: Joi.string().uuid().required(),
+      type: Joi.string().required(),
+      score: Joi.number().min(0).required(),
+      total: Joi.number().positive().required(),
+      weight: Joi.string().allow('').optional()
+    })
+  ).min(1).required()
+});
+
 const updateGradeSchema = Joi.object({
   score: Joi.number().min(0).required(),
   total: Joi.number().positive().required(),
@@ -71,6 +84,7 @@ const communicationLogSchema = Joi.object({
 router.post('/attendance', validate(markAttendanceSchema), teacherController.markAttendance);
 router.get('/attendance/:classId', teacherController.getAttendance);
 router.post('/grades', validate(enterGradeSchema), teacherController.enterGrades);
+router.post('/grades/bulk', validate(bulkEnterGradesSchema), teacherController.bulkEnterGrades);
 router.get('/grades/:courseId', teacherController.getGrades);
 router.patch('/grades/:id', validate(updateGradeSchema), teacherController.updateGrade);
 router.delete('/grades/:id', teacherController.deleteGrade);
