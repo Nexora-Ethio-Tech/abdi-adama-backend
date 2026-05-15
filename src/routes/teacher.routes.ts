@@ -95,6 +95,7 @@ router.get('/weekly-plans', teacherController.getMyPlans);
 router.patch('/weekly-plans/:id', validate(weeklyPlanSchema), teacherController.updatePlan);
 router.post('/communication-logs', validate(communicationLogSchema), teacherController.submitCommunicationLog);
 router.get('/communication-logs/:studentId', teacherController.getCommunicationLogs);
+router.get('/students/:studentId/grades', teacherController.getStudentGrades);
 router.get('/schedule', teacherController.getSchedule);
 router.get('/dashboard', teacherController.getDashboard);
 

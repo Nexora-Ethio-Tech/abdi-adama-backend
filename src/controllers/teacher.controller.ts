@@ -258,6 +258,23 @@ class TeacherController {
     }
   }
 
+  // Get student's all grades
+  async getStudentGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { studentId } = req.params;
+      const teacherId = req.user!.id;
+
+      const grades = await teacherService.getStudentGrades(studentId, teacherId);
+
+      res.json({
+        success: true,
+        data: grades
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Get teaching schedule
   async getSchedule(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

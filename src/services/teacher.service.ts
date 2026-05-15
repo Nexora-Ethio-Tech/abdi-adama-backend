@@ -553,6 +553,177 @@ class TeacherService {
     return result.rows;
   }
 
+  // Get student's all grades (teacher view)
+  async getStudentGrades(studentId: string, teacherId: string) {
+    const client = await pool.connect();
+    try {
+      // Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id, branch_id FROM teachers WHERE user_id = $1',
+        [teacherId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+
+      const teacher = teacherResult.rows[0];
+
+      // Get student info and verify they're in teacher's branch
+      const studentResult = await client.query(
+        `SELECT 
+          s.id, s.grade, s.status,
+          u.name, u.email, u.digital_id
+        FROM students s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.id = $1 AND s.branch_id = $2`,
+        [studentId, teacher.branch_id]
+      );
+
+      if (studentResult.rows.length === 0) {
+        throw new Error('Student not found or not in your branch');
+      }
+
+      const student = studentResult.rows[0];
+
+      // Verify teacher has access to this student (student must be in one of teacher's classes)
+      const accessResult = await client.query(
+        `SELECT COUNT(*) as count
+         FROM classes c
+         JOIN students s ON s.grade = c.name AND s.branch_id = c.branch_id
+         WHERE c.teacher_id = $1 AND s.id = $2`,
+        [teacher.id, studentId]
+      );
+
+      if (parseInt(accessResult.rows[0].count) === 0) {
+        throw new Error('You can only view grades for students in your classes');
+      }
+
+      // Get all grades grouped by course
+      const gradesResult = await client.query(
+        `SELECT 
+          g.id, g.type, g.score, g.total, g.weight, g.created_at,
+          c.id as course_id, c.name as course_name, c.code as course_code,
+          t.id as teacher_id,
+          u.name as teacher_name,
+          CASE WHEN t.id = $2 THEN true ELSE false END as is_my_course
+        FROM grades g
+        JOIN courses c ON g.course_id = c.id
+        LEFT JOIN teachers t ON c.teacher_id = t.id
+        LEFT JOIN users u ON t.user_id = u.id
+        WHERE g.student_id = $1
+        ORDER BY is_my_course DESC, c.name, g.created_at DESC`,
+        [studentId, teacher.id]
+      );
+
+      // Group grades by course and calculate averages
+      const courseMap = new Map();
+      let totalWeightedScore = 0;
+      let totalWeight = 0;
+      let myCoursesAverage = 0;
+      let myCoursesCount = 0;
+
+      for (const grade of gradesResult.rows) {
+        const courseId = grade.course_id;
+
+        if (!courseMap.has(courseId)) {
+          courseMap.set(courseId, {
+            courseId: grade.course_id,
+            courseName: grade.course_name,
+            courseCode: grade.course_code,
+            teacherId: grade.teacher_id,
+            teacherName: grade.teacher_name,
+            isMyCourse: grade.is_my_course,
+            grades: [],
+            totalScore: 0,
+            totalPossible: 0,
+            average: 0,
+            gradeCount: 0
+          });
+        }
+
+        const course = courseMap.get(courseId);
+        const percentage = grade.total > 0 ? (grade.score / grade.total) * 100 : 0;
+
+        course.grades.push({
+          id: grade.id,
+          type: grade.type,
+          score: grade.score,
+          total: grade.total,
+          weight: grade.weight,
+          percentage: parseFloat(percentage.toFixed(2)),
+          createdAt: grade.created_at
+        });
+
+        course.totalScore += grade.score;
+        course.totalPossible += grade.total;
+        course.gradeCount++;
+
+        // Calculate weighted contribution for overall average
+        if (grade.weight) {
+          const weight = parseFloat(grade.weight);
+          totalWeightedScore += percentage * weight;
+          totalWeight += weight;
+        }
+      }
+
+      // Calculate course averages and separate my courses
+      const myCourses = [];
+      const otherCourses = [];
+
+      for (const course of courseMap.values()) {
+        course.average = course.totalPossible > 0 
+          ? parseFloat(((course.totalScore / course.totalPossible) * 100).toFixed(2))
+          : 0;
+
+        if (course.isMyCourse) {
+          myCourses.push(course);
+          myCoursesAverage += course.average;
+          myCoursesCount++;
+        } else {
+          otherCourses.push(course);
+        }
+      }
+
+      const courses = [...myCourses, ...otherCourses];
+
+      // Calculate overall average
+      const overallAverage = totalWeight > 0 
+        ? parseFloat((totalWeightedScore / totalWeight).toFixed(2))
+        : courses.length > 0
+          ? parseFloat((courses.reduce((sum, c) => sum + c.average, 0) / courses.length).toFixed(2))
+          : 0;
+
+      const myAverage = myCoursesCount > 0 
+        ? parseFloat((myCoursesAverage / myCoursesCount).toFixed(2))
+        : 0;
+
+      return {
+        student: {
+          id: student.id,
+          name: student.name,
+          email: student.email,
+          digitalId: student.digital_id,
+          grade: student.grade,
+          status: student.status
+        },
+        myCourses,
+        otherCourses,
+        summary: {
+          totalCourses: courses.length,
+          myCoursesCount,
+          otherCoursesCount: courses.length - myCoursesCount,
+          totalGrades: gradesResult.rows.length,
+          overallAverage,
+          myCoursesAverage: myAverage,
+          gradeStatus: overallAverage >= 50 ? 'Passing' : 'Needs Improvement'
+        }
+      };
+    } finally {
+      client.release();
+    }
+  }
+
   // Get teacher schedule
   async getTeacherSchedule(teacherId: string) {
     // Get teacher record
