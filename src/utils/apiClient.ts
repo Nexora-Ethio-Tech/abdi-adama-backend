@@ -15,7 +15,7 @@ export const apiFetch = async (
   path: string,
   options: RequestInit = {}
 ): Promise<Response> => {
-  const token = localStorage.getItem('abdi_adama_token');
+  const token = sessionStorage.getItem('abdi_adama_token');
 
   const headers: HeadersInit = {
     'Content-Type': 'application/json',

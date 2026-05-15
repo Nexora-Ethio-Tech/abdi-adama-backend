@@ -1,47 +1,115 @@
 
 import { useState, useEffect, useRef } from 'react';
-import { Send, HeartPulse, User, Clock, ShieldAlert } from 'lucide-react';
+import { Send, HeartPulse, User, ShieldAlert, Loader2, CheckCheck } from 'lucide-react';
 import { ShootingStars } from '../components/Effects';
+import { apiFetch } from '../utils/apiClient';
+import { useUser } from '../context/UserContext';
+import { toast } from '../components/Toast';
+
+import { useSearchParams } from 'react-router-dom';
 
 export const ParentClinicChat = () => {
-  const [selectedChild, setSelectedChild] = useState('Abebe Bikila');
-  const [messages, setMessages] = useState([
-    { id: '1', role: 'clinic', child: 'Abebe Bikila', text: 'Hello! How can we help you today regarding Abebe\'s health?', timestamp: '09:00 AM' },
-  ]);
+  const [searchParams] = useSearchParams();
+  const targetStudentId = searchParams.get('student_id');
+  const { user: _user } = useUser();
+  const [children, setChildren] = useState<any[]>([]);
+  const [selectedChild, setSelectedChild] = useState<any>(null);
+  const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const children = ['Abebe Bikila', 'Sara Kebede'];
+  // ─── Initial data fetch ───────────────────────────────────────────────────
+  useEffect(() => {
+    const fetchChildren = async () => {
+      try {
+        const res = await apiFetch('/api/parent/dashboard');
+        if (res.ok) {
+          const data = await res.json();
+          const payload = data.data || data;
+          const mapped = (payload.children || []).map((c: any) => ({
+            id: c.identity_id || c.id,
+            name: c.fullName || c.full_name || 'Unnamed Student'
+          }));
+          setChildren(mapped);
+          
+          // Auto-select child if student_id is in URL
+          if (targetStudentId && mapped.length > 0) {
+            const match = mapped.find((c: any) => c.id === targetStudentId);
+            if (match) {
+              setSelectedChild(match);
+            } else {
+              setSelectedChild(mapped[0]);
+            }
+          } else if (mapped.length > 0) {
+            setSelectedChild(mapped[0]);
+          }
+        }
+      } catch (err) {
+        toast.error('Failed to load child directory.');
+      }
+    };
+    fetchChildren();
+  }, [targetStudentId]);
+
+  // Fetch messages for selected child
+  useEffect(() => {
+    if (!selectedChild) return;
+    
+    // Clear previous child's messages immediately to avoid confusion
+    setMessages([]);
+    setLoading(true);
+
+    const fetchMessages = async () => {
+      try {
+        const res = await apiFetch(`/api/clinic/chat?childId=${selectedChild.id}`);
+        if (res.ok) {
+          const json = await res.json();
+          setMessages(json.data || []);
+        }
+      } catch (err) {
+        toast.error('Failed to load chat history.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMessages();
+    const interval = setInterval(fetchMessages, 3000); // Polling every 3s
+    return () => clearInterval(interval);
+  }, [selectedChild?.id]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() || !selectedChild || sending) return;
 
-    const msg = {
-      id: Date.now().toString(),
-      role: 'parent',
-      child: selectedChild,
-      text: newMessage,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
+    setSending(true);
+    try {
+      const res = await apiFetch('/api/clinic/chat', {
+        method: 'POST',
+        body: JSON.stringify({
+          message: newMessage,
+          childId: selectedChild.id
+        })
+      });
 
-    setMessages([...messages, msg]);
-    setNewMessage('');
-
-    // Mock clinic response
-    setTimeout(() => {
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: 'clinic',
-        child: selectedChild,
-        text: `Thank you for the information about ${selectedChild.split(' ')[0]}. The clinic administrator has been notified and will review your message shortly.`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
-    }, 1500);
+      if (res.ok) {
+        const json = await res.json();
+        setMessages([...messages, json.data]);
+        setNewMessage('');
+      } else {
+        toast.error('Failed to send message.');
+      }
+    } catch (err) {
+      toast.error('Network error. Check your connection.');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -69,11 +137,11 @@ export const ParentClinicChat = () => {
             <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
               {children.map(child => (
                 <button
-                  key={child}
+                  key={child.id}
                   onClick={() => setSelectedChild(child)}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedChild === child ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500'}`}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedChild?.id === child.id ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500'}`}
                 >
-                  {child.split(' ')[0]}
+                  {child.name.split(' ')[0]}
                 </button>
               ))}
             </div>
@@ -88,8 +156,18 @@ export const ParentClinicChat = () => {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar z-10">
-        {messages.filter(m => m.child === selectedChild).map((m) => (
-          <div key={m.id} className={`flex items-start gap-3 ${m.role === 'parent' ? 'flex-row-reverse' : ''}`}>
+        {loading && messages.length === 0 ? (
+          <div className="h-full flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-rose-500 animate-spin" />
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-slate-400 text-center px-12">
+             <HeartPulse size={48} className="mb-4 opacity-20" />
+             <p className="text-sm font-bold uppercase tracking-widest">No conversation history found for {selectedChild?.name}.</p>
+             <p className="text-xs mt-2">Start the conversation by sending a message below.</p>
+          </div>
+        ) : messages.map((m) => (
+          <div key={m.id} className={`flex items-start gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300 ${m.role === 'parent' ? 'flex-row-reverse' : ''}`}>
             <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm ${
               m.role === 'parent' ? 'bg-blue-600 text-white' : 'bg-rose-600 text-white'
             }`}>
@@ -105,7 +183,7 @@ export const ParentClinicChat = () => {
               </div>
               <div className="flex items-center gap-2 justify-end px-1">
                 <span className="text-[9px] text-slate-400 font-bold uppercase">{m.timestamp}</span>
-                {m.role === 'parent' && <Clock size={8} className="text-slate-300" />}
+                {m.role === 'parent' && <CheckCheck size={10} className="text-blue-400" />}
               </div>
             </div>
           </div>
@@ -120,12 +198,16 @@ export const ParentClinicChat = () => {
             type="text"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
+            disabled={sending}
             placeholder="Tell the clinic admin something important..."
-            className="flex-1 px-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-700 rounded-2xl text-sm font-medium outline-none focus:border-rose-500 focus:ring-4 focus:ring-rose-500/10 transition-all shadow-sm"
+            className="flex-1 px-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-700 rounded-2xl text-sm font-medium outline-none focus:border-rose-500 focus:ring-4 focus:ring-rose-500/10 transition-all shadow-sm disabled:opacity-50"
           />
-          <button className="bg-rose-600 hover:bg-rose-700 text-white px-8 py-4 rounded-2xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-rose-200 dark:shadow-none group">
-            <Send size={20} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-            <span className="hidden sm:inline">Send Message</span>
+          <button 
+            disabled={sending || !newMessage.trim()}
+            className="bg-rose-600 hover:bg-rose-700 text-white px-8 py-4 rounded-2xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-rose-200 dark:shadow-none group disabled:opacity-50"
+          >
+            {sending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />}
+            <span className="hidden sm:inline">{sending ? 'Sending...' : 'Send Message'}</span>
           </button>
         </form>
       </div>

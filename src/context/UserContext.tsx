@@ -104,7 +104,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [gradesLocked, setGradesLocked] = useState(false);
   const [primaryRole, setPrimaryRole] = useState<UserRole | null>(() => {
-    const stored = localStorage.getItem('abdi_adama_primary_role');
+    const stored = sessionStorage.getItem('abdi_adama_primary_role');
     return stored as UserRole | null;
   });
   const [registrationOpen, setRegistrationOpen] = useState(() => {
@@ -130,26 +130,23 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   // ─── Token Verification on Load ────────────────────────────────────────────
   useEffect(() => {
     const restoreSession = () => {
-      const token = localStorage.getItem('abdi_adama_token');
-      if (!token) { setLoading(false); return; }
+      const token = sessionStorage.getItem('abdi_adama_token');
+      const savedUser = sessionStorage.getItem('abdi_adama_user');
+      const restoredPrimaryRole = sessionStorage.getItem('abdi_adama_primary_role') as UserRole | null;
 
-      const savedUser = localStorage.getItem('abdi_adama_user');
-      if (savedUser) {
+      if (token && savedUser) {
         try {
           const parsedUser = JSON.parse(savedUser) as User;
           setUser(parsedUser);
-          const restoredPrimaryRole = localStorage.getItem('abdi_adama_primary_role') as UserRole | null;
           setPrimaryRole(restoredPrimaryRole || parsedUser.role);
         } catch (err) {
           console.error('Failed to restore saved user:', err);
-          localStorage.removeItem('abdi_adama_user');
-          localStorage.removeItem('abdi_adama_token');
-          localStorage.removeItem('abdi_adama_primary_role');
+          sessionStorage.clear(); // Clear potentially corrupt session
           setUser(null);
           setPrimaryRole(null);
         }
       } else {
-        localStorage.removeItem('abdi_adama_primary_role');
+        // If no token or no user data, clear state
         setUser(null);
         setPrimaryRole(null);
       }
@@ -160,10 +157,10 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     if (user) {
-      localStorage.setItem('abdi_adama_user', JSON.stringify(user));
+      sessionStorage.setItem('abdi_adama_user', JSON.stringify(user));
     } else {
-      localStorage.removeItem('abdi_adama_user');
-      localStorage.removeItem('abdi_adama_token');
+      sessionStorage.removeItem('abdi_adama_user');
+      sessionStorage.removeItem('abdi_adama_token');
     }
   }, [user]);
 
@@ -186,108 +183,80 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     otp?: string;
   }): Promise<{ success: boolean; redirect?: string; error?: string }> => {
     const identifier = credentials.digitalIdOrEmail.trim();
-    // const password = credentials.password || credentials.otp || '';
+    try {
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiBase}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school_id: identifier,
+          password: credentials.password || credentials.otp || '',
+          role: (() => {
+            const u = identifier.toUpperCase();
+            if (u.startsWith('STU')) return 'Student';
+            if (u.startsWith('PAR')) return 'Parent';
+            if (u.startsWith('DRV') || u.startsWith('DR-')) return 'Driver';
+            if (u.startsWith('LIB')) return 'Librarian';
+            if (u.startsWith('CLN')) return 'ClinicAdmin';
+            if (u.startsWith('TCH') || u.startsWith('TC-')) return 'Teacher';
+            return 'Student';
+          })(),
+        }),
+      });
 
-    // Infer backend role from identifier prefix
-    /*
-    const inferBackendRole = (id: string): string => {
-      const u = id.toUpperCase();
-      if (u.startsWith('STU')) return 'Student';
-      if (u.startsWith('PAR')) return 'Parent';
-      if (u.startsWith('DRV') || u.startsWith('DR-')) return 'Driver';
-      if (u.startsWith('LIB')) return 'Librarian';
-      if (u.startsWith('CLN')) return 'ClinicAdmin';
-      if (u.startsWith('TCH') || u.startsWith('TC-')) return 'Teacher';
-      return 'Student';
-    };
-    */
+      const data = await res.json();
 
-    // try {
-    //   const apiBase = import.meta.env.VITE_API_URL || '';
-    //   const res = await fetch(`${apiBase}/api/auth/login`, {
-    //     method: 'POST',
-    //     headers: { 'Content-Type': 'application/json' },
-    //     body: JSON.stringify({
-    //       school_id: identifier,
-    //       password,
-    //       role: inferBackendRole(identifier),
-    //     }),
-    //   });
-    //
-    //   const data = await res.json();
-    //
-    //   if (res.ok && data.token) {
-    //     const backendUser = data.user;
-    //     const mappedRole = mapBackendRole(backendUser.role);
-    //     const frontendUser: User = {
-    //       id:        backendUser.user_id,
-    //       name:      backendUser.full_name,
-    //       email:     backendUser.school_id,
-    //       role:      mappedRole,
-    //       school_id: backendUser.school_id,
-    //       digitalId: backendUser.school_id,
-    //     };
-    //     localStorage.setItem('abdi_adama_token', data.token);
-    //     localStorage.setItem('abdi_adama_user', JSON.stringify(frontendUser));
-    //     localStorage.setItem('abdi_adama_primary_role', mappedRole);
-    //     setUser(frontendUser);
-    //     setPrimaryRole(mappedRole);
-    //     return { success: true, redirect: getDashboardRoute(mappedRole) };
-    //   }
-    //
-    //   return { success: false, error: data.message || 'Invalid credentials.' };
-    //
-    // } catch {
-      // ── Offline / demo fallback ────────────────────────────────────────
-      console.warn('[Auth] Backend bypass active – using demo login for UI development.');
-      await new Promise(r => setTimeout(r, 600));
+      if (res.ok && data.token) {
+        const backendUser = data.user;
+        const mappedRole = mapBackendRole(backendUser.role);
+        const frontendUser: User = {
+          id:        backendUser.user_id,
+          name:      backendUser.full_name,
+          email:     backendUser.school_id,
+          role:      mappedRole,
+          school_id: backendUser.school_id,
+          digitalId: backendUser.school_id,
+        };
+        sessionStorage.setItem('abdi_adama_token', data.token);
+        sessionStorage.setItem('abdi_adama_user', JSON.stringify(frontendUser));
+        sessionStorage.setItem('abdi_adama_primary_role', mappedRole);
+        setUser(frontendUser);
+        setPrimaryRole(mappedRole);
+        return { success: true, redirect: getDashboardRoute(mappedRole) };
+      }
 
-      let demoRole: UserRole = 'super-admin';
-      const id = identifier.toLowerCase();
-      if (id.startsWith('stu') || id.includes('student')) demoRole = 'student';
-      else if (id.startsWith('par') || id.includes('parent')) demoRole = 'parent';
-      else if (id.startsWith('drv') || id.includes('driver')) demoRole = 'driver';
-      else if (id.startsWith('lib')) demoRole = 'librarian';
-      else if (id.startsWith('cln') || id.includes('clinic')) demoRole = 'clinic-admin';
-      else if (id.startsWith('tch') || id.includes('teacher')) demoRole = 'teacher';
-      else if (id.startsWith('fin') || id.includes('finance')) demoRole = 'finance-clerk';
-      else if (id.startsWith('vp') || id.includes('principal')) demoRole = 'vice-principal';
-      else if (id.startsWith('aud') || id.includes('auditor')) demoRole = 'auditor';
+      return { success: false, error: data.message || 'Invalid credentials.' };
 
-      const demoUser: User = {
-        id:        `demo-${identifier}`,
-        name:      identifier.split('@')[0] || 'Demo User',
-        email:     identifier,
-        role:      demoRole,
-        school_id: identifier,
-        digitalId: identifier,
-      };
-      localStorage.setItem('abdi_adama_token', 'demo-bypass-token');
-      localStorage.setItem('abdi_adama_user', JSON.stringify(demoUser));
-      localStorage.setItem('abdi_adama_primary_role', demoRole);
-      setUser(demoUser);
-      setPrimaryRole(demoRole);
-      return { success: true, redirect: getDashboardRoute(demoRole) };
-    // }
+    } catch (err) {
+      console.error('[Auth] Login error:', err);
+      return { success: false, error: 'Network error — could not reach the school server.' };
+    }
   };
 
   const logout = () => {
     setUser(null);
     setSelectedBranch(null);
     setPrimaryRole(null);
-    localStorage.removeItem('abdi_adama_user');
-    localStorage.removeItem('abdi_adama_token');
-    localStorage.removeItem('abdi_adama_primary_role');
+    sessionStorage.removeItem('abdi_adama_user');
+    sessionStorage.removeItem('abdi_adama_token');
+    sessionStorage.removeItem('abdi_adama_primary_role');
   };
 
   const switchRole = async (newRole: UserRole): Promise<string | null> => {
-    const activeUser = user ?? { id: 'dev-user', name: 'Dev User', email: 'dev@example.com', role: primaryRole ?? 'super-admin' as UserRole };
+    // Only allow switching to 'parent' if the user is a 'student' (siblings/family logic)
+    // Or only allow switching if the primary role is explicitly authorized.
+    // For absolute security as requested by the user, we should disable this or make it role-constrained.
+    if (primaryRole !== 'super-admin' && primaryRole !== 'school-admin') {
+       console.error(`[RBAC] Security Violation: Role switch from ${primaryRole} to ${newRole} blocked.`);
+       return null; 
+    }
+
+    const activeUser = user;
+    if (!activeUser) return null;
+
     const nextUser = { ...activeUser, role: newRole };
     setUser(nextUser);
-    setPrimaryRole(primaryRole || activeUser.role);
-    localStorage.setItem('abdi_adama_token', 'dev-bypass-token');
-    localStorage.setItem('abdi_adama_user', JSON.stringify(nextUser));
-    localStorage.setItem('abdi_adama_primary_role', primaryRole || activeUser.role);
+    sessionStorage.setItem('abdi_adama_user', JSON.stringify(nextUser));
     window.dispatchEvent(new Event('role-switched'));
     return getDashboardRoute(newRole);
   };

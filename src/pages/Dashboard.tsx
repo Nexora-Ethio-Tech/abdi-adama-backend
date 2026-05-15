@@ -1,11 +1,12 @@
 
 import { Users, GraduationCap, Clock, TrendingUp, Lock, Unlock, Megaphone, Plus, X, Bell, Book, BookOpen, AlertTriangle, ShieldAlert, ArrowRight, ArrowLeft, Trash2 } from 'lucide-react';
 import { useUser } from '../context/UserContext';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { mockStudents } from '../data/mockData';
 import { Link } from 'react-router-dom';
 import { useStore } from '../context/useStore';
 import { useTranslation } from 'react-i18next';
+import { onSSEEvent, connectSSE } from '../utils/sseClient';
 
 const StatCard = ({ icon: Icon, label, value, trend, color }: any) => (
   <div className="bg-white dark:bg-slate-900 p-4 md:p-6 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 transition-colors duration-300">
@@ -35,6 +36,24 @@ export const Dashboard = () => {
   const isAdmin = role === 'super-admin' || role === 'school-admin';
   const isVP = role === 'vice-principal';
   const selectedBranch = selectedBranchId ? branches.find((branch) => branch.id === selectedBranchId) || null : null;
+
+  // ── Real-time SSE: inject driver logistics notices into the notice board ─────
+  useEffect(() => {
+    connectSSE();
+    const unsub = onSSEEvent('LOGISTICS_NOTICE', (payload: any) => {
+      addNotice({
+        title:     payload.title || 'Logistics Update',
+        content:   payload.content,
+        priority:  'Normal',
+        category:  'Logistics',
+        driverName: payload.driverName,
+        stations:  payload.stations,
+        expiresAt: payload.expires_at ? new Date(payload.expires_at).toLocaleDateString() : undefined,
+        audience:  ['super-admin', 'school-admin', 'vice-principal', 'teacher', 'student', 'parent'],
+      });
+    });
+    return unsub;
+  }, [addNotice]);
 
   if (role === 'super-admin') {
     const branchHealth = branches.map((branch, index) => ({

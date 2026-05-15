@@ -1,15 +1,25 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import {
   Shield, Clock, AlertTriangle, CheckCircle,
-  Loader2, BookOpen, XCircle, Maximize
+  Loader2, BookOpen,
+  Award, FileText, ChevronRight,
+  Search
 } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
 import { toast } from '../components/Toast';
 import { useExam } from '../context/ExamContext';
+import { useUser } from '../context/UserContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+interface Question {
+  id: string;
+  text: string;
+  options: Record<string, string>;
+  correct?: string; // Only available for parents/reviewers if needed
+}
+
 interface ExamItem {
   id: string;
   title: string;
@@ -19,6 +29,9 @@ interface ExamItem {
   duration_minutes: number;
   examiner_name: string;
   my_status: 'active' | 'submitted' | 'terminated' | null;
+  my_score: number | null;
+  my_approval_status: 'pending' | 'approved' | null;
+  questions_count: number;
   server_time: string;
 }
 
@@ -29,6 +42,7 @@ interface ActiveSession {
   duration_minutes: number;
   server_time: string;
   start_time: string;
+  questions: Question[];
 }
 
 type ExamView = 'list' | 'active' | 'submitted' | 'terminated';
@@ -41,43 +55,64 @@ const fmt = (sec: number) => {
 };
 
 const canStart = (startWindow: string, serverTime: string): boolean => {
-  return new Date(serverTime) >= new Date(startWindow);
+  if (!startWindow || !serverTime) return false;
+  try {
+    return new Date(serverTime) >= new Date(startWindow);
+  } catch {
+    return false;
+  }
+};
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return 'TBA';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return 'TBA';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return 'TBA';
+  }
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export const OfficialExam = () => {
-  const navigate = useNavigate();
+  const { role } = useUser();
+  const [searchParams] = useSearchParams();
+  const studentId = searchParams.get('student_id');
   const { activateExamLockdown, releaseExamLockdown } = useExam();
 
-  // ── Exam list state ────────────────────────────────────────────────────────
+  // ── State ──────────────────────────────────────────────────────────────────
   const [exams, setExams] = useState<ExamItem[]>([]);
   const [serverTime, setServerTime] = useState<string>('');
   const [listLoading, setListLoading] = useState(true);
+  const [filterSubject, setFilterSubject] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // ── Active session state ───────────────────────────────────────────────────
   const [view, setView] = useState<ExamView>('list');
+  const [isExamStarted, setIsExamStarted] = useState(false);
   const [session, setSession] = useState<ActiveSession | null>(null);
-  const [answers] = useState<Record<string, string>>({});
-  const [timeLeft, setTimeLeft] = useState(0);          // seconds
-  const [terminateReason, setTerminateReason] = useState('');
-
-  // ── Action state ───────────────────────────────────────────────────────────
-  const [starting, setStarting] = useState<string | null>(null); // exam id
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [starting, setStarting] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [terminating, setTerminating] = useState(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const sessionRef = useRef<ActiveSession | null>(null); // stable ref for event listeners
+  const sessionRef = useRef<ActiveSession | null>(null);
   sessionRef.current = session;
 
-  // ── Fetch exam list ────────────────────────────────────────────────────────
+  // ── Data Fetching ──────────────────────────────────────────────────────────
   const fetchExams = useCallback(async () => {
     setListLoading(true);
     try {
-      const res = await apiFetch('/api/exams');
+      const url = role === 'parent' && studentId 
+        ? `/api/exams?student_id=${studentId}` 
+        : '/api/exams';
+      const res = await apiFetch(url);
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.message || 'Failed to fetch exams.');
+        toast.error(data.error || data.message || 'Failed to fetch exams.');
         return;
       }
       setExams(data.data?.exams || []);
@@ -87,18 +122,20 @@ export const OfficialExam = () => {
     } finally {
       setListLoading(false);
     }
-  }, []);
+  }, [role, studentId]);
 
-  useEffect(() => { fetchExams(); }, [fetchExams]);
+  useEffect(() => { 
+    if (role === 'parent' && !studentId) return;
+    fetchExams(); 
+  }, [fetchExams, role, studentId]);
 
-  // ── Timer logic ────────────────────────────────────────────────────────────
+  // ── Timer & Anti-Cheat ─────────────────────────────────────────────────────
   const startTimer = useCallback((durationMinutes: number, startTime: string, remoteServerTime: string) => {
-    // Calculate time elapsed since exam start using server time delta
-    const serverNow   = new Date(remoteServerTime).getTime();
-    const examStart   = new Date(startTime).getTime();
-    const elapsed     = Math.max(0, Math.floor((serverNow - examStart) / 1000));
-    const totalSecs   = durationMinutes * 60;
-    const remaining   = Math.max(0, totalSecs - elapsed);
+    const serverNow = new Date(remoteServerTime).getTime();
+    const examStart = new Date(startTime).getTime();
+    const elapsed = Math.max(0, Math.floor((serverNow - examStart) / 1000));
+    const totalSecs = durationMinutes * 60;
+    const remaining = Math.max(0, totalSecs - elapsed);
 
     setTimeLeft(remaining);
 
@@ -107,14 +144,13 @@ export const OfficialExam = () => {
       setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timerRef.current!);
-          // Auto-submit when timer hits zero
           handleAutoSubmit();
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
-  }, []); // eslint-disable-line
+  }, []);
 
   const stopTimer = () => {
     if (timerRef.current) {
@@ -123,53 +159,62 @@ export const OfficialExam = () => {
     }
   };
 
-  // ── Anti-cheat: tab visibility ─────────────────────────────────────────────
-  useEffect(() => {
-    if (view !== 'active') return;
-
-    const handleVisibilityChange = () => {
-      if (document.hidden && sessionRef.current) {
-        handleTerminate('tab_switch_detected');
-      }
-    };
-
-    const handleContextMenu = (e: MouseEvent) => {
-      if (view === 'active') e.preventDefault();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    document.addEventListener('contextmenu', handleContextMenu);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      document.removeEventListener('contextmenu', handleContextMenu);
-    };
-  }, [view]); // eslint-disable-line
-
-  // ── Cleanup on unmount ─────────────────────────────────────────────────────
-  useEffect(() => {
-    return () => {
-      stopTimer();
-      releaseExamLockdown();
-      exitFullscreen();
-    };
-  }, []); // eslint-disable-line
-
-  // ── Fullscreen helpers ────────────────────────────────────────────────────
-  const enterFullscreen = () => {
-    const el = document.documentElement;
-    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-    else if ((el as any).webkitRequestFullscreen) (el as any).webkitRequestFullscreen();
-  };
-
   const exitFullscreen = () => {
     try {
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     } catch (_) {}
   };
 
-  // ── Start exam ────────────────────────────────────────────────────────────
+  // handleTerminate must be declared BEFORE the useEffect that references it
+  const handleTerminate = useCallback(async (reason: string = 'student_triggered') => {
+    const s = sessionRef.current;
+    if (!s || terminating) return;
+    setTerminating(true);
+    stopTimer();
+    try {
+      await apiFetch('/api/exams/terminate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ result_id: s.result_id, reason }),
+      });
+    } catch (_) {}
+    releaseExamLockdown();
+    exitFullscreen();
+    setIsExamStarted(false);
+    setView('terminated');
+    setTerminating(false);
+  }, [terminating, releaseExamLockdown]);
+
+  useEffect(() => {
+    if (!isExamStarted) return;
+    const handleVisibilityChange = () => {
+      if (document.hidden && sessionRef.current) handleTerminate('tab_switch_detected');
+    };
+    const handleContextMenu = (e: MouseEvent) => { if (isExamStarted) e.preventDefault(); };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('contextmenu', handleContextMenu);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, [isExamStarted, handleTerminate]);
+
+  useEffect(() => {
+    return () => {
+      stopTimer();
+      releaseExamLockdown();
+    };
+  }, []);
+
+  const enterFullscreen = () => {
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  };
+
+  // ── Actions ────────────────────────────────────────────────────────────────
   const handleStart = async (exam: ExamItem) => {
+    if (role === 'parent') return;
     if (!canStart(exam.start_window, serverTime)) {
       toast.error(`Exam opens at ${new Date(exam.start_window).toLocaleString()}.`);
       return;
@@ -186,7 +231,10 @@ export const OfficialExam = () => {
 
       const sess: ActiveSession = data.data;
       setSession(sess);
+      setIsExamStarted(true);
       setView('active');
+      setCurrentIndex(0);
+      setAnswers({});
       activateExamLockdown();
       enterFullscreen();
       startTimer(sess.duration_minutes, sess.start_time, sess.server_time);
@@ -197,7 +245,6 @@ export const OfficialExam = () => {
     }
   };
 
-  // ── Auto-submit (timer = 0) ───────────────────────────────────────────────
   const handleAutoSubmit = useCallback(async () => {
     const s = sessionRef.current;
     if (!s) return;
@@ -211,12 +258,17 @@ export const OfficialExam = () => {
     } catch (_) {}
     releaseExamLockdown();
     exitFullscreen();
+    setIsExamStarted(false);
     setView('submitted');
   }, [answers, releaseExamLockdown]);
 
-  // ── Manual submit ────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!session) return;
+    const unanswered = session.questions.length - Object.keys(answers).length;
+    if (unanswered > 0 && !window.confirm(`You have ${unanswered} unanswered questions. Are you sure you want to submit?`)) {
+      return;
+    }
+
     setSubmitting(true);
     stopTimer();
     try {
@@ -225,66 +277,45 @@ export const OfficialExam = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ result_id: session.result_id, answers }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.message || 'Failed to submit exam.');
-        startTimer(session.duration_minutes, session.start_time, new Date().toISOString());
-        return;
-      }
+      if (!res.ok) throw new Error();
       releaseExamLockdown();
       exitFullscreen();
+      setIsExamStarted(false);
       setView('submitted');
     } catch {
-      toast.error('Network error — submission failed. Please try again.');
+      toast.error('Submission failed. Please check your connection.');
       startTimer(session.duration_minutes, session.start_time, new Date().toISOString());
     } finally {
       setSubmitting(false);
     }
   };
 
-  // ── Terminate (anti-cheat or manual stop) ────────────────────────────────
-  const handleTerminate = useCallback(async (reason: string = 'student_triggered') => {
-    const s = sessionRef.current;
-    if (!s || terminating) return;
-    setTerminating(true);
-    stopTimer();
-    try {
-      await apiFetch('/api/exams/terminate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ result_id: s.result_id, reason }),
-      });
-    } catch (_) {}
-    releaseExamLockdown();
-    exitFullscreen();
-    setTerminateReason(reason);
-    setView('terminated');
-    setTerminating(false);
-  }, [terminating, releaseExamLockdown]);
+  // handleTerminate is declared above (before its useEffect dependency)
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // RENDER: Terminated
-  // ─────────────────────────────────────────────────────────────────────────
+  const handleAnswer = (questionId: string, option: string) => {
+    setAnswers(prev => ({ ...prev, [questionId]: option }));
+  };
+
+  // ── Rendering Logic ────────────────────────────────────────────────────────
+  const filteredExams = exams.filter(exam => {
+    const matchesSearch = exam.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          exam.subject_name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesFilter = !filterSubject || exam.subject_name === filterSubject;
+    return matchesSearch && matchesFilter;
+  });
+
+  const subjects = Array.from(new Set(exams.map(e => e.subject_name)));
+
   if (view === 'terminated') {
     return (
       <div className="min-h-screen bg-red-950 flex items-center justify-center p-6">
-        <div className="max-w-md w-full text-center space-y-6">
-          <div className="w-24 h-24 bg-red-500/20 rounded-full flex items-center justify-center mx-auto">
-            <XCircle className="text-red-400" size={48} />
+        <div className="max-w-md w-full text-center space-y-6 text-white">
+          <div className="w-24 h-24 bg-red-600/20 rounded-full flex items-center justify-center mx-auto mb-8 animate-pulse">
+            <AlertTriangle className="text-red-500" size={48} />
           </div>
-          <div>
-            <h1 className="text-3xl font-black text-white">Exam Terminated</h1>
-            <p className="text-red-300 mt-3 font-medium">
-              {terminateReason === 'tab_switch_detected'
-                ? 'Your exam was automatically terminated because you navigated away from the tab.'
-                : 'Your exam session has been stopped. No results will be shown.'}
-            </p>
-            <p className="text-red-400/70 text-sm mt-2">Contact your teacher for further information.</p>
-          </div>
-          <button
-            onClick={() => { setView('list'); setSession(null); fetchExams(); navigate('/dashboard/student'); }}
-            className="w-full bg-red-600 hover:bg-red-500 text-white py-4 rounded-2xl font-bold text-lg transition-all"
-          >
+          <h1 className="text-4xl font-black">EXAM TERMINATED</h1>
+          <p className="text-red-300 text-lg font-medium">Your session was stopped due to security violations or manual intervention. All progress has been logged.</p>
+          <button onClick={() => { setView('list'); fetchExams(); }} className="w-full bg-white text-red-950 py-5 rounded-[2rem] font-black text-xl hover:scale-105 active:scale-95 transition-transform">
             Return to Dashboard
           </button>
         </div>
@@ -292,217 +323,258 @@ export const OfficialExam = () => {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // RENDER: Submitted
-  // ─────────────────────────────────────────────────────────────────────────
   if (view === 'submitted') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-emerald-950 to-slate-950 flex items-center justify-center p-6">
-        <div className="max-w-md w-full text-center space-y-6">
-          <div className="w-24 h-24 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto">
+      <div className="min-h-screen bg-emerald-950 flex items-center justify-center p-6 text-white">
+        <div className="max-w-md w-full text-center space-y-8">
+          <div className="w-24 h-24 bg-emerald-600/20 rounded-full flex items-center justify-center mx-auto">
             <CheckCircle className="text-emerald-400" size={48} />
           </div>
-          <div>
-            <h1 className="text-3xl font-black text-white">Submitted!</h1>
-            <p className="text-emerald-300 mt-3 font-medium">
-              Your answers have been recorded. Your teacher will review and release your results.
-            </p>
+          <div className="space-y-4">
+            <h1 className="text-4xl font-black">Well Done!</h1>
+            <p className="text-emerald-300 text-lg font-medium">Your examination has been submitted successfully for grading.</p>
           </div>
-          <button
-            onClick={() => { setView('list'); setSession(null); fetchExams(); navigate('/dashboard/student'); }}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-2xl font-bold text-lg transition-all"
-          >
-            Return to Dashboard
+          <button onClick={() => { setView('list'); fetchExams(); }} className="w-full bg-emerald-600 py-5 rounded-[2rem] font-black text-xl hover:bg-emerald-500 transition-colors shadow-xl shadow-emerald-900/40">
+            View Results
           </button>
         </div>
       </div>
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // RENDER: Active Exam (lockdown mode)
-  // ─────────────────────────────────────────────────────────────────────────
-  if (view === 'active' && session) {
-    const danger = timeLeft < 300; // red when < 5 min
-    const warning = timeLeft < 600 && !danger; // amber when < 10 min
+  if (isExamStarted && session) {
+    const currentQuestion = session.questions[currentIndex];
+    const isLast = currentIndex === session.questions.length - 1;
 
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col select-none">
-        {/* ── Lockdown Header ── */}
-        <header className="flex items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 sticky top-0 z-50">
-          <div className="flex items-center gap-3">
-            <Shield className="text-school-primary" size={22} />
-            <div>
-              <p className="text-xs font-black text-slate-500 uppercase tracking-widest">Official Exam</p>
-              <h1 className="text-white font-black text-lg leading-tight">{session.title}</h1>
+      <div className="fixed inset-0 z-[1000] bg-white dark:bg-slate-950 flex flex-col text-slate-900 dark:text-white font-sans overflow-hidden">
+        {/* Secure Session Header */}
+        <header className="px-8 py-6 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center shadow-sm">
+          <div className="flex-1">
+            <h1 className="font-black text-xl tracking-tight text-slate-900 dark:text-white">{session.title}</h1>
+          </div>
+
+          <div className="flex-1 flex justify-center">
+            <div className={`flex items-center gap-3 px-8 py-3 rounded-2xl border-2 ${timeLeft < 300 ? 'border-rose-500 bg-rose-50 text-rose-600 animate-pulse' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white'}`}>
+              <Clock size={20} className={timeLeft < 300 ? 'text-rose-500' : 'text-slate-400'} />
+              <span className="text-2xl font-black tabular-nums">{fmt(timeLeft)}</span>
             </div>
           </div>
 
-          {/* ── Countdown Timer ── */}
-          <div className={`flex items-center gap-2 px-5 py-2 rounded-2xl font-black text-2xl tabular-nums transition-all ${
-            danger  ? 'bg-red-500/20 text-red-400 animate-pulse' :
-            warning ? 'bg-amber-500/20 text-amber-400' :
-                      'bg-slate-800 text-white'
-          }`}>
-            <Clock size={20} />
-            {fmt(timeLeft)}
+          <div className="flex-1 flex justify-end">
+             <div className="px-6 py-2 bg-slate-100 dark:bg-slate-800 rounded-full">
+               <span className="text-xs font-black uppercase tracking-widest text-slate-500">Question {currentIndex + 1} of {session.questions.length}</span>
+             </div>
           </div>
-
-          {/* ── Terminate / Stop button ── */}
-          <button
-            onClick={() => handleTerminate('student_triggered')}
-            disabled={terminating}
-            className="flex items-center gap-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-600/40 px-4 py-2 rounded-xl font-bold text-sm transition-all disabled:opacity-50"
-          >
-            {terminating ? <Loader2 size={16} className="animate-spin" /> : <XCircle size={16} />}
-            Stop Exam
-          </button>
         </header>
 
-        {/* ── Exam Body (placeholder question area) ── */}
-        <div className="flex-1 p-6 md:p-12 max-w-4xl mx-auto w-full space-y-8">
-          <div className="bg-slate-900 rounded-3xl border border-slate-800 p-8 text-center">
-            <BookOpen className="text-slate-600 mx-auto mb-4" size={48} />
-            <p className="text-slate-400 font-medium">
-              Questions will appear here once the teacher publishes them via the Question Bank.
-              Your session is <span className="text-emerald-400 font-bold">active and being timed.</span>
-            </p>
-          </div>
+        {/* Question Area */}
+        <main className="flex-1 relative overflow-y-auto p-6 md:p-12 lg:p-20 flex items-center justify-center bg-slate-50/30 dark:bg-slate-950">
+          <div className="max-w-4xl w-full">
+            <div className="bg-white dark:bg-slate-900 p-10 md:p-16 rounded-[3rem] border border-slate-200 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none space-y-12">
+              {/* Question Text */}
+              <div className="space-y-6">
+                <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-[10px] font-black uppercase tracking-widest">
+                  <Shield size={12} /> Secure Assessment
+                </div>
+                <h2 className="text-3xl md:text-4xl font-black leading-tight text-slate-900 dark:text-white">
+                  {currentQuestion.text}
+                </h2>
+              </div>
 
-          {/* Anti-cheat warning banner */}
-          <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4">
-            <AlertTriangle className="text-amber-400 shrink-0 mt-0.5" size={18} />
-            <p className="text-amber-300 text-sm font-medium">
-              <span className="font-black">Anti-cheat active.</span> Switching tabs, right-clicking, or navigating away will automatically terminate your exam with no results shown.
-            </p>
+              {/* Options Grid */}
+              <div className="grid grid-cols-1 gap-4">
+                {Object.entries(currentQuestion.options).map(([key, text]) => {
+                  const isSelected = answers[currentQuestion.id] === key;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => handleAnswer(currentQuestion.id, key)}
+                      className={`group flex items-center gap-6 p-6 rounded-3xl border-2 transition-all text-left ${
+                        isSelected 
+                          ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-500/20' 
+                          : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-800 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xl flex-shrink-0 transition-colors ${
+                        isSelected ? 'bg-white text-blue-600' : 'bg-slate-100 dark:bg-slate-700 text-slate-500'
+                      }`}>
+                        {key}
+                      </div>
+                      <span className="font-bold text-lg">{text}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
+        </main>
 
-          {/* Submit button */}
-          <div className="flex justify-end pt-4">
+        {/* Footer Controls */}
+        <footer className="px-10 py-8 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
+          {/* Stop Exam (Bottom-Left) */}
+          <button
+            onClick={() => {
+              if (window.confirm("Are you sure you want to stop? Your progress will be terminated.")) {
+                handleTerminate();
+              }
+            }}
+            className="px-8 py-4 border-2 border-rose-200 text-rose-600 hover:bg-rose-50 rounded-2xl font-black text-xs uppercase tracking-widest transition-all"
+          >
+            Stop Exam
+          </button>
+
+          {/* Navigation (Bottom-Right) */}
+          <div className="flex items-center gap-4">
             <button
-              onClick={handleSubmit}
-              disabled={submitting}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-4 rounded-2xl font-black text-lg shadow-xl shadow-emerald-900/30 transition-all disabled:opacity-60"
+              onClick={() => setCurrentIndex(prev => Math.max(0, prev - 1))}
+              disabled={currentIndex === 0}
+              className="px-8 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-black text-xs uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
             >
-              {submitting ? <Loader2 size={20} className="animate-spin" /> : <CheckCircle size={20} />}
-              Submit Exam
+              Previous
             </button>
+
+            {isLast ? (
+              <button
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-12 py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-emerald-500/20 transition-all active:scale-95"
+              >
+                {submitting ? 'Submitting...' : 'Finish & Submit'}
+              </button>
+            ) : (
+              <button
+                onClick={() => setCurrentIndex(prev => Math.min(session.questions.length - 1, prev + 1))}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-12 py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-500/20 transition-all active:scale-95"
+              >
+                Next Question
+              </button>
+            )}
           </div>
-        </div>
+        </footer>
       </div>
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // RENDER: Exam List
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── List View (Default) ────────────────────────────────────────────────────
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">Official Exams</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-2 font-medium">
-            Secure, timed assessments. Once started, the session cannot be paused.
-          </p>
+    <div className="space-y-8 pb-24">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+        <div className="space-y-2">
+          <h1 className="text-4xl md:text-5xl font-black text-slate-900 dark:text-white flex items-center gap-4">
+            Official Exams
+            <span className="text-sm bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-4 py-1 rounded-full uppercase tracking-widest font-black">Secure</span>
+          </h1>
+          <p className="text-slate-500 font-medium">Monitoring academic excellence via high-stakes assessment.</p>
         </div>
-        <button
-          onClick={fetchExams}
-          className="flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-school-primary transition-colors px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-800"
-        >
-          <Clock size={14} /> Refresh
-        </button>
+        
+        {/* Search & Filters */}
+        <div className="flex items-center gap-3 w-full md:w-auto">
+          <div className="relative flex-1 md:flex-none">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input
+              type="text"
+              placeholder="Search exams..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-12 pr-6 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+            />
+          </div>
+          <select 
+            value={filterSubject}
+            onChange={(e) => setFilterSubject(e.target.value)}
+            className="px-6 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-slate-600 dark:text-slate-400 appearance-none min-w-[150px]"
+          >
+            <option value="">All Subjects</option>
+            {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
       </div>
 
-      {/* Security notice */}
-      <div className="flex items-start gap-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4">
-        <Shield className="text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" size={18} />
-        <div className="text-sm text-blue-700 dark:text-blue-300">
-          <p className="font-black mb-1">Secure Exam Environment</p>
-          <p className="font-medium opacity-80">
-            Exams run in full-screen lockdown mode. Right-click is disabled. Switching tabs will automatically terminate your session with no results shown.
-          </p>
-        </div>
-      </div>
-
-      {/* Exam cards */}
       {listLoading ? (
-        <div className="flex items-center justify-center py-24">
-          <Loader2 className="w-10 h-10 text-school-primary animate-spin" />
+        <div className="flex flex-col items-center justify-center py-32 space-y-4">
+          <Loader2 className="animate-spin text-blue-600" size={48} />
+          <p className="text-slate-500 font-bold uppercase tracking-widest">Validating Credentials...</p>
         </div>
-      ) : exams.length === 0 ? (
-        <div className="py-24 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-[3rem]">
-          <BookOpen className="text-slate-300 dark:text-slate-700 mx-auto mb-4" size={48} />
-          <p className="text-slate-400 font-bold italic">No exams scheduled for your section yet.</p>
+      ) : filteredExams.length === 0 ? (
+        <div className="p-24 text-center bg-slate-50 dark:bg-slate-900/50 rounded-[4rem] border-4 border-dashed border-slate-200 dark:border-slate-800">
+          <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6">
+            <BookOpen className="text-slate-300" size={40} />
+          </div>
+          <h2 className="text-2xl font-black text-slate-800 dark:text-white">Empty Archive</h2>
+          <p className="text-slate-500 font-medium mt-2">There are currently no official exams scheduled or recorded.</p>
         </div>
       ) : (
-        <div className="grid gap-4">
-          {exams.map(exam => {
-            const open = canStart(exam.start_window, serverTime);
+        <div className="grid gap-6">
+          {filteredExams.map(exam => {
             const already = exam.my_status === 'submitted' || exam.my_status === 'terminated';
-            const statusLabel = exam.my_status === 'submitted' ? 'Submitted' : exam.my_status === 'terminated' ? 'Terminated' : null;
-
+            const isApproved = exam.my_approval_status === 'approved';
+            
             return (
-              <div
-                key={exam.id}
-                className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm hover:shadow-lg transition-all duration-300"
-              >
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-school-primary/10 flex items-center justify-center shrink-0">
-                    <BookOpen className="text-school-primary" size={22} />
+              <div key={exam.id} className="group bg-white dark:bg-slate-900 p-8 rounded-[3rem] border border-slate-100 dark:border-slate-800 flex flex-col md:flex-row justify-between items-center gap-8 shadow-sm hover:shadow-2xl hover:border-blue-500/20 transition-all duration-500">
+                <div className="flex items-center gap-8 flex-1">
+                  <div className={`w-20 h-20 rounded-[2rem] flex items-center justify-center transition-colors ${
+                    already ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600'
+                  }`}>
+                    {already ? <Award size={40} /> : <FileText size={40} />}
                   </div>
                   <div>
-                    <h2 className="font-black text-slate-900 dark:text-white text-lg">{exam.title}</h2>
-                    <p className="text-sm font-bold text-slate-500 mt-0.5">{exam.subject_name} · {exam.subject_code}</p>
-                    <div className="flex flex-wrap gap-3 mt-2 text-xs font-bold text-slate-400">
-                      <span className="flex items-center gap-1">
-                        <Clock size={11} />
-                        {exam.duration_minutes} min
-                      </span>
-                      <span>·</span>
-                      <span>
-                        Opens: {new Date(exam.start_window).toLocaleString()}
-                      </span>
-                      <span>·</span>
-                      <span>Examiner: {exam.examiner_name}</span>
+                    <div className="flex items-center gap-3 mb-1">
+                      <h2 className="text-2xl font-black text-slate-800 dark:text-white group-hover:text-blue-600 transition-colors">{exam.title}</h2>
+                      {exam.my_status === 'active' && <span className="w-2 h-2 bg-emerald-500 rounded-full animate-ping" />}
+                    </div>
+                    <p className="text-slate-500 font-bold text-sm uppercase tracking-widest">{exam.subject_name}</p>
+                    
+                    <div className="flex flex-wrap gap-4 mt-4 text-xs font-black text-slate-400">
+                       <span className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-full uppercase tracking-tighter">
+                         <Clock size={12}/> {exam.duration_minutes}m
+                       </span>
+                       <span className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-full uppercase tracking-tighter">
+                         <Shield size={12}/> {exam.questions_count} Questions
+                       </span>
+                       <span className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-full uppercase tracking-tighter">
+                         <ChevronRight size={12}/> {formatDate(exam.start_window)}
+                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
-                  {already ? (
-                    <span className={`px-4 py-2 rounded-xl text-sm font-black ${
-                      exam.my_status === 'submitted'
-                        ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400'
-                        : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
-                    }`}>
-                      {statusLabel}
-                    </span>
-                  ) : exam.my_status === 'active' ? (
-                    <button
-                      onClick={() => handleStart(exam)}
-                      disabled={!!starting}
-                      className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-white px-5 py-3 rounded-2xl font-black text-sm shadow-lg shadow-amber-200 dark:shadow-amber-900/30 transition-all"
-                    >
-                      <Maximize size={15} /> Resume Session
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => handleStart(exam)}
-                      disabled={!open || !!starting}
-                      title={!open ? `Opens at ${new Date(exam.start_window).toLocaleString()}` : ''}
-                      className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-sm transition-all ${
-                        open
-                          ? 'bg-school-primary hover:bg-school-primary/90 text-white shadow-lg shadow-school-primary/20'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
-                      }`}
-                    >
-                      {starting === exam.id
-                        ? <Loader2 size={15} className="animate-spin" />
-                        : <Shield size={15} />}
-                      {open ? 'Start Exam' : 'Not Open Yet'}
-                    </button>
-                  )}
+                <div className="flex items-center gap-4 w-full md:w-auto">
+                   {exam.my_score !== null && isApproved ? (
+                     <div className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white px-10 py-4 rounded-[2rem] flex items-center gap-6 shadow-xl shadow-emerald-500/20">
+                        <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
+                          <Award size={24} />
+                        </div>
+                        <div className="text-left">
+                          <p className="text-[10px] font-black uppercase tracking-widest opacity-80 leading-none mb-1">Final Score</p>
+                          <p className="text-3xl font-black leading-none">{exam.my_score}%</p>
+                        </div>
+                     </div>
+                   ) : already ? (
+                     <div className={`px-10 py-5 rounded-[2rem] text-sm font-black uppercase tracking-[0.2em] border-2 ${
+                       exam.my_status === 'submitted' 
+                         ? 'bg-amber-50 border-amber-200 text-amber-700' 
+                         : 'bg-red-50 border-red-200 text-red-700'
+                     }`}>
+                       {exam.my_status === 'submitted' ? (isApproved ? 'Approved' : 'Pending Review') : 'Attempt Terminated'}
+                     </div>
+                   ) : role === 'parent' ? (
+                     <div className="bg-slate-100 dark:bg-slate-800 px-10 py-5 rounded-[2rem] text-slate-400 font-black uppercase tracking-widest text-xs italic">
+                       Awaiting Student Attempt
+                     </div>
+                   ) : (
+                     <button
+                       onClick={() => handleStart(exam)}
+                       disabled={!canStart(exam.start_window, serverTime) || starting === exam.id}
+                       className={`w-full md:w-auto px-12 py-5 rounded-[2rem] font-black text-sm uppercase tracking-[0.2em] transition-all ${
+                         canStart(exam.start_window, serverTime)
+                           ? 'bg-blue-600 text-white shadow-2xl shadow-blue-500/30 hover:scale-110 active:scale-95'
+                           : 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                       }`}
+                     >
+                       {starting === exam.id ? 'Loading...' : 'Start Secure Session'}
+                     </button>
+                   )}
                 </div>
               </div>
             );

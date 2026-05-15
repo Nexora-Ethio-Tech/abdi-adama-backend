@@ -1,10 +1,11 @@
 
-import { BookOpen, Award, Clock, ArrowRight, Star, Trophy, CheckCircle2, Loader2 } from 'lucide-react';
+import { BookOpen, Award, Clock, ArrowRight, Star, Trophy, CheckCircle2, Loader2, Megaphone } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
 import { apiFetch } from '../utils/apiClient';
+import { onSSEEvent, connectSSE } from '../utils/sseClient';
 
 interface DashboardData {
   schedule: Array<{
@@ -25,6 +26,19 @@ interface DashboardData {
     name: string;
     award_label: string;
   }>;
+  announcements: Array<{
+    id: string;
+    priority: string;
+    title: string;
+    content: string;
+    timestamp: string;
+    category: string;
+  }>;
+  stats: {
+    attendance: string;
+    rank: string;
+    active_courses: string[];
+  };
 }
 
 interface ProfileData {
@@ -65,6 +79,29 @@ export const StudentPortal = () => {
     fetchData();
   }, []);
 
+  // ── Real-time SSE: inject driver logistics notices instantly ─────────────────
+  useEffect(() => {
+    connectSSE(); // no-op if already connected
+    const unsub = onSSEEvent('LOGISTICS_NOTICE', (payload: any) => {
+      setData(prev => {
+        if (!prev) return prev;
+        const newNotice = {
+          id:        payload.id,
+          priority:  payload.priority || 'Normal',
+          title:     payload.title,
+          content:   payload.content,
+          timestamp: payload.timestamp,
+          category:  'Logistics',
+        };
+        return {
+          ...prev,
+          announcements: [newNotice, ...(prev.announcements || [])],
+        };
+      });
+    });
+    return unsub;
+  }, []);
+
   const handleVote = (name: string) => {
     setVotedTeacher(name);
     // In a real app, this would call a POST /api/student/vote
@@ -86,6 +123,7 @@ export const StudentPortal = () => {
   const schedule = data?.schedule || [];
   const deadlines = data?.deadlines || [];
   const monthlyTeachers = data?.teacherOfTheMonth || [];
+  const announcements = data?.announcements || [];
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700 pb-20">
@@ -159,8 +197,11 @@ export const StudentPortal = () => {
       <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-3xl p-6 md:p-10 text-white shadow-xl shadow-blue-500/20 relative overflow-hidden">
         <div className="relative z-10">
           <h2 className="text-3xl md:text-4xl font-black mb-3">Welcome back, {profile?.fullName || user?.name || 'Student'}!</h2>
+          <div className="flex items-center gap-3 mb-4">
+             <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-lg text-[10px] font-black uppercase tracking-widest border border-white/10">{profile?.grade || 'N/A'}</span>
+             <span className="text-xs font-bold text-blue-100">{profile?.section || 'N/A'} Section</span>
+          </div>
           <p className="opacity-90 text-lg font-medium">
-            Keep up the great work in <span className="font-bold text-blue-200">{profile?.grade || 'N/A'} - {profile?.section || 'N/A'}</span>.
             You have <span className="underline decoration-wavy decoration-emerald-400 font-bold">{deadlines.length} upcoming tasks</span>.
           </p>
         </div>
@@ -170,20 +211,27 @@ export const StudentPortal = () => {
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <div className="bg-orange-100 dark:bg-orange-900/30 p-3 rounded-lg text-orange-600 w-fit mb-4">
             <BookOpen size={24} />
           </div>
-          <h3 className="text-slate-500 dark:text-slate-400 text-sm font-medium">Today's Classes</h3>
-          <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 mt-1">{schedule.length}</p>
+          <h3 className="text-slate-500 dark:text-slate-400 text-sm font-medium">Active Courses</h3>
+          <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 mt-1">{data?.stats?.active_courses?.length || 0}</p>
         </div>
         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <div className="bg-emerald-100 dark:bg-emerald-900/30 p-3 rounded-lg text-emerald-600 w-fit mb-4">
             <Clock size={24} />
           </div>
-          <h3 className="text-slate-500 dark:text-slate-400 text-sm font-medium">Status</h3>
-          <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 mt-1">In Session</p>
+          <h3 className="text-slate-500 dark:text-slate-400 text-sm font-medium">Attendance</h3>
+          <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 mt-1">{data?.stats?.attendance || '0%'}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
+          <div className="bg-amber-100 dark:bg-amber-900/30 p-3 rounded-lg text-amber-600 w-fit mb-4">
+            <Trophy size={24} />
+          </div>
+          <h3 className="text-slate-500 dark:text-slate-400 text-sm font-medium">Academic Rank</h3>
+          <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 mt-1">{data?.stats?.rank || 'Pending'}</p>
         </div>
         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <div className="bg-blue-100 dark:bg-blue-900/30 p-3 rounded-lg text-blue-600 w-fit mb-4">
@@ -191,6 +239,47 @@ export const StudentPortal = () => {
           </div>
           <h3 className="text-slate-500 dark:text-slate-400 text-sm font-medium">Digital ID</h3>
           <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 mt-1">{user?.digitalId || 'STU-NEW'}</p>
+        </div>
+      </div>
+      
+      {/* Announcements */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden">
+        <div className="p-4 md:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 text-blue-600 rounded-lg">
+              <Megaphone size={20} />
+            </div>
+            <h3 className="font-bold text-slate-800 dark:text-slate-100">School Notices</h3>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:divide-slate-800">
+          {announcements.length > 0 ? announcements.map((notice) => (
+            <div key={notice.id} className="p-4 md:p-6 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                    notice.category === 'Logistics' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                  }`}>
+                    {notice.category}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                    notice.priority === 'High' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-500'
+                  }`}>
+                    {notice.priority}
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-400 font-medium">
+                  {new Date(notice.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                </span>
+              </div>
+              <h4 className="font-bold text-slate-800 dark:text-slate-100 mb-2">{notice.title}</h4>
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {notice.content}
+              </p>
+            </div>
+          )) : (
+            <div className="col-span-2 py-12 text-center text-slate-400 italic text-sm">No recent announcements.</div>
+          )}
         </div>
       </div>
 
@@ -244,12 +333,11 @@ export const StudentPortal = () => {
               <div className="py-8 text-center text-slate-400 italic text-sm">All caught up! No pending tasks.</div>
             )}
 
-            {/* Link to all exams */}
             <Link
-              to="/exams"
+              to="/official-exam"
               className="flex items-center justify-center gap-2 p-3 text-sm font-bold text-blue-600 hover:text-blue-700 transition-colors border-t border-slate-100 dark:border-slate-800 mt-2"
             >
-              View Official Examinations <ArrowRight size={16} />
+              View Official Exams <ArrowRight size={16} />
             </Link>
           </div>
         </div>

@@ -40,6 +40,7 @@ const AuditorDashboard = lazy(() => import('./pages/AuditorDashboard').then((m) 
 const AcademicManagement = lazy(() => import('./pages/AcademicManagement').then((m) => ({ default: m.AcademicManagement })));
 const VicePrincipalDashboard = lazy(() => import('./pages/VicePrincipalDashboard').then((m) => ({ default: m.VicePrincipalDashboard })));
 const OfficialExam = lazy(() => import('./pages/OfficialExam').then((m) => ({ default: m.OfficialExam })));
+const OfficialExamManagement = lazy(() => import('./pages/OfficialExamManagement'));
 
 const PageLoader = () => (
   <div className="min-h-[40vh] flex items-center justify-center">
@@ -272,10 +273,16 @@ function App() {
             <Route path="settings" element={<Settings />} />
             <Route path="exam/:examId" element={<ExamSession />} />
 
-            {/* Official Exam — full lockdown mode for Students */}
+            {/* Official Exam — full lockdown mode for Students, view mode for Parents */}
             <Route path="official-exam" element={
-              <ProtectedRoute allowedRoles={['student']}>
+              <ProtectedRoute allowedRoles={['student', 'parent']}>
                 <OfficialExam />
+              </ProtectedRoute>
+            } />
+
+            <Route path="official-exam-management" element={
+              <ProtectedRoute allowedRoles={['vice-principal', 'school-admin']}>
+                <OfficialExamManagement />
               </ProtectedRoute>
             } />
 

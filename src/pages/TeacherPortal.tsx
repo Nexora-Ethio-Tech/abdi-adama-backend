@@ -1,7 +1,7 @@
 
-import { BookOpen, Users, Calendar, ArrowRight, Award, ClipboardList, Star, Save, CheckCircle, ChevronRight, History, FileText, CheckSquare, MessageSquare, X, Plus, Loader2 } from 'lucide-react';
+import { BookOpen, Users, Calendar, ArrowRight, Award, Save, ChevronRight, History, FileText, CheckSquare, MessageSquare, X, Plus, Loader2 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { WeeklyPlan } from '../data/mockData';
+
 import { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
 import { apiFetch } from '../utils/apiClient';
@@ -36,8 +36,8 @@ export const TeacherPortal = () => {
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const [teacherNote, setTeacherNote] = useState('');
-  const [isSaved, setIsSaved] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [, _setIsSaved] = useState(false);
+  const [, _setLoading] = useState(false);
 
   // Exam state
   const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
@@ -96,13 +96,13 @@ export const TeacherPortal = () => {
   };
 
   const fetchStudentsForClass = async (sectionId: string) => {
-    setLoading(true);
+    _setLoading(true);
     try {
       const res = await apiFetch(`/api/teacher/students?section_id=${sectionId}`);
       const data = await res.json();
       if (res.ok) setStudents(data.data || []);
     } catch { toast.error('Failed to load student roster.'); }
-    finally { setLoading(false); }
+    finally { _setLoading(false); }
   };
 
   const fetchExams = async () => {
@@ -172,9 +172,9 @@ export const TeacherPortal = () => {
         })
       });
       if (res.ok) {
-        setIsSaved(true);
+        _setIsSaved(true);
         toast.success('Communication book updated.');
-        setTimeout(() => setIsSaved(false), 3000);
+        setTimeout(() => _setIsSaved(false), 3000);
       } else {
         const d = await res.json();
         toast.error(d.message || 'Update failed.');
@@ -322,7 +322,7 @@ export const TeacherPortal = () => {
           <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-[2.5rem] p-10 text-white shadow-2xl shadow-slate-900/20 relative overflow-hidden group">
             <div className="relative z-10">
               <span className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-400 mb-4 block">Teacher Dashboard</span>
-              <h2 className="text-4xl font-black mb-2 tracking-tight">Welcome back, {user?.fullName}!</h2>
+              <h2 className="text-4xl font-black mb-2 tracking-tight">Welcome back, {(user as any)?.fullName}!</h2>
               <p className="text-slate-400 max-w-md font-medium text-lg leading-relaxed">Manage your classes, lesson plans, and communication book records.</p>
               <div className="mt-10 flex flex-wrap gap-4">
                 <Link

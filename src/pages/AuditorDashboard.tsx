@@ -47,7 +47,7 @@ export const AuditorDashboard = () => {
   const fetchData = async () => {
     setLoading(true);
     // try {
-    //   const token = localStorage.getItem('abdi_adama_token');
+    //   const token = sessionStorage.getItem('abdi_adama_token');
     //   const [txRes, specialRes] = await Promise.all([
     //     fetch('/api/finance/transactions', { headers: { 'Authorization': `Bearer ${token}` } }),
     //     fetch('/api/students/special/list', { headers: { 'Authorization': `Bearer ${token}` } })
@@ -77,7 +77,7 @@ export const AuditorDashboard = () => {
 
   const handleApprove = async (id: string, approved: boolean) => {
     // try {
-    //   const token = localStorage.getItem('abdi_adama_token');
+    //   const token = sessionStorage.getItem('abdi_adama_token');
     //   const res = await fetch('/api/students/fees/approve', {
     //     method: 'POST',
     //     headers: {

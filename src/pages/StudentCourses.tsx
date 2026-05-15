@@ -57,7 +57,7 @@ export const StudentCourses = () => {
 
     const fetchGrades = async () => {
       setLoading(true);
-      const token = localStorage.getItem('abdi_adama_token');
+      const token = sessionStorage.getItem('abdi_adama_token');
       try {
         const res = await fetch(`/api/student/grades?semester=${currentSemester}`, {
           headers: { 'Authorization': `Bearer ${token}` }
@@ -82,7 +82,7 @@ export const StudentCourses = () => {
 
     const fetchHistory = async () => {
       setLoading(true);
-      const token = localStorage.getItem('abdi_adama_token');
+      const token = sessionStorage.getItem('abdi_adama_token');
       try {
         const res = await fetch(`/api/student/history?year=${selectedYear}&semester=${selectedHistSemester}`, {
           headers: { 'Authorization': `Bearer ${token}` }

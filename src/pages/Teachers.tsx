@@ -21,7 +21,7 @@ export const Teachers = () => {
   const [credentials, setCredentials] = useState<any>(null);
 
   // const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-  // const getToken = () => localStorage.getItem('abdi_adama_token') || '';
+  // const getToken = () => sessionStorage.getItem('abdi_adama_token') || '';
 
   const fetchData = async () => {
     // try {

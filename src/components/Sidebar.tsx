@@ -19,7 +19,8 @@ import {
   UserPlus,
   Megaphone,
   GraduationCap,
-  ClipboardCheck
+  ClipboardCheck,
+  ShieldCheck
 } from 'lucide-react';
 import logo from '../assets/logo.jpg';
 import { clsx, type ClassValue } from 'clsx';
@@ -90,6 +91,7 @@ export const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
           { icon: CalendarCheck, label: t('nav.attendance'), path: '/attendance' },
           { icon: BookOpen, label: t('nav.scheduleBuilder'), path: '/schedule-builder' },
           { icon: Package, label: t('nav.inventory'), path: '/inventory' },
+          { icon: ShieldCheck, label: 'Official Exams', path: '/official-exam-management' },
           { icon: Wallet, label: t('nav.finance'), path: '/finance' },
           { icon: Settings, label: t('nav.settings'), path: '/settings' },
         ];
@@ -100,7 +102,7 @@ export const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
           { icon: UserSquare2, label: t('nav.teachers'), path: '/teachers' },
           { icon: FileText, label: t('nav.transcripts'), path: '/transcripts' },
           { icon: CalendarCheck, label: t('nav.attendance'), path: '/attendance' },
-          { icon: ClipboardList, label: t('nav.exams'), path: '/exams' },
+          { icon: ShieldCheck, label: 'Official Exams', path: '/official-exam-management' },
         ];
       case 'teacher':
         return [
@@ -108,21 +110,21 @@ export const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
           { icon: BookOpen, label: t('nav.weeklyPlans'), path: '/?tab=plans' },
           { icon: CalendarCheck, label: t('nav.attendance'), path: '/attendance' },
           { icon: BookOpen, label: t('nav.mySchedule'), path: '/schedule' },
-          { icon: ClipboardList, label: t('nav.exams'), path: '/exams' },
+          { icon: ShieldCheck, label: t('nav.exams'), path: '/exams' },
         ];
       case 'student':
         return [
           { icon: LayoutDashboard, label: t('nav.myDashboard'), path: '/' },
           { icon: BookOpen, label: t('nav.gradesCourses'), path: '/courses' },
           { icon: CalendarCheck, label: t('nav.academicHistory'), path: '/courses?tab=history' },
-          { icon: ClipboardList, label: t('nav.exams'), path: '/exams' },
+          { icon: ShieldCheck, label: 'Official Exams', path: '/official-exam' },
         ];
       case 'parent':
         return [
-          { icon: LayoutDashboard, label: t('nav.myDashboard'), path: '/' },
-          { icon: Users, label: t('nav.myChildren'), path: '/students' },
+          { icon: LayoutDashboard, label: t('nav.myDashboard'), path: '/dashboard/parent' },
+          { icon: Users, label: t('nav.myChildren'), path: '/dashboard/parent?view=children' },
           { icon: HeartPulse, label: t('nav.clinicSupport'), path: '/clinic-chat' },
-          { icon: ClipboardList, label: t('nav.exams'), path: '/exams' },
+          { icon: ShieldCheck, label: 'Official Exams', path: '/official-exam' },
         ];
       case 'finance-clerk':
         return [

@@ -1,15 +1,7 @@
-
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../utils/apiClient';
 import { toast } from '../components/Toast';
-import {
-  Stethoscope,
-  Search,
-  User,
-  History,
-  HeartPulse,
-  Loader2
-} from 'lucide-react';
+import { HeartPulse, Search, History, User, CheckCheck, Stethoscope, Loader2 } from 'lucide-react';
 
 interface Medicine {
   id: string;
@@ -35,6 +27,7 @@ interface Student {
   grade: string;
   blood_group: string;
   allergies: string;
+  school_id: string;
 }
 
 export const Clinic = () => {
@@ -42,6 +35,10 @@ export const Clinic = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [visitLogs, setVisitLogs] = useState<VisitLog[]>([]);
+  const [chatInboxes, setChatInboxes] = useState<any[]>([]);
+  const [selectedChatParent, setSelectedChatParent] = useState<any>(null);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [replyMessage, setReplyMessage] = useState('');
   const [, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -49,19 +46,20 @@ export const Clinic = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [newVisit, setNewVisit] = useState({ reason: '', treatment: '', selectedMeds: [] as {id: string, quantity: number}[] });
 
-  // const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
   const fetchData = async () => {
     setLoading(true);
     try {
+      const url = searchQuery.trim().length > 0 
+        ? `/api/clinic/students?search=${encodeURIComponent(searchQuery)}`
+        : '/api/clinic/students';
+
       const [studentsRes, visitsRes] = await Promise.all([
-        apiFetch('/api/clinic/students'),
+        apiFetch(url),
         apiFetch('/api/clinic/visits/history'),
       ]);
 
       if (studentsRes.ok) {
         const studentsJson = await studentsRes.json();
-        // Backend returns { data: { students: [...] } }
         setStudents(studentsJson.data?.students || studentsJson.students || studentsJson.data || []);
       } else {
         toast.error('Failed to load student directory.');
@@ -72,13 +70,11 @@ export const Clinic = () => {
         setVisitLogs(visitsJson.data || visitsJson);
       }
 
-      // Medicine inventory — now backed by silo_medicines table
       const medRes = await apiFetch('/api/clinic/medicine');
       if (medRes.ok) {
         const medJson = await medRes.json();
         setMedicines(medJson.data || medJson);
       } else {
-        // Non-fatal: keep empty array, don't block clinic
         setMedicines([]);
       }
     } catch {
@@ -88,9 +84,89 @@ export const Clinic = () => {
     }
   };
 
+  const fetchChatInboxes = async () => {
+    try {
+      const res = await apiFetch('/api/clinic/chat');
+      if (res.ok) {
+        const json = await res.json();
+        setChatInboxes(json.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch chat inboxes', err);
+    }
+  };
+
+  const fetchChatMessages = async (parentId: string) => {
+    try {
+      const res = await apiFetch(`/api/clinic/chat?otherUserId=${parentId}`);
+      if (res.ok) {
+        const json = await res.json();
+        setChatMessages(json.data || []);
+      }
+    } catch (err) {
+      toast.error('Failed to load conversation.');
+    }
+  };
+
+  const fetchStudentChat = async (studentId: string) => {
+    try {
+      const res = await apiFetch(`/api/clinic/chat?childId=${studentId}`);
+      if (res.ok) {
+        const json = await res.json();
+        setChatMessages(json.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load student chat');
+    }
+  };
+
   useEffect(() => {
     fetchData();
+    fetchChatInboxes();
   }, []);
+
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      fetchData();
+    }, 500);
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (activeTab === 'chat') {
+        fetchChatInboxes();
+        if (selectedChatParent) fetchChatMessages(selectedChatParent.sender_id);
+      } else if (activeTab === 'directory' && selectedStudent) {
+        fetchStudentChat(selectedStudent.id);
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [activeTab, selectedChatParent?.sender_id, selectedStudent?.id]);
+
+  const handleSendReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!replyMessage.trim() || !selectedChatParent) return;
+
+    try {
+      const res = await apiFetch('/api/clinic/chat', {
+        method: 'POST',
+        body: JSON.stringify({
+          receiverId: selectedChatParent.sender_id,
+          childId: selectedChatParent.student_id,
+          message: replyMessage
+        })
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        setChatMessages([...chatMessages, json.data]);
+        setReplyMessage('');
+      }
+    } catch (err) {
+      toast.error('Failed to send reply.');
+    }
+  };
 
   const handleLogVisit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,7 +174,6 @@ export const Clinic = () => {
 
     setIsSaving(true);
     try {
-      // 1. Log the main visit
       const visitRes = await apiFetch('/api/clinic/visits', {
         method: 'POST',
         body: JSON.stringify({
@@ -113,7 +188,6 @@ export const Clinic = () => {
         throw new Error(errorData.message || 'Failed to log visit.');
       }
 
-      // 2. Deduct medicines if any were selected
       if (newVisit.selectedMeds.length > 0) {
         await Promise.all(
           newVisit.selectedMeds.map(med => 
@@ -131,7 +205,7 @@ export const Clinic = () => {
       toast.success(`Visit logged and stock updated for ${selectedStudent.name}.`);
       setShowLogModal(false);
       setNewVisit({ reason: '', treatment: '', selectedMeds: [] });
-      fetchData(); // Refresh history and medicine stock
+      fetchData(); 
     } catch (err: any) {
       toast.error(err.message || 'Failed to log clinical visit.');
     } finally {
@@ -139,10 +213,7 @@ export const Clinic = () => {
     }
   };
 
-  const filteredStudents = students.filter(s =>
-    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    s.id.includes(searchQuery)
-  );
+  const filteredStudents = students;
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
@@ -157,6 +228,7 @@ export const Clinic = () => {
         <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
           <button onClick={() => setActiveTab('directory')} className={`px-6 py-2 rounded-lg text-sm font-bold ${activeTab === 'directory' ? 'bg-white text-rose-600 shadow' : 'text-slate-500'}`}>Directory</button>
           <button onClick={() => setActiveTab('visits')} className={`px-6 py-2 rounded-lg text-sm font-bold ${activeTab === 'visits' ? 'bg-white text-rose-600 shadow' : 'text-slate-500'}`}>Visits</button>
+          <button onClick={() => setActiveTab('chat')} className={`px-6 py-2 rounded-lg text-sm font-bold ${activeTab === 'chat' ? 'bg-white text-rose-600 shadow' : 'text-slate-500'}`}>Chat</button>
         </div>
       </div>
 
@@ -174,11 +246,14 @@ export const Clinic = () => {
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border rounded-xl text-sm outline-none"
                 />
               </div>
-              <div className="mt-4 space-y-2 max-h-[500px] overflow-y-auto">
-                {filteredStudents.map(student => (
+              <div className="mt-4 space-y-2 max-h-[500px] overflow-y-auto custom-scrollbar">
+                {filteredStudents.length > 0 ? filteredStudents.map(student => (
                   <button
                     key={student.id}
-                    onClick={() => setSelectedStudent(student)}
+                    onClick={() => {
+                      setSelectedStudent(student);
+                      fetchStudentChat(student.id);
+                    }}
                     className={`w-full p-3 flex items-center gap-3 rounded-xl transition-all ${selectedStudent?.id === student.id ? 'bg-rose-50 dark:bg-rose-900/20 border-l-4 border-rose-500' : 'hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                   >
                     <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-500 font-bold">
@@ -186,10 +261,12 @@ export const Clinic = () => {
                     </div>
                     <div className="text-left">
                       <p className="text-sm font-bold dark:text-slate-100">{student.name}</p>
-                      <p className="text-[10px] text-slate-500">Grade: {student.grade}</p>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">ID: {student.school_id}</p>
                     </div>
                   </button>
-                ))}
+                )) : (
+                  <div className="p-8 text-center text-slate-400 italic text-sm">No clinical history or parent messages for any student yet.</div>
+                )}
               </div>
             </div>
           </div>
@@ -205,7 +282,7 @@ export const Clinic = () => {
                       </div>
                       <div>
                         <h2 className="text-2xl font-black dark:text-white">{selectedStudent.name}</h2>
-                        <p className="text-slate-500 font-bold">Grade {selectedStudent.grade}</p>
+                        <p className="text-rose-600 font-black text-xs bg-rose-50 dark:bg-rose-900/20 px-3 py-1 rounded-lg w-fit mt-2 uppercase tracking-widest">{selectedStudent.grade}</p>
                         <div className="flex gap-2 mt-2">
                           <span className="px-2 py-1 bg-amber-100 text-amber-700 text-[10px] font-black uppercase rounded-md">Allergy: {selectedStudent.allergies || 'None'}</span>
                           <span className="px-2 py-1 bg-blue-100 text-blue-700 text-[10px] font-black uppercase rounded-md">Blood: {selectedStudent.blood_group || 'Unknown'}</span>
@@ -226,7 +303,7 @@ export const Clinic = () => {
                     <History size={20} className="text-rose-500" />
                     Visit History
                   </h3>
-                  <div className="space-y-4">
+                  <div className="space-y-4 max-h-60 overflow-y-auto custom-scrollbar pr-2">
                     {visitLogs.filter(v => v.student_id === selectedStudent.id).map(v => (
                       <div key={v.id} className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl flex justify-between">
                         <div>
@@ -237,7 +314,65 @@ export const Clinic = () => {
                         <span className="text-[10px] font-black text-emerald-600 uppercase">Logged</span>
                       </div>
                     ))}
+                    {visitLogs.filter(v => v.student_id === selectedStudent.id).length === 0 && (
+                      <div className="p-4 text-center text-slate-400 text-sm italic">No visit logs for this student.</div>
+                    )}
                   </div>
+                </div>
+
+                <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col h-[400px]">
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                    <HeartPulse size={20} className="text-rose-500" />
+                    Parent Communication
+                  </h3>
+                  <div className="flex-1 overflow-y-auto space-y-3 mb-4 custom-scrollbar pr-2">
+                    {chatMessages.length > 0 ? chatMessages.map((msg, i) => (
+                      <div key={i} className={`flex ${msg.role === 'clinic' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[85%] p-3 rounded-2xl text-sm shadow-sm ${
+                          msg.role === 'clinic' 
+                            ? 'bg-rose-600 text-white rounded-tr-none' 
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-tl-none'
+                        }`}>
+                          {msg.text}
+                          <div className={`text-[8px] mt-1 font-bold ${msg.role === 'clinic' ? 'text-rose-200' : 'text-slate-400'}`}>
+                            {msg.timestamp}
+                          </div>
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="h-full flex items-center justify-center text-slate-400 text-sm italic">No messages found for this student.</div>
+                    )}
+                  </div>
+                  <form 
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!replyMessage.trim() || !selectedStudent) return;
+                      try {
+                        const res = await apiFetch('/api/clinic/chat', {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            childId: selectedStudent.id,
+                            message: replyMessage
+                          })
+                        });
+                        if (res.ok) {
+                          const json = await res.json();
+                          setChatMessages([...chatMessages, json.data]);
+                          setReplyMessage('');
+                        }
+                      } catch (err) { toast.error('Failed to send message.'); }
+                    }} 
+                    className="flex gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={replyMessage}
+                      onChange={(e) => setReplyMessage(e.target.value)}
+                      placeholder="Send update to parent..."
+                      className="flex-1 px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500"
+                    />
+                    <button className="bg-rose-600 text-white px-4 py-2.5 rounded-xl font-bold text-sm">Send</button>
+                  </form>
                 </div>
               </div>
             ) : (
@@ -248,8 +383,8 @@ export const Clinic = () => {
             )}
           </div>
         </div>
-      ) : (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 overflow-hidden">
+      ) : activeTab === 'visits' ? (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 overflow-hidden overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-50 dark:bg-slate-800">
               <tr>
@@ -271,7 +406,87 @@ export const Clinic = () => {
             </tbody>
           </table>
         </div>
+      ) : (
+        /* CHAT TAB */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-[600px]">
+          <div className="lg:col-span-4 bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+              <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">Inbox</h3>
+            </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              {chatInboxes.length > 0 ? chatInboxes.map(inbox => (
+                <button
+                  key={inbox.sender_id}
+                  onClick={() => {
+                    setSelectedChatParent(inbox);
+                    fetchChatMessages(inbox.sender_id);
+                  }}
+                  className={`w-full p-4 flex flex-col gap-1 border-b border-slate-50 dark:border-slate-800 transition-all ${selectedChatParent?.sender_id === inbox.sender_id ? 'bg-rose-50 dark:bg-rose-900/10 border-l-4 border-rose-500' : 'hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                >
+                  <div className="flex justify-between items-center w-full">
+                    <span className="text-sm font-black dark:text-white">{inbox.sender_name}</span>
+                    <span className="text-[9px] text-slate-400 font-bold">{inbox.last_time.split(' ')[1]}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                     <span className="text-[9px] font-black px-1.5 py-0.5 bg-rose-50 dark:bg-rose-900/20 text-rose-600 rounded">RE: {inbox.student_name || 'General Inquiry'}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 line-clamp-1 text-left">{inbox.last_message}</p>
+                </button>
+              )) : (
+                <div className="p-8 text-center text-slate-400 italic text-sm">No active conversations.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="lg:col-span-8 bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col overflow-hidden">
+            {selectedChatParent ? (
+              <>
+                <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                   <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center text-rose-600 font-bold text-xs">
+                        {selectedChatParent.sender_name[0]}
+                      </div>
+                      <span className="font-bold dark:text-white">{selectedChatParent.sender_name}</span>
+                   </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                  {chatMessages.map((msg, i) => (
+                    <div key={i} className={`flex ${msg.role === 'clinic' ? 'justify-end' : 'justify-start'}`}>
+                       <div className={`max-w-[80%] p-3 rounded-2xl text-sm shadow-sm ${
+                         msg.role === 'clinic' 
+                           ? 'bg-rose-600 text-white rounded-tr-none' 
+                           : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-tl-none'
+                       }`}>
+                         {msg.text}
+                         <div className={`text-[8px] mt-1 font-bold flex items-center justify-end gap-1 ${msg.role === 'clinic' ? 'text-rose-100' : 'text-slate-400'}`}>
+                           {msg.timestamp}
+                           {msg.role === 'clinic' && <CheckCheck size={10} className="text-blue-300" />}
+                         </div>
+                       </div>
+                    </div>
+                  ))}
+                </div>
+                <form onSubmit={handleSendReply} className="p-4 border-t border-slate-100 dark:border-slate-800 flex gap-2">
+                  <input
+                    type="text"
+                    value={replyMessage}
+                    onChange={(e) => setReplyMessage(e.target.value)}
+                    placeholder="Type your reply..."
+                    className="flex-1 px-4 py-2 bg-slate-50 dark:bg-slate-800 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500"
+                  />
+                  <button className="bg-rose-600 text-white px-4 py-2 rounded-xl font-bold text-sm transition-transform active:scale-95">Reply</button>
+                </form>
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+                <HeartPulse size={48} className="opacity-10 mb-4" />
+                <p className="text-sm font-bold uppercase tracking-widest">Select a conversation to reply</p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
+
 
       {showLogModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">

@@ -1,5 +1,5 @@
 
-import { Megaphone, Plus, X, Bus, Users, RefreshCw, Loader2 } from 'lucide-react';
+import { Megaphone, Plus, X, Bus, Users, RefreshCw, Loader2, Trash2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useUser } from '../context/UserContext';
 import { useTranslation } from 'react-i18next';
@@ -20,6 +20,7 @@ interface Notice {
   time: string;
   driverName: string;
   category: string;
+  is_pending?: boolean;
 }
 
 export const DriverPortal = () => {
@@ -95,6 +96,23 @@ export const DriverPortal = () => {
         fetchNotices();
       } else {
         toast.error('Failed to post notice.');
+      }
+    } catch {
+      toast.error('Network error.');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this notice?')) return;
+    try {
+      const res = await apiFetch(`/api/driver/notice/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        toast.success('Notice deleted successfully.');
+        fetchNotices();
+      } else {
+        toast.error('Failed to delete notice.');
       }
     } catch {
       toast.error('Network error.');
@@ -213,10 +231,19 @@ export const DriverPortal = () => {
             {noticesLoading ? (
                <Loader2 className="w-8 h-8 animate-spin mx-auto text-orange-500 mt-8" />
             ) : notices.map((notice, i) => (
-              <div key={i} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-5 shadow-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black uppercase rounded-full">Logistics</span>
-                  <span className="text-[10px] text-slate-400 font-bold">{notice.time}</span>
+              <div key={i} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-5 shadow-sm relative group">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black uppercase rounded-full">Logistics</span>
+                    <span className="text-[10px] text-slate-400 font-bold">{notice.time}</span>
+                  </div>
+                  <button 
+                    onClick={() => handleDelete(notice.id)}
+                    className="text-slate-400 hover:text-rose-600 p-1 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                    title="Delete Notice"
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </div>
                 <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1">{notice.title}</h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{notice.content}</p>

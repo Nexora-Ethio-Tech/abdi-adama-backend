@@ -70,8 +70,8 @@ export const Header = ({ title, onMenuClick }: HeaderProps) => {
 
   // Only show the switcher for Super Admin.
   // Other roles like School Admin should have a "clean" header.
-  const canSwitchRoles = true;
-  const visibleRoles = PORTAL_ROLES;
+  const canSwitchRoles = role === 'super-admin';
+  const visibleRoles = canSwitchRoles ? PORTAL_ROLES : [];
 
   return (
     <>

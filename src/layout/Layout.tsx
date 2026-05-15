@@ -93,9 +93,7 @@ export const Layout = () => {
         />
       )}
 
-      {role !== 'parent' && (
-        <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
-      )}
+      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         <Header

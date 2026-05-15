@@ -15,7 +15,7 @@ import {
 
 // const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-// const getToken = () => localStorage.getItem('abdi_adama_token') || '';
+// const getToken = () => sessionStorage.getItem('abdi_adama_token') || '';
 
 // const authHeaders = () => ({
 //   'Content-Type': 'application/json',
