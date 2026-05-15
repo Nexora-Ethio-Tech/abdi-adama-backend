@@ -96,5 +96,7 @@ router.get('/financial-policies', schoolAdminController.getFinancialPolicies);
 // Dashboard & Utilities
 router.get('/dashboard', schoolAdminController.getDashboard);
 router.get('/teachers', schoolAdminController.getBranchTeachers);
+router.get('/students', schoolAdminController.getBranchStudents);
+router.get('/students/:id', schoolAdminController.getStudentById);
 
 export default router;

@@ -483,6 +483,44 @@ class SchoolAdminController {
       next(error);
     }
   }
+
+  // Get branch students
+  async getBranchStudents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { grade, status } = req.query;
+
+      const students = await schoolAdminService.getBranchStudents(
+        branchId!,
+        grade as string,
+        status as string
+      );
+
+      res.json({
+        success: true,
+        data: students
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get student by ID
+  async getStudentById(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+
+      const student = await schoolAdminService.getStudentById(id, branchId!);
+
+      res.json({
+        success: true,
+        data: student
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new SchoolAdminController();

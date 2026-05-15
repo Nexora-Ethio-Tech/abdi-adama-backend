@@ -737,6 +737,98 @@ class SchoolAdminService {
 
     return result.rows;
   }
+
+  // Get branch students with class info
+  async getBranchStudents(branchId: string, grade?: string, status?: string) {
+    let query = `
+      SELECT 
+        s.id as student_id,
+        s.user_id,
+        s.grade,
+        s.monthly_fee,
+        s.bus_fee,
+        s.penalty_fee,
+        s.fee_status,
+        s.fee_approval_status,
+        u.digital_id,
+        u.name,
+        u.email,
+        u.status,
+        u.is_active,
+        u.created_at,
+        c.id as class_id,
+        c.name as class_name,
+        c.section as class_section,
+        c.capacity as class_capacity,
+        c.student_count as class_student_count
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+      WHERE s.branch_id = $1
+    `;
+
+    const params: any[] = [branchId];
+    let paramCount = 1;
+
+    if (grade) {
+      paramCount++;
+      query += ` AND s.grade = $${paramCount}`;
+      params.push(grade);
+    }
+
+    if (status) {
+      paramCount++;
+      query += ` AND u.status = $${paramCount}`;
+      params.push(status);
+    }
+
+    query += ' ORDER BY s.grade, u.name';
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  // Get student by ID with full details
+  async getStudentById(studentId: string, branchId: string) {
+    const result = await pool.query(
+      `SELECT 
+        s.id as student_id,
+        s.user_id,
+        s.grade,
+        s.monthly_fee,
+        s.bus_fee,
+        s.penalty_fee,
+        s.fee_status,
+        s.fee_approval_status,
+        u.digital_id,
+        u.name,
+        u.email,
+        u.status,
+        u.is_active,
+        u.created_at,
+        u.updated_at,
+        c.id as class_id,
+        c.name as class_name,
+        c.section as class_section,
+        c.capacity as class_capacity,
+        c.student_count as class_student_count,
+        c.teacher_id,
+        tu.name as teacher_name
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+      LEFT JOIN teachers t ON c.teacher_id = t.id
+      LEFT JOIN users tu ON t.user_id = tu.id
+      WHERE s.user_id = $1 AND s.branch_id = $2`,
+      [studentId, branchId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('Student not found in your branch');
+    }
+
+    return result.rows[0];
+  }
 }
 
 export default new SchoolAdminService();
