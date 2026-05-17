@@ -2,6 +2,7 @@
 import { BookOpen, User, CheckCircle2, Circle, GraduationCap, ChevronDown, Award, TrendingUp, Loader2, Calendar } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { apiFetch } from '../utils/apiClient';
 
 interface GradeItem {
   enrollment_id: string;
@@ -57,11 +58,7 @@ export const StudentCourses = () => {
 
     const fetchGrades = async () => {
       setLoading(true);
-      const token = sessionStorage.getItem('abdi_adama_token');
-      try {
-        const res = await fetch(`/api/student/grades?semester=${currentSemester}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const res = await apiFetch(`/api/student/grades?semester=${currentSemester}`);
         if (res.ok) {
           const result = await res.json();
           setCourses(result.data.courses);
@@ -82,11 +79,7 @@ export const StudentCourses = () => {
 
     const fetchHistory = async () => {
       setLoading(true);
-      const token = sessionStorage.getItem('abdi_adama_token');
-      try {
-        const res = await fetch(`/api/student/history?year=${selectedYear}&semester=${selectedHistSemester}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const res = await apiFetch(`/api/student/history?year=${selectedYear}&semester=${selectedHistSemester}`);
         if (res.ok) {
           const result = await res.json();
           setHistory(result.data);
