@@ -1,0 +1,125 @@
+-- =============================================================================
+-- seed_original_mock_users.sql
+-- Seeds the original mock credentials requested by the user.
+-- =============================================================================
+
+BEGIN;
+
+-- ─── Step 1: Identities ──────────────────────────────────────────────────────
+INSERT INTO silo_identities (id, school_id, full_name)
+VALUES
+  -- Drivers (d is valid hex)
+  ('d3001000-0000-0000-0000-000000003001', 'DRV-3001', 'Yonas Kebede'),
+  ('d1111000-0000-0000-0000-000000001111', 'DRV-1111', 'Seyum Hailemariam'),
+  
+  -- Clinic Accounts (c is valid hex)
+  ('c4001000-0000-0000-0000-000000004001', 'CLN-4001', 'Dr. Senait Fisseha'),
+  ('c1001000-0000-0000-0000-000000001001', 'CLN-1001', 'Clinic Admin Alternate'),
+
+  -- Parents (use a for parent)
+  ('a2002000-0000-0000-0000-000000002002', 'PAR-2002', 'Daniel Tadesse'),
+  ('a2003000-0000-0000-0000-000000002003', 'PAR-2003', 'Lemma Parent'),
+  ('a2004000-0000-0000-0000-000000002004', 'PAR-2004', 'Tekle Berhe'),
+  ('a2005000-0000-0000-0000-000000002005', 'PAR-2005', 'Yohannes GebreMariam'),
+  ('a2007000-0000-0000-0000-000000002007', 'PAR-2007', 'Alemu Biruk'),
+  ('a2008000-0000-0000-0000-000000002008', 'PAR-2008', 'Waqo Muhammed'),
+
+  -- Students (use b for student)
+  ('b1001000-0000-0000-0000-000000001001', 'STU-1001', 'Abel Daniel'),
+  ('b1002000-0000-0000-0000-000000001002', 'STU-1002', 'Bethlehem Lemma'),
+  ('b1003000-0000-0000-0000-000000001003', 'STU-1003', 'Caleb Daniel'),
+  ('b1004000-0000-0000-0000-000000001004', 'STU-1004', 'Danait Tekle'),
+  ('b1005000-0000-0000-0000-000000001005', 'STU-1005', 'Elias Yohannes'),
+  ('b1111000-0000-0000-0000-000000001111', 'STU-1111', 'Lemma Alemu'),
+  ('b1112000-0000-0000-0000-000000001112', 'STU-1112', 'Kemal Waqo')
+ON CONFLICT (school_id) DO UPDATE SET full_name = EXCLUDED.full_name;
+
+-- ─── Step 2: Users & Logins ──────────────────────────────────────────────────
+INSERT INTO silo_users (id, identity_id, role, password_hash, is_active)
+VALUES
+  -- Drivers
+  ('f3001000-0000-0000-0000-000000003001', 'd3001000-0000-0000-0000-000000003001', 'Driver', '$2b$10$ZHiVcgHBHdTlPKQZ6sDk.e3jNsl6EUUewJ1PNMLwT7nn6BGtdx8QK', TRUE),
+  ('f1111000-0000-0000-0000-000000001111', 'd1111000-0000-0000-0000-000000001111', 'Driver', '$2b$10$mSQLLiwB6W2nLkY9Al.FieabJcCv/jlUcKWsi3JWNXPSBS9IA3Be2', TRUE),
+
+  -- Clinic Admins
+  ('fc400100-0000-0000-0000-000000004001', 'c4001000-0000-0000-0000-000000004001', 'ClinicAdmin', '$2b$10$c9axFTEtNVnmx140mY0jsu0vfoLHr.09UD7JoGAsyorEZCiwnWqSa', TRUE),
+  ('fc100100-0000-0000-0000-000000001001', 'c1001000-0000-0000-0000-000000001001', 'ClinicAdmin', '$2b$10$1OOYdrRaBAtrBZHjLP69z.ajq77dGPqqZ0ZdF7bgwis5xoopa3UES', TRUE),
+
+  -- Parents
+  ('fa200200-0000-0000-0000-000000002002', 'a2002000-0000-0000-0000-000000002002', 'Parent', '$2b$10$Yagf3G3JZ6sDFnt.hNYr6.wH.PbfDm/a.kvxKhiV4liO2AY7lje5e', TRUE),
+  ('fa200300-0000-0000-0000-000000002003', 'a2003000-0000-0000-0000-000000002003', 'Parent', '$2b$10$X8StUCaN1p.1HUkfnrZUeu19xbb/0rPAugg8rL98HdhlK7Cz4JIUW', TRUE),
+  ('fa200400-0000-0000-0000-000000002004', 'a2004000-0000-0000-0000-000000002004', 'Parent', '$2b$10$9oolcSCzPU.1cip.jRwrduH9xIwRrkFYXNiIAxH.OcyqY56MwFFPW', TRUE),
+  ('fa200500-0000-0000-0000-000000002005', 'a2005000-0000-0000-0000-000000002005', 'Parent', '$2b$10$4L2d2oK0RHJ.juOViJBdju/7PYVoqDxQ.ElesJxZGYcZF756AclWG', TRUE),
+  ('fa200700-0000-0000-0000-000000002007', 'a2007000-0000-0000-0000-000000002007', 'Parent', '$2b$10$f2e5h2qMiGCWPaLBNRzq9eKxepzm.toOEBUNcNNBBpl5x93Yi975K', TRUE),
+  ('fa200800-0000-0000-0000-000000002008', 'a2008000-0000-0000-0000-000000002008', 'Parent', '$2b$10$evuYijBN6bcP82Up.9V8g.xX/ULZliVjtfb0HHLZnwtGyOAsviwDy', TRUE),
+
+  -- Students
+  ('fb100100-0000-0000-0000-000000001001', 'b1001000-0000-0000-0000-000000001001', 'Student', '$2b$10$1OOYdrRaBAtrBZHjLP69z.ajq77dGPqqZ0ZdF7bgwis5xoopa3UES', TRUE),
+  ('fb100200-0000-0000-0000-000000001002', 'b1002000-0000-0000-0000-000000001002', 'Student', '$2b$10$LzfpMxbs/l2btioRGTWP1OrrJaHiLZVPMGCB8TwHm.C2w/ODbLdLu', TRUE),
+  ('fb100300-0000-0000-0000-000000001003', 'b1003000-0000-0000-0000-000000001003', 'Student', '$2b$10$6gf3M4It7NJp84rGvItblOxjnlr39Ts4L7Nt5kBgOKUJquVfmiLxK', TRUE),
+  ('fb100400-0000-0000-0000-000000001004', 'b1004000-0000-0000-0000-000000001004', 'Student', '$2b$10$sLicwHwYkqXlcS1Sn435f.0obUveyCXtCOj/sOq4LQtUWzT3G0IR2', TRUE),
+  ('fb100500-0000-0000-0000-000000001005', 'b1005000-0000-0000-0000-000000001005', 'Student', '$2b$10$HshHpqnOYia.u4YQhED2IOwkgpiI2KdWXwczyPwDUprfLTMyDggnq', TRUE),
+  ('fb111100-0000-0000-0000-000000001111', 'b1111000-0000-0000-0000-000000001111', 'Student', '$2b$10$mSQLLiwB6W2nLkY9Al.FieabJcCv/jlUcKWsi3JWNXPSBS9IA3Be2', TRUE),
+  ('fb111200-0000-0000-0000-000000001112', 'b1112000-0000-0000-0000-000000001112', 'Student', '$2b$10$XMGC0AXDWuIp2CzaAaVofeVXZT3Cq2ayI3w6GjneorPOIZm7saaHm', TRUE)
+ON CONFLICT (identity_id, role) DO UPDATE SET password_hash = EXCLUDED.password_hash;
+
+-- ─── Step 3: Family Links ─────────────────────────────────────────────────────
+INSERT INTO silo_family_links (parent_user_id, student_identity_id)
+VALUES
+  -- Daniel Tadesse (PAR-2002) -> Abel Daniel (STU-1001) & Caleb Daniel (STU-1003)
+  ('fa200200-0000-0000-0000-000000002002', 'b1001000-0000-0000-0000-000000001001'),
+  ('fa200200-0000-0000-0000-000000002002', 'b1003000-0000-0000-0000-000000001003'),
+
+  -- Lemma Parent (PAR-2003) -> Bethlehem Lemma (STU-1002)
+  ('fa200300-0000-0000-0000-000000002003', 'b1002000-0000-0000-0000-000000001002'),
+
+  -- Tekle Berhe (PAR-2004) -> Danait Tekle (STU-1004)
+  ('fa200400-0000-0000-0000-000000002004', 'b1004000-0000-0000-0000-000000001004'),
+
+  -- Yohannes GebreMariam (PAR-2005) -> Elias Yohannes (STU-1005)
+  ('fa200500-0000-0000-0000-000000002005', 'b1005000-0000-0000-0000-000000001005'),
+
+  -- Alemu Biruk (PAR-2007) -> Lemma Alemu (STU-1111)
+  ('fa200700-0000-0000-0000-000000002007', 'b1111000-0000-0000-0000-000000001111'),
+
+  -- Waqo Muhammed (PAR-2008) -> Kemal Waqo (STU-1112)
+  ('fa200800-0000-0000-0000-000000002008', 'b1112000-0000-0000-0000-000000001112')
+ON CONFLICT (parent_user_id, student_identity_id) DO NOTHING;
+
+-- ─── Step 4: Transport Routes & Manifest ──────────────────────────────────────
+INSERT INTO silo_routes (id, driver_id, bus_number, route_name)
+VALUES
+  ('e3001000-0000-0000-0000-000000003001', 'd3001000-0000-0000-0000-000000003001', 'Bus #10', 'Route A (East Side)'),
+  ('e1111000-0000-0000-0000-000000001111', 'd1111000-0000-0000-0000-000000001111', 'Bus #11', 'Route B (West Side)')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO silo_route_manifest (route_id, student_id)
+VALUES
+  -- Yonas Kebede (Route A) -> Abel Daniel, Caleb Daniel, Elias Yohannes
+  ('e3001000-0000-0000-0000-000000003001', 'b1001000-0000-0000-0000-000000001001'),
+  ('e3001000-0000-0000-0000-000000003001', 'b1003000-0000-0000-0000-000000001003'),
+  ('e3001000-0000-0000-0000-000000003001', 'b1005000-0000-0000-0000-000000001005'),
+
+  -- Seyum Hailemariam (Route B) -> Bethlehem Lemma, Lemma Alemu, Kemal Waqo
+  ('e1111000-0000-0000-0000-000000001111', 'b1002000-0000-0000-0000-000000001002'),
+  ('e1111000-0000-0000-0000-000000001111', 'b1111000-0000-0000-0000-000000001111'),
+  ('e1111000-0000-0000-0000-000000001111', 'b1112000-0000-0000-0000-000000001112'),
+
+  -- Danait Tekle (STU-1004) -> Both Drivers (Route A + Route B)
+  ('e3001000-0000-0000-0000-000000003001', 'b1004000-0000-0000-0000-000000001004'),
+  ('e1111000-0000-0000-0000-000000001111', 'b1004000-0000-0000-0000-000000001004')
+ON CONFLICT DO NOTHING;
+
+-- ─── Step 5: Seed academic stats for these students to prevent null dashboard errors
+INSERT INTO silo_student_stats (student_id, attendance_percentage, academic_rank)
+VALUES
+  ('b1001000-0000-0000-0000-000000001001', 95.0, 1),
+  ('b1002000-0000-0000-0000-000000001002', 96.0, 2),
+  ('b1003000-0000-0000-0000-000000001003', 92.5, 5),
+  ('b1004000-0000-0000-0000-000000001004', 98.0, 3),
+  ('b1005000-0000-0000-0000-000000001005', 94.0, 4),
+  ('b1111000-0000-0000-0000-000000001111', 93.0, 6),
+  ('b1112000-0000-0000-0000-000000001112', 95.5, 7)
+ON CONFLICT DO NOTHING;
+
+COMMIT;

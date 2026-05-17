@@ -22,6 +22,17 @@ const getStudentSection = async (studentIdentityId: string): Promise<string | nu
 };
 
 /**
+ * Resolve a school_id or UUID to a student's identity UUID.
+ */
+const getStudentIdentityId = async (schoolIdOrUuid: string): Promise<string | null> => {
+  const result = await pool.query(
+    `SELECT id FROM silo_identities WHERE school_id = $1 OR id::text = $1`,
+    [schoolIdOrUuid]
+  );
+  return result.rows[0]?.id ?? null;
+};
+
+/**
  * Verify that a parent is linked to a specific student.
  */
 const verifyParentLink = async (parentUserId: string, studentId: string): Promise<boolean> => {
@@ -135,7 +146,7 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
     // ── Combined Announcements (General + Logistics) ───────────────────────────
     const announcementsResult = await pool.query(
       `SELECT 
-         id, 
+         id::text, 
          priority, 
          title, 
          content, 
@@ -155,15 +166,22 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
        FROM silo_logistics_notices n
        WHERE n.deleted_at IS NULL
          AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
+         AND EXISTS (
+           SELECT 1 
+           FROM silo_route_manifest rm
+           JOIN silo_routes r ON r.id = rm.route_id
+           WHERE rm.student_id = $1
+             AND r.driver_id = n.sender_id
+         )
        ORDER BY timestamp DESC
-       LIMIT 10`
+       LIMIT 10`,
+      [studentIdentityId]
     );
 
     // ── Additional Stats (Attendance, Rank, Courses) ─────────────────────────
     const statsResult = await pool.query(
       `SELECT
-         (SELECT ROUND(COUNT(*) FILTER (WHERE status = 'Present')::numeric / NULLIF(COUNT(*), 0) * 100, 1)::text || '%' 
-          FROM silo_attendance WHERE student_id = $1) AS attendance,
+         COALESCE(s.attendance_percentage::text || '%', '100%') AS attendance,
          CASE 
            WHEN s.academic_rank IS NOT NULL THEN '#' || s.academic_rank::text
            ELSE 'Pending'
@@ -201,9 +219,12 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
 
   // ── Support Parent Viewing Child ───────────────────────────────────────────
   if (req.user?.role === 'Parent' && targetStudentId) {
-    const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
+    const resolvedId = await getStudentIdentityId(targetStudentId);
+    if (!resolvedId) return sendError(res, 'Student not found.', 404);
+    
+    const isLinked = await verifyParentLink(req.user.user_id, resolvedId);
     if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
-    studentIdentityId = targetStudentId;
+    studentIdentityId = resolvedId;
   }
 
   const semester  = Number(req.query.semester)  || 2;
@@ -273,9 +294,12 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
 
   // ── Support Parent Viewing Child ───────────────────────────────────────────
   if (req.user?.role === 'Parent' && targetStudentId) {
-    const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
+    const resolvedId = await getStudentIdentityId(targetStudentId);
+    if (!resolvedId) return sendError(res, 'Student not found.', 404);
+    
+    const isLinked = await verifyParentLink(req.user.user_id, resolvedId);
     if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
-    studentIdentityId = targetStudentId;
+    studentIdentityId = resolvedId;
   }
 
   const year     = (req.query.year     as string) || '';

@@ -433,14 +433,15 @@ app.get('/api/events/stream', (req: Request, res: Response) => {
     res.status(401).json({ message: 'Authentication token required.' });
     return;
   }
+  let decoded: any;
   try {
-    jwt.verify(token, JWT_SECRET_SSE);
+    decoded = jwt.verify(token, JWT_SECRET_SSE);
   } catch {
     res.status(403).json({ message: 'Invalid or expired token.' });
     return;
   }
 
-  addClient(res);
+  addClient(res, decoded);
   req.on('close', () => removeClient(res));
 });
 

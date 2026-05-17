@@ -17,7 +17,13 @@ function request(method, path, body, token) {
     const req = http.request(options, (res) => {
       let raw = '';
       res.on('data', c => raw += c);
-      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(raw) }));
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, body: raw ? JSON.parse(raw) : {} });
+        } catch (e) {
+          resolve({ status: res.statusCode, body: { raw } });
+        }
+      });
     });
     req.on('error', reject);
     if (data) req.write(data);
@@ -48,39 +54,54 @@ async function run() {
   const stuToken = stuLogin.body.token;
 
   // 2. Student gets own profile
-  header('2. GET /api/student/profile (own)');
+  header('2. GET /api/student/profile');
   const ownProfile = await request('GET', '/api/student/profile', null, stuToken);
-  if (ownProfile.status === 200 && ownProfile.body.fullName) {
-    pass(`Own profile OK — ${ownProfile.body.fullName}`);
+  if (ownProfile.status === 200 && ownProfile.body.data && ownProfile.body.data.fullName) {
+    pass(`Own profile OK — Name: ${ownProfile.body.data.fullName}, Section: ${ownProfile.body.data.section}`);
   } else {
     fail('Own profile failed', JSON.stringify(ownProfile.body));
   }
 
-  // 3. Student gets detailed profile with grades
-  header('3. GET /api/student/profile/STU-8995');
-  const detailedProfile = await request('GET', '/api/student/profile/STU-8995', null, stuToken);
-  if (detailedProfile.status === 200 && detailedProfile.body.grades) {
-    pass(`Detailed profile OK — ${detailedProfile.body.grades.length} grade(s) found`);
-    pass(`Stats: Attendance ${detailedProfile.body.profile.attendance_percentage}%, Rank #${detailedProfile.body.profile.academic_rank}`);
-    if (detailedProfile.body.communicationBook) {
-      pass(`Communication book found (week ending ${detailedProfile.body.communicationBook.week_ending})`);
-    }
+  // 3. Student gets dashboard data
+  header('3. GET /api/student/dashboard');
+  const dashData = await request('GET', '/api/student/dashboard', null, stuToken);
+  if (dashData.status === 200 && dashData.body.data) {
+    const d = dashData.body.data;
+    pass(`Dashboard OK — ${d.schedule.length} schedule items, ${d.deadlines.length} deadlines, ${d.announcements.length} announcements`);
+    pass(`Stats: Attendance ${d.stats.attendance}, Rank ${d.stats.rank}`);
   } else {
-    fail('Detailed profile failed', JSON.stringify(detailedProfile.body));
+    fail('Dashboard failed', JSON.stringify(dashData.body));
   }
 
-  // 4. Student gets history
-  header('4. GET /api/student/history/STU-8995');
-  const history = await request('GET', '/api/student/history/STU-8995', null, stuToken);
-  if (history.status === 200 && history.body.history) {
-    const years = Object.keys(history.body.history);
-    pass(`History OK — ${years.length} EC year(s): ${years.join(', ')}`);
+  // 4. Student gets current courses & grades
+  header('4. GET /api/student/grades');
+  const grades = await request('GET', '/api/student/grades?semester=2', null, stuToken);
+  if (grades.status === 200 && grades.body.data && grades.body.data.courses) {
+    pass(`Grades OK — ${grades.body.data.courses.length} course(s) graded`);
+    grades.body.data.courses.forEach(c => {
+      pass(`  - ${c.name}: Quiz=${c.quiz_10}, Assign=${c.assignment_10}, Mid=${c.mid_30}, Final=${c.final_50}, Total=${c.total}`);
+    });
+  } else {
+    fail('Grades failed', JSON.stringify(grades.body));
+  }
+
+  // 5. Student gets history
+  header('5. GET /api/student/history');
+  const history = await request('GET', '/api/student/history?year=2024/2025', null, stuToken);
+  if (history.status === 200 && history.body.data) {
+    pass(`History OK — ${history.body.data.length} academic term record(s) found`);
+    history.body.data.forEach(h => {
+      pass(`  - ${h.semester} (${h.year}): Average = ${h.average}`);
+      h.courses.forEach(c => {
+        pass(`    * ${c.name}: Score = ${c.score}`);
+      });
+    });
   } else {
     fail('History failed', JSON.stringify(history.body));
   }
 
-  // 5. Login as Parent (same school_id, parentPassword: 3551)
-  header('5. Parent Login');
+  // 6. Login as Parent (same school_id, parentPassword: 3551)
+  header('6. Parent Login');
   const parLogin = await request('POST', '/api/auth/login', {
     school_id: 'STU-8995', password: '3551', role: 'Parent'
   });
@@ -92,21 +113,22 @@ async function run() {
   }
   const parToken = parLogin.body.token;
 
-  // 6. Parent dashboard
-  header('6. GET /api/parent/dashboard');
-  const dash = await request('GET', '/api/parent/dashboard', null, parToken);
-  if (dash.status === 200) {
-    pass(`Dashboard OK — ${dash.body.children.length} child(ren), ${dash.body.announcements.length} announcement(s)`);
-    if (dash.body.children.length > 0) {
-      pass(`Child: ${dash.body.children[0].fullName} (${dash.body.children[0].school_id})`);
+  // 7. Parent dashboard
+  header('7. GET /api/parent/dashboard');
+  const parDash = await request('GET', '/api/parent/dashboard', null, parToken);
+  if (parDash.status === 200 && parDash.body.data) {
+    const pd = parDash.body.data;
+    pass(`Dashboard OK — ${pd.children.length} child(ren), ${pd.announcements.length} announcement(s)`);
+    if (pd.children.length > 0) {
+      pass(`Child: ${pd.children[0].fullName} (${pd.children[0].school_id}), Attendance: ${pd.children[0].attendance}, Perf: ${pd.children[0].performance}`);
     }
   } else {
-    fail('Parent dashboard failed', JSON.stringify(dash.body));
+    fail('Parent dashboard failed', JSON.stringify(parDash.body));
   }
 
-  // 7. Privacy check — parent tries to view a DIFFERENT student (should 403)
-  header('7. Privacy Guard — Parent accessing unlinked student');
-  const blocked = await request('GET', '/api/student/profile/STU-160688', null, parToken);
+  // 8. Privacy check — parent tries to view a DIFFERENT student's grades (should 403)
+  header('8. Privacy Guard — Parent accessing unlinked student');
+  const blocked = await request('GET', '/api/student/grades?student_id=STU-2001', null, parToken);
   if (blocked.status === 403) {
     pass(`Privacy guard working — 403 returned for unlinked student`);
   } else {

@@ -6,19 +6,8 @@ CREATE TABLE IF NOT EXISTS silo_family_links (
   UNIQUE(parent_user_id, student_identity_id)
 );
 
--- Tab 1: Academic Profile & History
-CREATE TABLE IF NOT EXISTS silo_student_grades (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id    UUID NOT NULL REFERENCES silo_identities(id) ON DELETE CASCADE,
-  subject       VARCHAR(100) NOT NULL,
-  mid_30        NUMERIC(5,2) DEFAULT 0,
-  quiz_10       NUMERIC(5,2) DEFAULT 0,
-  assignment_10 NUMERIC(5,2) DEFAULT 0,
-  final_50      NUMERIC(5,2) DEFAULT 0,
-  teacher_name  VARCHAR(200),
-  academic_year VARCHAR(20) NOT NULL, -- e.g. 'EC 2017'
-  created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
+-- Tab 1: Academic Profile & History (silo_student_grades created in student_schema_v2.sql)
+
 
 CREATE TABLE IF NOT EXISTS silo_student_stats (
   student_id            UUID PRIMARY KEY REFERENCES silo_identities(id) ON DELETE CASCADE,
@@ -67,6 +56,5 @@ CREATE TABLE IF NOT EXISTS silo_announcements (
 );
 
 CREATE INDEX IF NOT EXISTS idx_family_links_parent ON silo_family_links(parent_user_id);
-CREATE INDEX IF NOT EXISTS idx_student_grades_id ON silo_student_grades(student_id);
 CREATE INDEX IF NOT EXISTS idx_comm_book_id ON silo_communication_book(student_id);
 CREATE INDEX IF NOT EXISTS idx_clinic_chat_student ON silo_clinic_chat(student_id);

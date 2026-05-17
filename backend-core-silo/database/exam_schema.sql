@@ -8,7 +8,7 @@ BEGIN;
 
 -- ─── Exam Status Enum ─────────────────────────────────────────────────────────
 DO $$ BEGIN
-  CREATE TYPE exam_status AS ENUM ('active', 'submitted', 'terminated');
+  CREATE TYPE silo_exam_status AS ENUM ('active', 'submitted', 'terminated');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ─── silo_official_exams ──────────────────────────────────────────────────────
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS silo_exam_results (
   student_id       UUID         NOT NULL REFERENCES silo_identities(id),
   answers_json     JSONB,                          -- raw answers payload
   score            NUMERIC(5,2),                  -- populated after teacher grades
-  status           exam_status  NOT NULL DEFAULT 'active',
+  status           silo_exam_status  NOT NULL DEFAULT 'active',
   approval_status  VARCHAR(20)  DEFAULT 'pending' CHECK (approval_status IN ('pending', 'approved', 'rejected')),
   start_time       TIMESTAMPTZ  DEFAULT CURRENT_TIMESTAMP,
   end_time         TIMESTAMPTZ,                   -- set on submit OR terminate

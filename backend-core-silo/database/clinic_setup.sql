@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS silo_clinic_messages (
   sender_id   UUID         NOT NULL,
   receiver_id UUID         NOT NULL,
   message     TEXT         NOT NULL,
+  child_id    UUID         REFERENCES silo_identities(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ  DEFAULT CURRENT_TIMESTAMP
 );
 

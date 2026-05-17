@@ -1,98 +1,109 @@
 -- =============================================================================
 -- seed_bikila_family.sql
 -- Seeds the "Bikila" family test data for integration testing.
---
--- Inserts:
---   PAR-1001 → Mr. Bikila (Parent)
---   STU-2001 → Abebe Bikila (Student)
---   STU-2002 → Sara Bikila  (Student)
---   Family links: Mr. Bikila is linked to both children
---   Academic grades for EC 2017 / 2024-2025 for both students
---
--- PIN for all accounts: 1234 (bcrypt hash of "1234" with 10 rounds)
--- Replace the hash below with the output of:
---   node -e "const b=require('bcrypt'); b.hash('1234',10).then(h=>console.log(h))"
+-- Modified to perfectly comply with the v2 SQL schema dependencies.
 -- =============================================================================
 
 BEGIN;
 
 -- ─── Step 1: Insert Identities ───────────────────────────────────────────────
-
 INSERT INTO silo_identities (id, school_id, full_name)
 VALUES
   ('a1000000-0000-0000-0000-000000000001', 'PAR-1001', 'Mr. Bikila'),
   ('a2000000-0000-0000-0000-000000000002', 'STU-2001', 'Abebe Bikila'),
-  ('a3000000-0000-0000-0000-000000000003', 'STU-2002', 'Sara Bikila')
-ON CONFLICT (school_id) DO NOTHING;
+  ('a3000000-0000-0000-0000-000000000003', 'STU-2002', 'Sara Bikila'),
+  -- Create STU-8995 identity (needed for verify_parent_student.js test)
+  ('a8995000-0000-0000-0000-000000008995', 'STU-8995', 'Test Student')
+ON CONFLICT (school_id) DO UPDATE SET full_name = EXCLUDED.full_name;
 
 -- ─── Step 2: Insert User accounts ────────────────────────────────────────────
--- bcrypt hash of "1234" (10 rounds). Replace with live hash for production.
-
+-- Use real bcrypt hashes:
+-- '1234' -> $2b$10$MCQ2j4hRG/6iPoRBZBZh6uETldS54PR41romQhqPhH7fqR6wLplYy
+-- '7293' -> $2b$10$JUPbBb74jXkQwMgsWiUDOeylylH6qj9xAyJXdfz0UWulj8q1gF0b.
+-- '3551' -> $2b$10$eH1.Ye4DWRX.gATKY/.q7ugc4u3pHGXvNZeoeWSnJfkPlAsXixCS6
 INSERT INTO silo_users (id, identity_id, role, password_hash, is_active)
 VALUES
   -- Mr. Bikila → Parent
-  ('b1000000-0000-0000-0000-000000000001',
-   'a1000000-0000-0000-0000-000000000001',
-   'Parent',
-   '$2b$10$YourBcryptHashFor1234HereReplaceMe1111111111111111111',
-   TRUE),
-
+  ('b1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'Parent', '$2b$10$MCQ2j4hRG/6iPoRBZBZh6uETldS54PR41romQhqPhH7fqR6wLplYy', TRUE),
   -- Abebe Bikila → Student
-  ('b2000000-0000-0000-0000-000000000002',
-   'a2000000-0000-0000-0000-000000000002',
-   'Student',
-   '$2b$10$YourBcryptHashFor1234HereReplaceMe1111111111111111111',
-   TRUE),
-
+  ('b2000000-0000-0000-0000-000000000002', 'a2000000-0000-0000-0000-000000000002', 'Student', '$2b$10$MCQ2j4hRG/6iPoRBZBZh6uETldS54PR41romQhqPhH7fqR6wLplYy', TRUE),
   -- Sara Bikila → Student
-  ('b3000000-0000-0000-0000-000000000003',
-   'a3000000-0000-0000-0000-000000000003',
-   'Student',
-   '$2b$10$YourBcryptHashFor1234HereReplaceMe1111111111111111111',
-   TRUE)
-ON CONFLICT (identity_id, role) DO NOTHING;
+  ('b3000000-0000-0000-0000-000000000003', 'a3000000-0000-0000-0000-000000000003', 'Student', '$2b$10$MCQ2j4hRG/6iPoRBZBZh6uETldS54PR41romQhqPhH7fqR6wLplYy', TRUE),
+  
+  -- STU-8995 Student row
+  ('b8995000-0000-0000-0000-000000008995', 'a8995000-0000-0000-0000-000000008995', 'Student', '$2b$10$JUPbBb74jXkQwMgsWiUDOeylylH6qj9xAyJXdfz0UWulj8q1gF0b.', TRUE),
+  -- STU-8995 Parent row
+  ('c8995000-0000-0000-0000-000000008995', 'a8995000-0000-0000-0000-000000008995', 'Parent', '$2b$10$eH1.Ye4DWRX.gATKY/.q7ugc4u3pHGXvNZeoeWSnJfkPlAsXixCS6', TRUE)
+ON CONFLICT (identity_id, role) DO UPDATE SET password_hash = EXCLUDED.password_hash;
 
 -- ─── Step 3: Family Links ─────────────────────────────────────────────────────
--- Mr. Bikila (Parent user) is linked to both student identities
-
 INSERT INTO silo_family_links (parent_user_id, student_identity_id)
 VALUES
-  ('b1000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000002'), -- → Abebe
-  ('b1000000-0000-0000-0000-000000000001', 'a3000000-0000-0000-0000-000000000003')  -- → Sara
+  ('b1000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000002'), -- Mr. Bikila -> Abebe
+  ('b1000000-0000-0000-0000-000000000001', 'a3000000-0000-0000-0000-000000000003'), -- Mr. Bikila -> Sara
+  ('c8995000-0000-0000-0000-000000008995', 'a8995000-0000-0000-0000-000000008995')  -- STU-8995 Parent -> STU-8995 Student
 ON CONFLICT (parent_user_id, student_identity_id) DO NOTHING;
 
--- ─── Step 4: Academic Grades (EC 2017 / 2024-2025) ───────────────────────────
-
--- Abebe Bikila grades
-INSERT INTO silo_student_grades (student_id, subject, mid_30, quiz_10, assignment_10, final_50, teacher_name, academic_year)
+-- ─── Step 4: Insert Courses ───────────────────────────────────────────────────
+INSERT INTO silo_courses (id, name, code, teacher_id)
 VALUES
-  ('a2000000-0000-0000-0000-000000000002', 'Mathematics',     25.5,  8.5,  9.0,  42.0, 'Ato Tesfaye Lemma',   'EC 2017'),
-  ('a2000000-0000-0000-0000-000000000002', 'English Language', 22.0,  7.0,  8.5,  38.5, 'W/ro Almaz Haile',   'EC 2017'),
-  ('a2000000-0000-0000-0000-000000000002', 'Amharic',         27.0,  9.0,  9.5,  44.0, 'Ato Girma Bekele',   'EC 2017'),
-  ('a2000000-0000-0000-0000-000000000002', 'Science',         24.0,  8.0,  8.0,  40.5, 'W/ro Tigist Alemu',  'EC 2017'),
-  ('a2000000-0000-0000-0000-000000000002', 'Social Studies',  26.5,  9.5,  9.0,  43.0, 'Ato Henok Gebre',    'EC 2017')
-ON CONFLICT DO NOTHING;
+  ('c1000000-0000-0000-0000-000000000001', 'Mathematics', 'MATH10', NULL),
+  ('c1000000-0000-0000-0000-000000000002', 'English Language', 'ENGL10', NULL),
+  ('c1000000-0000-0000-0000-000000000003', 'Amharic', 'AMH10', NULL),
+  ('c1000000-0000-0000-0000-000000000004', 'Science', 'SCI10', NULL),
+  ('c1000000-0000-0000-0000-000000000005', 'Social Studies', 'SOC10', NULL),
+  ('c1000000-0000-0000-0000-000000000006', 'Biology', 'BIO10', NULL),
+  ('c1000000-0000-0000-0000-000000000007', 'Physics', 'PHYS10', NULL)
+ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name;
 
--- Sara Bikila grades
-INSERT INTO silo_student_grades (student_id, subject, mid_30, quiz_10, assignment_10, final_50, teacher_name, academic_year)
+-- ─── Step 5: Insert Enrollments for current year 2025/2026, Semester 2 ─────────
+-- Abebe Bikila (STU-2001) Enrollments
+INSERT INTO silo_enrollments (id, student_id, course_id, section_id, academic_year, semester, progress)
 VALUES
-  ('a3000000-0000-0000-0000-000000000003', 'Mathematics',     28.0,  9.5,  9.5,  46.0, 'Ato Tesfaye Lemma',   'EC 2017'),
-  ('a3000000-0000-0000-0000-000000000003', 'English Language', 26.0,  9.0,  9.0,  44.5, 'W/ro Almaz Haile',   'EC 2017'),
-  ('a3000000-0000-0000-0000-000000000003', 'Amharic',         27.5,  9.5,  9.5,  45.0, 'Ato Girma Bekele',   'EC 2017'),
-  ('a3000000-0000-0000-0000-000000000003', 'Science',         27.0,  8.5,  9.0,  43.5, 'W/ro Tigist Alemu',  'EC 2017'),
-  ('a3000000-0000-0000-0000-000000000003', 'Social Studies',  29.0,  9.5,  9.5,  46.5, 'Ato Henok Gebre',    'EC 2017')
-ON CONFLICT DO NOTHING;
+  ('e1000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 75),
+  ('e1000000-0000-0000-0000-000000000002', 'a2000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000002', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 80),
+  ('e1000000-0000-0000-0000-000000000003', 'a2000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000003', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 90),
+  ('e1000000-0000-0000-0000-000000000004', 'a2000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000004', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 85),
+  ('e1000000-0000-0000-0000-000000000005', 'a2000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000005', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 70)
+ON CONFLICT (student_id, course_id, academic_year, semester) DO UPDATE SET section_id = EXCLUDED.section_id;
+
+-- Sara Bikila (STU-2002) Enrollments
+INSERT INTO silo_enrollments (id, student_id, course_id, section_id, academic_year, semester, progress)
+VALUES
+  ('e2000000-0000-0000-0000-000000000001', 'a3000000-0000-0000-0000-000000000003', 'c1000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 95),
+  ('e2000000-0000-0000-0000-000000000002', 'a3000000-0000-0000-0000-000000000003', 'c1000000-0000-0000-0000-000000000002', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 88),
+  ('e2000000-0000-0000-0000-000000000003', 'a3000000-0000-0000-0000-000000000003', 'c1000000-0000-0000-0000-000000000003', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 92),
+  ('e2000000-0000-0000-0000-000000000004', 'a3000000-0000-0000-0000-000000000003', 'c1000000-0000-0000-0000-000000000004', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 90),
+  ('e2000000-0000-0000-0000-000000000005', 'a3000000-0000-0000-0000-000000000003', 'c1000000-0000-0000-0000-000000000005', 'd1000000-0000-0000-0000-000000000001', '2025/2026', 2, 85)
+ON CONFLICT (student_id, course_id, academic_year, semester) DO UPDATE SET section_id = EXCLUDED.section_id;
+
+-- ─── Step 6: Insert Grades into silo_student_grades ───────────────────────────
+-- Abebe Bikila (STU-2001) Grades
+INSERT INTO silo_student_grades (enrollment_id, quiz_10, assignment_10, mid_30, final_50)
+VALUES
+  ('e1000000-0000-0000-0000-000000000001', 8.5, 9.0, 25.5, 42.0),
+  ('e1000000-0000-0000-0000-000000000002', 7.0, 8.5, 22.0, 38.5),
+  ('e1000000-0000-0000-0000-000000000003', 9.0, 9.5, 27.0, 44.0),
+  ('e1000000-0000-0000-0000-000000000004', 8.0, 8.0, 24.0, 40.5),
+  ('e1000000-0000-0000-0000-000000000005', 9.5, 9.0, 26.5, 43.0)
+ON CONFLICT (enrollment_id) DO UPDATE SET 
+  quiz_10 = EXCLUDED.quiz_10, 
+  assignment_10 = EXCLUDED.assignment_10,
+  mid_30 = EXCLUDED.mid_30,
+  final_50 = EXCLUDED.final_50;
+
+-- Sara Bikila (STU-2002) Grades
+INSERT INTO silo_student_grades (enrollment_id, quiz_10, assignment_10, mid_30, final_50)
+VALUES
+  ('e2000000-0000-0000-0000-000000000001', 9.5, 9.5, 28.0, 46.0),
+  ('e2000000-0000-0000-0000-000000000002', 9.0, 9.0, 26.0, 44.5),
+  ('e2000000-0000-0000-0000-000000000003', 9.5, 9.5, 27.5, 45.0),
+  ('e2000000-0000-0000-0000-000000000004', 8.5, 9.0, 27.0, 43.5),
+  ('e2000000-0000-0000-0000-000000000005', 9.5, 9.5, 29.0, 46.5)
+ON CONFLICT (enrollment_id) DO UPDATE SET 
+  quiz_10 = EXCLUDED.quiz_10, 
+  assignment_10 = EXCLUDED.assignment_10,
+  mid_30 = EXCLUDED.mid_30,
+  final_50 = EXCLUDED.final_50;
 
 COMMIT;
-
--- =============================================================================
--- NOTE: After inserting, generate a real bcrypt hash and UPDATE the rows:
---
---   UPDATE silo_users
---   SET password_hash = '$2b$10$<real-hash-here>'
---   WHERE identity_id IN (
---     'a1000000-0000-0000-0000-000000000001',
---     'a2000000-0000-0000-0000-000000000002',
---     'a3000000-0000-0000-0000-000000000003'
---   );
--- =============================================================================

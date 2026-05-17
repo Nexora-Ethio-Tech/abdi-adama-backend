@@ -102,7 +102,7 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
     };
 
     // Push to all connected SSE clients instantly (Student, Parent, Admin portals)
-    broadcast('LOGISTICS_NOTICE', broadcastPayload);
+    broadcast('LOGISTICS_NOTICE', broadcastPayload, identity_id);
 
     return sendSuccess(res, {
       ...notice,

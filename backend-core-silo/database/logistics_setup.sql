@@ -20,10 +20,14 @@ CREATE TABLE IF NOT EXISTS silo_route_manifest (
 
 -- Silo Logistics Notices
 CREATE TABLE IF NOT EXISTS silo_logistics_notices (
-  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  sender_id  UUID        NOT NULL REFERENCES silo_identities(id),
-  message    TEXT        NOT NULL,
-  timestamp  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  sender_id    UUID        NOT NULL REFERENCES silo_identities(id),
+  title        VARCHAR(255),
+  message      TEXT        NOT NULL,
+  timestamp    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  published_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  expires_at   TIMESTAMPTZ,
+  deleted_at   TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_silo_routes_driver_id ON silo_routes(driver_id);

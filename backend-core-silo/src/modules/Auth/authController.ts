@@ -20,7 +20,25 @@ const JWT_EXPIRES_IN = '8h';
  *  4. Return a signed JWT containing user_id, identity_id, school_id, role.
  */
 export const login = async (req: Request, res: Response): Promise<void> => {
-  const { school_id, password, role } = req.body as LoginBody;
+  let { school_id, password, role } = req.body as LoginBody;
+  const isOldFrontend = !school_id && !!(req.body as any).identifier;
+
+  // ── Support alternate frontend keys (identifier -> school_id) ───────────────
+  if (isOldFrontend) {
+    school_id = (req.body as any).identifier;
+  }
+
+  // ── Auto-detect role from school_id prefix if missing ──────────────────────
+  if (!role && school_id) {
+    const u = school_id.toUpperCase();
+    if (u.startsWith('STU')) role = 'Student';
+    else if (u.startsWith('PAR')) role = 'Parent';
+    else if (u.startsWith('DRV') || u.startsWith('DR-')) role = 'Driver';
+    else if (u.startsWith('LIB')) role = 'Librarian';
+    else if (u.startsWith('CLN')) role = 'ClinicAdmin';
+    else if (u.startsWith('TCH') || u.startsWith('TC-')) role = 'Teacher';
+    else role = 'Student';
+  }
 
   // ── Validation ──────────────────────────────────────────────────────────────
   if (!school_id || !password || !role) {
@@ -49,7 +67,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     );
 
     if (identityResult.rowCount === 0) {
-      // Generic message — do not reveal whether ID or password was wrong
       res.status(401).json({ message: 'Invalid credentials.' });
       return;
     }
@@ -98,14 +115,49 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 
+    // Map role to kebab-case to support the older frontend
+    const mappedKebabRole: Record<string, string> = {
+      'Student': 'student',
+      'Parent': 'parent',
+      'Driver': 'driver',
+      'Librarian': 'librarian',
+      'ClinicAdmin': 'clinic-admin',
+      'Teacher': 'teacher',
+      'Admin': 'school-admin',
+      'VicePrincipal': 'vice-principal',
+      'SchoolAdmin': 'school-admin',
+    };
+
+    const kebabRole = mappedKebabRole[role] || 'student';
+
+    // Map roles to their dashboard redirect paths
+    const redirectMap: Record<string, string> = {
+      'Student': '/dashboard/student',
+      'Parent': '/dashboard/parent',
+      'Driver': '/dashboard/transport',
+      'Librarian': '/dashboard/library',
+      'ClinicAdmin': '/dashboard/clinic',
+      'Teacher': '/dashboard/teacher',
+      'Admin': '/dashboard/school-admin',
+      'VicePrincipal': '/dashboard/vice-principal',
+      'SchoolAdmin': '/dashboard/school-admin',
+    };
+
+    const redirectPath = redirectMap[role] || '/dashboard';
+
     res.json({
       message: 'Login successful.',
       token,
+      redirect: redirectPath,
       user: {
         user_id: user.id,
+        id: user.id,
         school_id,
+        digitalId: school_id,
         full_name: identity.full_name,
-        role,
+        name: identity.full_name,
+        email: `${school_id}@school.com`,
+        role: isOldFrontend ? kebabRole : role,
       },
     });
   } catch (err: unknown) {

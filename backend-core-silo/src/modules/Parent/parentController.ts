@@ -18,8 +18,7 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
          i.school_id,
          i.full_name   AS "fullName",
          i.grade,
-         (SELECT ROUND(COUNT(*) FILTER (WHERE status = 'Present')::numeric / NULLIF(COUNT(*), 0) * 100, 1)::text || '%' 
-          FROM silo_attendance WHERE student_id = i.id) AS attendance,
+         COALESCE(s.attendance_percentage::text || '%', '100%') AS attendance,
          CASE 
            WHEN s.academic_rank IS NOT NULL THEN 'Rank: ' || s.academic_rank::text
            ELSE 'Pending Results'
@@ -60,6 +59,14 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
        LEFT JOIN silo_identities i ON i.id = n.sender_id
        WHERE n.deleted_at IS NULL
          AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
+         AND EXISTS (
+           SELECT 1 
+           FROM silo_family_links fl
+           JOIN silo_route_manifest rm ON rm.student_id = fl.student_identity_id
+           JOIN silo_routes r ON r.id = rm.route_id
+           WHERE fl.parent_user_id = $1
+             AND r.driver_id = n.sender_id
+         )
 
        UNION ALL
 

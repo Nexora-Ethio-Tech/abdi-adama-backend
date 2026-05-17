@@ -13,13 +13,15 @@ import { UserRole, STAFF_ROLES } from './types';
  */
 
 const PREFIXES: Record<UserRole, string> = {
-  Student:    'STU',
-  Parent:     'STU', // Parents share the STU prefix — same identity as Student
-  Driver:     'DRV',
-  Librarian:  'LIB',
-  ClinicAdmin: 'CLN',
-  Teacher:    'TCH',
-  Admin:      'ADM',
+  Student:      'STU',
+  Parent:       'STU', // Parents share the STU prefix — same identity as Student
+  Driver:       'DRV',
+  Librarian:    'LIB',
+  ClinicAdmin:  'CLN',
+  Teacher:      'TCH',
+  Admin:        'ADM',
+  VicePrincipal: 'VPR',
+  SchoolAdmin:  'SCH',
 };
 
 const pad = (n: number, width: number) => String(n).padStart(width, '0');

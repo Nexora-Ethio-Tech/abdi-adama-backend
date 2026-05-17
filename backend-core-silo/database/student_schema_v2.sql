@@ -126,8 +126,9 @@ CREATE TABLE IF NOT EXISTS silo_teacher_rewards (
   CONSTRAINT uq_teacher_reward UNIQUE (teacher_identity_id, reward_month, reward_year)
 );
 
--- ─── Sample seed data (idempotent) ───────────────────────────────────────────
--- Insert a default section so the schema is immediately testable
-INSERT INTO silo_sections (name, grade)
-  VALUES ('Grade 10A', '10'), ('Grade 9B', '9'), ('Grade 11C', '11')
+INSERT INTO silo_sections (id, name, grade)
+  VALUES 
+    ('d1000000-0000-0000-0000-000000000001', 'Grade 10A', '10'), 
+    ('d1000000-0000-0000-0000-000000000002', 'Grade 9B', '9'), 
+    ('d1000000-0000-0000-0000-000000000003', 'Grade 11C', '11')
   ON CONFLICT (name) DO NOTHING;
