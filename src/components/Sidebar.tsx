@@ -110,7 +110,7 @@ export const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
           { icon: BookOpen, label: t('nav.weeklyPlans'), path: '/?tab=plans' },
           { icon: CalendarCheck, label: t('nav.attendance'), path: '/attendance' },
           { icon: BookOpen, label: t('nav.mySchedule'), path: '/schedule' },
-          { icon: ShieldCheck, label: t('nav.exams'), path: '/exams' },
+          { icon: ShieldCheck, label: 'Official Exams', path: '/official-exam-management' },
         ];
       case 'student':
         return [

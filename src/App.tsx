@@ -31,7 +31,6 @@ const Attendance = lazy(() => import('./pages/Attendance').then((m) => ({ defaul
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 const ExamSession = lazy(() => import('./pages/ExamSession').then((m) => ({ default: m.ExamSession })));
 const Transcripts = lazy(() => import('./pages/Transcripts').then((m) => ({ default: m.Transcripts })));
-const Exams = lazy(() => import('./pages/Exams'));
 const Clinic = lazy(() => import('./pages/Clinic').then((m) => ({ default: m.Clinic })));
 const ParentClinicChat = lazy(() => import('./pages/ParentClinicChat').then((m) => ({ default: m.ParentClinicChat })));
 const DriverPortal = lazy(() => import('./pages/DriverPortal').then((m) => ({ default: m.DriverPortal })));
@@ -265,11 +264,6 @@ function App() {
             } />
 
             <Route path="finance" element={<Finance />} />
-            <Route path="exams" element={
-              <ProtectedRoute allowedRoles={['teacher', 'school-admin', 'vice-principal', 'student', 'parent']}>
-                <Exams />
-              </ProtectedRoute>
-            } />
             <Route path="settings" element={<Settings />} />
             <Route path="exam/:examId" element={<ExamSession />} />
 
@@ -281,7 +275,7 @@ function App() {
             } />
 
             <Route path="official-exam-management" element={
-              <ProtectedRoute allowedRoles={['vice-principal', 'school-admin']}>
+              <ProtectedRoute allowedRoles={['vice-principal', 'school-admin', 'teacher']}>
                 <OfficialExamManagement />
               </ProtectedRoute>
             } />

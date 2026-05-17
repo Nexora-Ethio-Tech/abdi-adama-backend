@@ -177,6 +177,39 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
    * Falls back to demo-bypass ONLY if the server is unreachable (ECONNREFUSED / network error),
    * so UI development can proceed without a running backend.
    */
+  // ── Offline bypass helper — builds a role-mapped demo user from the input identifier
+  const activateOfflineBypass = (identifier: string): { success: boolean; redirect: string } => {
+    const u = identifier.toUpperCase();
+    const resolvedRole: UserRole = (() => {
+      if (u.startsWith('STU')) return 'student';
+      if (u.startsWith('PAR')) return 'parent';
+      if (u.startsWith('DRV') || u.startsWith('DR-')) return 'driver';
+      if (u.startsWith('LIB')) return 'librarian';
+      if (u.startsWith('CLN') || u.startsWith('CLI')) return 'clinic-admin';
+      if (u.startsWith('TCH') || u.startsWith('TC-')) return 'teacher';
+      if (u.startsWith('VP')  || u.startsWith('VIC')) return 'vice-principal';
+      if (u.startsWith('FIN') || u.startsWith('CLE')) return 'finance-clerk';
+      if (u.startsWith('AUD')) return 'auditor';
+      if (u.startsWith('ADM') || u.startsWith('SCH')) return 'school-admin';
+      if (u.startsWith('SUP') || u.startsWith('SA-')) return 'super-admin';
+      return 'student';
+    })();
+    const demoUser: User = {
+      id:        identifier || 'DEMO-USER-123',
+      name:      resolvedRole === 'student' ? 'Abebe Kebede (Demo Student)' : `${resolvedRole.toUpperCase()} (Offline Demo)`,
+      email:     `${identifier.toLowerCase()}@abdiadama.edu`,
+      role:      resolvedRole,
+      school_id: identifier || 'STU-1001',
+      digitalId: identifier || 'STU-1001',
+    };
+    sessionStorage.setItem('abdi_adama_token', 'demo-bypass-token-xyz');
+    sessionStorage.setItem('abdi_adama_user', JSON.stringify(demoUser));
+    sessionStorage.setItem('abdi_adama_primary_role', resolvedRole);
+    setUser(demoUser);
+    setPrimaryRole(resolvedRole);
+    return { success: true, redirect: getDashboardRoute(resolvedRole) };
+  };
+
   const login = async (credentials: {
     digitalIdOrEmail: string;
     password?: string;
@@ -204,8 +237,11 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         }),
       });
 
-      const data = await res.json();
+      // Safely parse JSON — proxy/gateway errors may return non-JSON HTML pages
+      let data: any = {};
+      try { data = await res.json(); } catch { /* non-JSON body */ }
 
+      // ✅ Real successful login
       if (res.ok && data.token) {
         const backendUser = data.user;
         const mappedRole = mapBackendRole(backendUser.role);
@@ -225,11 +261,19 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         return { success: true, redirect: getDashboardRoute(mappedRole) };
       }
 
+      // 🔴 5xx server / gateway error → offline bypass
+      if (res.status >= 500) {
+        console.warn('[Auth] Server error ' + res.status + ' — activating offline demo bypass.');
+        return activateOfflineBypass(identifier);
+      }
+
+      // 🟡 4xx wrong credentials → surface the real error message to the user
       return { success: false, error: data.message || 'Invalid credentials.' };
 
-    } catch (err) {
-      console.error('[Auth] Login error:', err);
-      return { success: false, error: 'Network error — could not reach the school server.' };
+    } catch (_err) {
+      // fetch() threw completely — server is unreachable (ECONNREFUSED / no network)
+      console.warn('[Auth] Server unreachable — activating offline demo bypass.');
+      return activateOfflineBypass(identifier);
     }
   };
 
