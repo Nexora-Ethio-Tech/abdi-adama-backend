@@ -15,7 +15,36 @@ export const apiFetch = async (
   path: string,
   options: RequestInit = {}
 ): Promise<Response> => {
-  const token = sessionStorage.getItem('abdi_adama_token');
+  const token = sessionStorage.getItem('abdi_adama_token') || localStorage.getItem('abdi_adama_token');
+
+  // Intercept offline bypass requests to prevent network errors in portals
+  if (token === 'demo-bypass-token' || token === 'dev-bypass-token') {
+    console.log(`[Offline Bypass] Intercepting request to ${path}`);
+    return new Response(JSON.stringify({
+      success: true,
+      data: [],
+      items: [],
+      children: [{
+        id: 'STU-1001',
+        name: 'Demo Child',
+        grade: '10',
+        school_id: 'STU-1001',
+        attendance: '95%',
+        performance: 'Excellent',
+        course_count: 5,
+        courses: []
+      }],
+      announcements: [{ id: 1, type: 'academic', title: 'System Notice', content: 'Offline mode active.', time: new Date().toISOString() }],
+      logs: [],
+      students: [],
+      books: [],
+      routes: [],
+      events: []
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
 
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
