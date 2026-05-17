@@ -13,11 +13,15 @@ export const getStudents = async (req: Request, res: Response) => {
   try {
     const filter = search 
       ? `AND (i.full_name ILIKE $1 OR i.school_id ILIKE $1)` 
-      : '';
+      : `AND (
+           EXISTS (SELECT 1 FROM silo_clinic_visits v WHERE v.student_id = i.id)
+           OR EXISTS (SELECT 1 FROM silo_clinic_messages m WHERE m.child_id = i.id)
+         )`;
+
     const params = search ? [`%${search}%`, limit, offset] : [limit, offset];
 
     const query = `
-      SELECT DISTINCT ON (i.full_name, i.id)
+      SELECT 
         i.id, 
         i.full_name AS name, 
         i.school_id, 
@@ -25,10 +29,7 @@ export const getStudents = async (req: Request, res: Response) => {
         i.blood_group, 
         i.allergies 
       FROM silo_identities i
-      LEFT JOIN silo_clinic_visits v ON i.id = v.student_id
-      LEFT JOIN silo_clinic_messages m ON i.id = m.child_id
       WHERE i.school_id LIKE 'STU-%' 
-        ${search ? '' : 'AND (v.id IS NOT NULL OR m.id IS NOT NULL)'}
         ${filter}
       ORDER BY i.full_name ASC
       LIMIT ${search ? '$2 OFFSET $3' : '$1 OFFSET $2'}
@@ -37,12 +38,9 @@ export const getStudents = async (req: Request, res: Response) => {
     const result = await pool.query(query, params);
 
     const countQuery = `
-      SELECT COUNT(DISTINCT i.id) 
+      SELECT COUNT(i.id) 
       FROM silo_identities i
-      LEFT JOIN silo_clinic_visits v ON i.id = v.student_id
-      LEFT JOIN silo_clinic_messages m ON i.id = m.child_id
       WHERE i.school_id LIKE 'STU-%' 
-        ${search ? '' : 'AND (v.id IS NOT NULL OR m.id IS NOT NULL)'}
         ${filter}
     `;
 
@@ -55,6 +53,7 @@ export const getStudents = async (req: Request, res: Response) => {
       limit
     });
   } catch (err: any) {
+    console.error('[Clinic getStudents Error]:', err);
     return sendError(res, 'Failed to fetch students.', 500, err.message);
   }
 };
@@ -278,9 +277,18 @@ export const sendChatMessage = async (req: Request, res: Response) => {
   try {
     let finalReceiverId = receiverId;
 
-    // Only ClinicAdmins should trigger the automated parent resolution logic
-    if (senderRole === 'ClinicAdmin' && !finalReceiverId && childId) {
-      // 1. Try to find the last parent who messaged about this child
+    if (senderRole === 'Parent' && !finalReceiverId) {
+      // Parents sending a message should automatically route to the ClinicAdmin
+      const clinicAdminResult = await pool.query(
+        `SELECT id FROM silo_users WHERE role = 'ClinicAdmin' LIMIT 1`
+      );
+      if (clinicAdminResult.rows.length > 0) {
+        finalReceiverId = clinicAdminResult.rows[0].id;
+      } else {
+        return sendError(res, 'No Clinic Admin available to receive the message.', 404);
+      }
+    } else if (senderRole === 'ClinicAdmin' && !finalReceiverId && childId) {
+      // ClinicAdmins messaging a student profile should auto-resolve to the student's parent
       const lastParentMsg = await pool.query(
         `SELECT sender_id FROM silo_clinic_messages 
          WHERE child_id = $1 AND sender_id IN (SELECT id FROM silo_users WHERE role = 'Parent')
@@ -291,22 +299,28 @@ export const sendChatMessage = async (req: Request, res: Response) => {
       if (lastParentMsg.rows.length > 0) {
         finalReceiverId = lastParentMsg.rows[0].sender_id;
       } else {
-        // 2. Fallback: Find the first parent linked in silo_family_links
+        // Fallback: Find the first parent linked in silo_family_links
         const linkedParent = await pool.query(
           `SELECT parent_user_id FROM silo_family_links WHERE student_identity_id = $1 LIMIT 1`,
           [childId]
         );
         if (linkedParent.rows.length > 0) {
           finalReceiverId = linkedParent.rows[0].parent_user_id;
+        } else {
+          return sendError(res, 'No parent account found for this student.', 404);
         }
       }
+    }
+
+    if (!finalReceiverId) {
+      return sendError(res, 'Message recipient could not be determined.', 400);
     }
 
     const result = await pool.query(
       `INSERT INTO silo_clinic_messages (sender_id, receiver_id, message, child_id)
        VALUES ($1, $2, $3, $4)
        RETURNING *, to_char(created_at, 'HH:MI AM') AS timestamp`,
-      [senderId, finalReceiverId || null, message, childId || null]
+      [senderId, finalReceiverId, message, childId || null]
     );
 
     return sendSuccess(res, result.rows[0], 'Message sent.', 201);

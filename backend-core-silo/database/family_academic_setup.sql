@@ -58,3 +58,13 @@ CREATE TABLE IF NOT EXISTS silo_announcements (
 CREATE INDEX IF NOT EXISTS idx_family_links_parent ON silo_family_links(parent_user_id);
 CREATE INDEX IF NOT EXISTS idx_comm_book_id ON silo_communication_book(student_id);
 CREATE INDEX IF NOT EXISTS idx_clinic_chat_student ON silo_clinic_chat(student_id);
+
+-- Tab 5: Real Attendance Tracking
+CREATE TABLE IF NOT EXISTS silo_student_attendance (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id UUID NOT NULL REFERENCES silo_identities(id) ON DELETE CASCADE,
+  course_id UUID REFERENCES silo_courses(id) ON DELETE CASCADE,
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  status VARCHAR(20) NOT NULL CHECK (status IN ('present', 'absent', 'late')),
+  UNIQUE(student_id, course_id, date)
+);

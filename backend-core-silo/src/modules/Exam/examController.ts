@@ -132,9 +132,14 @@ export const listExams = async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    // Note: silo_enrollments does not have section_id. 
-    // For now, we set sectionId to null until the schema is updated or link found.
-    const sectionId = null;
+    let sectionId: string | null = null;
+    const enrollmentRes = await pool.query(
+      `SELECT DISTINCT section_id FROM silo_enrollments WHERE student_id = $1 AND section_id IS NOT NULL LIMIT 1`,
+      [identityId]
+    );
+    if (enrollmentRes.rows.length > 0) {
+      sectionId = enrollmentRes.rows[0].section_id;
+    }
 
     // Fetch published exams for this section (or school-wide exams where section_id IS NULL)
     const result = await pool.query(

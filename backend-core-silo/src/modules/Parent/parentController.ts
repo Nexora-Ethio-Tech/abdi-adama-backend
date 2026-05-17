@@ -11,23 +11,38 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
   const parentUserId = req.user?.user_id;
 
   try {
-    // 1. Get all children linked to this parent with real stats
+    // 1. Get all children linked to this parent with real dynamic stats
     const childrenResult = await pool.query(
       `SELECT
          i.id          AS identity_id,
          i.school_id,
          i.full_name   AS "fullName",
          i.grade,
-         COALESCE(s.attendance_percentage::text || '%', '100%') AS attendance,
-         CASE 
-           WHEN s.academic_rank IS NOT NULL THEN 'Rank: ' || s.academic_rank::text
-           ELSE 'Pending Results'
-         END AS performance,
+         -- Dynamic Attendance from silo_student_attendance
+         COALESCE(
+           (SELECT ROUND(
+             COUNT(*) FILTER (WHERE sa.status = 'present') * 100.0 / NULLIF(COUNT(*), 0)
+           )::text || '%'
+           FROM silo_student_attendance sa WHERE sa.student_id = i.id),
+           '100%'
+         ) AS attendance,
+         -- Dynamic Rank from silo_student_grades
+         COALESCE(
+           (SELECT 'Rank: ' || ranked.rnk::text
+            FROM (
+              SELECT e.student_id,
+                     RANK() OVER (ORDER BY AVG(g.total) DESC) AS rnk
+              FROM silo_student_grades g
+              JOIN silo_enrollments e ON e.id = g.enrollment_id
+              GROUP BY e.student_id
+            ) ranked
+            WHERE ranked.student_id = i.id),
+           'Pending Results'
+         ) AS performance,
          (SELECT COUNT(*) FROM silo_enrollments WHERE student_id = i.id) AS course_count,
          (SELECT json_agg(c.name) FROM silo_enrollments e JOIN silo_courses c ON e.course_id = c.id WHERE e.student_id = i.id) AS courses
        FROM silo_family_links fl
        JOIN silo_identities i ON fl.student_identity_id = i.id
-       LEFT JOIN silo_student_stats s ON i.id = s.student_id
        WHERE fl.parent_user_id = $1
        ORDER BY i.full_name ASC`,
       [parentUserId]

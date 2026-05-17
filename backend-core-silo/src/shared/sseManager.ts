@@ -31,12 +31,14 @@ export const addClient = (res: Response, user?: any): void => {
   // Send initial heartbeat so the browser knows the connection is live
   res.write(`event: connected\ndata: ${JSON.stringify({ status: 'ok' })}\n\n`);
 
-  clients.add({
+  const client: SSEClient = {
     res,
     userId: user?.user_id,
-    identityId: user?.identity_id,
     role: user?.role,
-  });
+    identityId: user?.identity_id,
+  };
+
+  clients.add(client);
 
   console.log(`[SSE] Client connected (User: ${user?.user_id || 'anonymous'}, Role: ${user?.role || 'none'}). Total: ${clients.size}`);
 };
@@ -124,6 +126,10 @@ export const broadcast = async (eventName: string, payload: object, senderId?: s
         } else if (role === 'Parent') {
           if (!client.userId || !targetParents.has(client.userId)) {
             return; // Skip parent whose children are not assigned to this driver's route
+          }
+        } else if (role === 'Driver') {
+          if (client.identityId !== senderId) {
+            return; // Skip drivers who are not the sender of this notice
           }
         }
       }

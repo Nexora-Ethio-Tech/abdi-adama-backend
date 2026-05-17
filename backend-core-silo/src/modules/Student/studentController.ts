@@ -181,14 +181,32 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
     // ── Additional Stats (Attendance, Rank, Courses) ─────────────────────────
     const statsResult = await pool.query(
       `SELECT
-         COALESCE(s.attendance_percentage::text || '%', '100%') AS attendance,
-         CASE 
-           WHEN s.academic_rank IS NOT NULL THEN '#' || s.academic_rank::text
-           ELSE 'Pending'
-         END AS rank,
+         -- Dynamic Attendance: calculate from silo_student_attendance (defaults to 100% if no records)
+         COALESCE(
+           (SELECT ROUND(
+             COUNT(*) FILTER (WHERE sa.status = 'present') * 100.0 / NULLIF(COUNT(*), 0)
+           )::text || '%'
+           FROM silo_student_attendance sa WHERE sa.student_id = $1),
+           '100%'
+         ) AS attendance,
+
+         -- Dynamic Rank: compute from average grade total across all enrolled courses
+         COALESCE(
+           (SELECT '#' || ranked.rnk::text
+            FROM (
+              SELECT e.student_id,
+                     RANK() OVER (ORDER BY AVG(g.total) DESC) AS rnk
+              FROM silo_student_grades g
+              JOIN silo_enrollments e ON e.id = g.enrollment_id
+              GROUP BY e.student_id
+            ) ranked
+            WHERE ranked.student_id = $1),
+           'Pending'
+         ) AS rank,
+
+         -- Active Courses: list of enrolled course names
          (SELECT json_agg(c.name) FROM silo_enrollments e JOIN silo_courses c ON e.course_id = c.id WHERE e.student_id = $1) AS active_courses
        FROM silo_identities i
-       LEFT JOIN silo_student_stats s ON i.id = s.student_id
        WHERE i.id = $1`,
       [studentIdentityId]
     );

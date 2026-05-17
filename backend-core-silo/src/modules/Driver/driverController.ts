@@ -117,8 +117,13 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
  * GET /api/driver/notices?page=&limit=
  * Returns logistics notices — most recent first.
  */
-export const getNotices = async (req: Request, res: Response) => {
+export const getNotices = async (req: AuthRequest, res: Response) => {
   const { limit, offset, page } = getPagination(req.query);
+  const identity_id = req.user?.identity_id;
+
+  if (!identity_id) {
+    return sendError(res, 'Authentication error: identity not found.', 401);
+  }
 
   try {
     const result = await pool.query(
@@ -137,9 +142,10 @@ export const getNotices = async (req: Request, res: Response) => {
        LEFT JOIN silo_identities i ON i.id = n.sender_id
        WHERE n.deleted_at IS NULL
          AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
+         AND n.sender_id = $3
        ORDER BY n.timestamp DESC
        LIMIT $1 OFFSET $2`,
-      [limit, offset]
+      [limit, offset, identity_id]
     );
 
     return sendSuccess(res, result.rows);
