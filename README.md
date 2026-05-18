@@ -1,581 +1,481 @@
 # Abdi Adama School Management System - Backend API
 
-**Production Ready** | **TypeScript** | **Express.js** | **PostgreSQL**
+**Production Ready** | **TypeScript** | **Express.js** | **PostgreSQL** | **Real-Time SSE**
 
-Complete backend REST API for Abdi Adama School Management System with 88 endpoints across 6 roles. Fully deployed and operational at `https://api.abdi-adama.com`
+Complete, production-grade REST API backend for the Abdi Adama School Management System. Designed with a robust multi-tenant architecture, double-tier security, real-time event broadcasting, and automatic data cleanups.
+
+---
 
 ## 🎯 System Overview
 
-### What's Built
-A complete multi-tenant school management backend serving **ONE school with 4 branches**:
-- Main Branch (MB)
-- Bole Branch (BL) 
-- Megenagna Branch (MG)
-- Adama Branch (AD)
+### The School & Branches
+The system serves **ONE School** operating across **4 physical branches** with strict data isolation. 
 
-### Implemented Roles (6 Total)
-1. **Super Admin** - System-wide control, creates admins
-2. **School Admin** - Branch-level user management
-3. **Vice Principal** - Academic oversight, attendance monitoring
-4. **Teacher** - Class management, attendance marking
-5. **Finance Clerk** - Fee management, payment tracking
-6. **Auditor** - Financial reports, fee reduction approval
+Legacy branch name references have been updated to represent their actual physical sites:
+* **Mogoro Hete Haroreti** (Legacy: *Main Branch* | Code: `MB`)
+* **180 Village** (Legacy: *Bole Branch* | Code: `BL`)
+* **Awash Melkasa** (Legacy: *Megenagna Branch* | Code: `MG`)
+* **Adama Kebele 10** (Legacy: *Adama Branch* | Code: `AD`)
 
-### Production Deployment
-- **API URL**: `https://api.abdi-adama.com/api`
-- **Frontend URL**: `https://app.abdi-adama.com`
-- **Server**: cPanel with Node.js 20.x
-- **Process Manager**: PM2
-- **Database**: PostgreSQL 14+ (localhost)
-- **SSL**: Enabled with Apache reverse proxy
+### System Roles (11 Total)
+The API implements complete workflows for **11 distinct user roles**, each mapped to specific permissions and business processes:
+
+1. **Super Admin** - Global control, system-wide configuration, branch creation, and global reporting.
+2. **School Admin** - Branch-level account creation, class schedules, and parent-student linkages.
+3. **Vice Principal** - Academic monitoring, teacher evaluations, and chronic absence alerts.
+4. **Teacher** - Class attendance marking, assignment deadline posts, and grade submissions.
+5. **Finance Clerk** - Student billing, transaction logging, and fee reduction requests.
+6. **Auditor** - Read-only financial audits, transaction logs, and fee reduction approvals.
+7. **Clinic Admin** - Student medical files, visit records, pharmacy stocks, and parent chats.
+8. **Driver** - Bus manifests, transport logistics notices, and real-time SSE broadcasts.
+9. **Librarian** - Library catalog tracking, book lending transactions, overdue tracking, and fine management.
+10. **Parent** - Multi-child dashboards, teacher communication books, and integrated school feeds.
+11. **Student** - Section-free schedules, personal grades transcripts, and upcoming assignment deadlines.
 
 ---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js 18+ LTS
-- PostgreSQL 14+
-- npm or yarn
-- TypeScript 5.x
+* **Node.js**: `18.x` or `20.x` LTS
+* **PostgreSQL**: `14.x` or higher
+* **Process Manager**: `PM2` (for production)
+* **TypeScript Compiler**: `5.x`
 
-### Installation
+### Local Installation
 
-1. **Install dependencies**
-```bash
-npm install
-```
+1. **Clone & Install Dependencies**
+   ```bash
+   git clone <repository-url>
+   cd abdi-adama-backend
+   npm install
+   ```
 
-2. **Configure environment variables**
-```bash
-cp .env.example .env
-# Edit .env with your database credentials
-```
+2. **Environment Configuration**
+   ```bash
+   cp .env.example .env
+   # Edit .env and supply your local database credentials
+   ```
 
-3. **Run database schema**
-```bash
-# Make sure your PostgreSQL database is running
-# Execute schema.sql in your database
-psql -U abdiadam_admin -d abdiadam_school_db -f schema.sql
-```
+3. **Initialize Database Schema**
+   Ensure your PostgreSQL instance is running, then execute the full database schema:
+   ```bash
+   psql -U postgres -d abdiadam_school_db -f schema.sql
+   ```
 
-4. **Seed initial admin accounts**
-```bash
-npm run seed:superadmin
-```
+4. **Seed System-Wide Admin Accounts**
+   Create initial admin accounts for testing and bootstrap operations:
+   ```bash
+   npm run seed:superadmin
+   ```
+   This seeds the following root accounts:
+   * **Super Admin**: `abdiadamaschooloffice@gmail.com`
+   * **School Admin**: `65plante@gmail.com`
+   * **Vice Principal**: `valerioero@gmail.com`
+   * **Auditor**: `hailegit35@gmail.com`
+   * *Seeded admin passwords default to: `SuperAdmin@2026`, `SchoolAdmin@2026`, `VicePrincipal@2026`, and `Auditor@2026`.*
 
-This will create 4 accounts:
-- **Super Admin**: abdiadamaschooloffice@gmail.com
-- **School Admin**: 65plante@gmail.com
-- **Vice Principal**: valerioero@gmail.com
-- **Auditor**: hailegit35@gmail.com
-
-Default password for all: Check console output after seeding
-
-5. **Start the server**
-```bash
-# Development mode (with hot reload)
-npm run dev
-
-# Build for production
-npm run build
-
-# Production mode
-npm start
-```
-
-Server will run on `http://localhost:5000`
-
-**Note:** TypeScript files are in `src/` and compiled JavaScript goes to `dist/`
-
-## 📚 Complete API Endpoints (88 Total)
-
-### Authentication (5 endpoints)
-- `POST /api/auth/login` - User login with email/password or email/PIN
-- `POST /api/auth/logout` - Logout and invalidate tokens
-- `POST /api/auth/refresh-token` - Get new access token
-- `POST /api/auth/change-password` - Change user password
-- `GET /api/auth/me` - Get current user profile
-
-### Super Admin (19 endpoints)
-- `POST /api/super-admin/create-school-admin` - Create school admin for a branch
-- `POST /api/super-admin/create-vice-principal` - Create vice principal
-- `POST /api/super-admin/create-auditor` - Create auditor
-- `GET /api/super-admin/users` - Get all users (with filters)
-- `GET /api/super-admin/users/:id` - Get user by ID
-- `PATCH /api/super-admin/users/:id/status` - Approve/revoke user
-- `DELETE /api/super-admin/users/:id` - Delete user
-- `GET /api/super-admin/branches` - Get all branches
-- `GET /api/super-admin/branches/:id` - Get branch by ID
-- `POST /api/super-admin/branches` - Create new branch
-- `PATCH /api/super-admin/branches/:id` - Update branch
-- `DELETE /api/super-admin/branches/:id` - Delete branch
-- `GET /api/super-admin/reports/system` - System-wide reports
-- `GET /api/super-admin/reports/branch/:branchId` - Branch-specific reports
-- `GET /api/super-admin/audit-logs` - View all audit logs
-- `GET /api/super-admin/classes` - Get all classes
-- `POST /api/super-admin/classes` - Create class
-- `PATCH /api/super-admin/classes/:id` - Update class
-- `DELETE /api/super-admin/classes/:id` - Delete class
-
-### School Admin (28 endpoints)
-- `POST /api/school-admin/register-user` - Register teacher/student/parent/staff
-- `GET /api/school-admin/users` - Get branch users
-- `GET /api/school-admin/users/:id` - Get user details
-- `PATCH /api/school-admin/users/:id` - Edit user details
-- `PATCH /api/school-admin/users/:id/status` - Approve/revoke user
-- `DELETE /api/school-admin/users/:id` - Delete user
-- `POST /api/school-admin/users/:id/reset-pin` - Reset 4-digit PIN
-- `GET /api/school-admin/classes` - Get branch classes
-- `GET /api/school-admin/classes/:id` - Get class details
-- `POST /api/school-admin/classes` - Create class
-- `PATCH /api/school-admin/classes/:id` - Update class
-- `DELETE /api/school-admin/classes/:id` - Delete class
-- `POST /api/school-admin/classes/:id/assign-teacher` - Assign teacher to class
-- `DELETE /api/school-admin/classes/:classId/teachers/:teacherId` - Remove teacher
-- `POST /api/school-admin/students/assign-class` - Assign student to class
-- `DELETE /api/school-admin/students/:studentId/remove-class` - Remove student from class
-- `GET /api/school-admin/teachers` - Get all teachers
-- `GET /api/school-admin/teachers/:id` - Get teacher details
-- `GET /api/school-admin/students` - Get all students
-- `GET /api/school-admin/students/:id` - Get student details
-- `GET /api/school-admin/parents` - Get all parents
-- `GET /api/school-admin/parents/:id` - Get parent details
-- `POST /api/school-admin/parents/:parentId/link-student/:studentId` - Link parent to student
-- `DELETE /api/school-admin/parents/:parentId/unlink-student/:studentId` - Unlink parent
-- `GET /api/school-admin/reports/branch` - Branch reports
-- `GET /api/school-admin/reports/class/:classId` - Class reports
-- `GET /api/school-admin/reports/teacher/:teacherId` - Teacher reports
-- `GET /api/school-admin/audit-logs` - Branch audit logs
-
-### Vice Principal (10 endpoints)
-- `GET /api/vice-principal/classes` - Get all classes
-- `GET /api/vice-principal/classes/:id` - Get class details
-- `GET /api/vice-principal/teachers` - Get all teachers
-- `GET /api/vice-principal/teachers/:id/performance` - Teacher performance
-- `GET /api/vice-principal/attendance/absence-queue` - Students with 3+ absences
-- `POST /api/vice-principal/attendance/absence-queue/:studentId/notify` - Notify parent
-- `GET /api/vice-principal/attendance/summary` - Attendance summary
-- `GET /api/vice-principal/reports/academic` - Academic reports
-- `GET /api/vice-principal/reports/attendance` - Attendance reports
-- `GET /api/vice-principal/reports/teacher-performance` - Teacher performance reports
-
-### Teacher (13 endpoints)
-- `GET /api/teacher/my-classes` - Get assigned classes
-- `GET /api/teacher/classes/:id/students` - Get class students
-- `POST /api/teacher/attendance/mark` - Mark attendance
-- `GET /api/teacher/attendance/history` - Attendance history
-- `PATCH /api/teacher/attendance/:id` - Update attendance record
-- `GET /api/teacher/students/:id` - Get student details
-- `GET /api/teacher/students/:id/attendance` - Student attendance history
-- `POST /api/teacher/grades/submit` - Submit grades
-- `GET /api/teacher/grades/class/:classId` - Get class grades
-- `PATCH /api/teacher/grades/:id` - Update grade
-- `GET /api/teacher/reports/my-classes` - My classes report
-- `GET /api/teacher/reports/student/:studentId` - Student report
-- `GET /api/teacher/profile` - Get my profile
-
-### Finance Clerk (7 endpoints)
-- `GET /api/finance/students` - Get all students with fees
-- `GET /api/finance/students/:id` - Get student fee details
-- `PATCH /api/finance/students/:id/fees` - Update student fees
-- `POST /api/finance/transactions` - Record payment
-- `GET /api/finance/transactions` - Get all transactions
-- `GET /api/finance/reports/summary` - Financial summary
-- `GET /api/finance/reports/outstanding` - Outstanding fees report
-
-### Auditor (6 endpoints)
-- `GET /api/auditor/transactions` - View all transactions
-- `GET /api/auditor/reports/financial` - Financial reports
-- `GET /api/auditor/reports/branch/:branchId` - Branch financial report
-- `GET /api/auditor/fee-reductions/pending` - Pending fee reduction requests
-- `POST /api/auditor/fee-reductions/:studentId/approve` - Approve fee reduction
-- `POST /api/auditor/fee-reductions/:studentId/reject` - Reject fee reduction
+5. **Start Development Environment**
+   ```bash
+   npm run dev
+   ```
+   The backend API will boot and listen at `http://localhost:5000`.
 
 ---
 
-## 🔑 Authentication & Password System
+## 🔑 Authentication & Password Policy
 
-## 🔑 Authentication & Password System
+The backend implements a secure, **two-tier authentication strategy** to match the varying needs of administrative and operational users.
 
-### Two-Tier Password System
+### 1. Two-Tier Password System
+* **Admin Roles** (*Super Admin, School Admin, Vice Principal, Auditor*):
+  * **Policy**: Complex Passwords enforced via strict Joi validations.
+  * **Rules**: Minimum 8 characters, at least 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special symbol.
+  * **Example**: `AbdiAdama@Server@`
+* **Operational Roles** (*Teacher, Student, Parent, Finance Clerk, Librarian, Clinic Admin, Driver*):
+  * **Policy**: Lightweight, high-accessibility 4-Digit Numeric PINs.
+  * **Rules**: Standard PIN code between `1000` and `9999`.
+  * **Example**: `4859`
 
-**Admin Roles** (Complex Passwords):
-- Super Admin, School Admin, Vice Principal, Auditor
-- Format: 8+ characters, uppercase, lowercase, number, special character
-- Example: `SuperAdmin@2026`
+### 2. Payload Formats
+The `/api/auth/login` endpoint handles both credentials transparently:
 
-**Operational Roles** (4-Digit PIN):
-- Teacher, Student, Parent, Finance Clerk, Staff
-- Format: 4-digit PIN (1000-9999)
-- Example: `5847`
-
-### Login Credentials
-
-**Admin roles login with:**
 ```json
+/* Admin Login */
 {
-  "email": "admin@example.com",
-  "password": "ComplexPass@123"
+  "email": "admin@abdi-adama.com",
+  "password": "ComplexAdminPassword!2026"
+}
+
+/* Operational Login */
+{
+  "email": "student@abdi-adama.com",
+  "password": "5839"
 }
 ```
 
-**Operational roles login with:**
-```json
-{
-  "email": "teacher@example.com",
-  "password": "5847"
-}
-```
-
-### PIN Management
-- PINs are auto-generated when School Admin creates users
-- Returned once in `temporaryPassword` field in response
-- If lost, School Admin can reset: `POST /api/school-admin/users/:id/reset-pin`
-- New PIN generated and returned in response
-
-### Seeded Admin Accounts
-
-Run `npm run seed:superadmin` to create:
-
-| Role | Email | Password |
-|------|-------|----------|
-| Super Admin | abdiadamaschooloffice@gmail.com | SuperAdmin@2026 |
-| School Admin | 65plante@gmail.com | SchoolAdmin@2026 |
-| Vice Principal | valerioero@gmail.com | VicePrincipal@2026 |
-| Auditor | hailegit35@gmail.com | Auditor@2026 |
-
----
-
-## 🏛️ Database Schema
-
-### Core Tables
-- `users` - All system users (15 columns)
-- `branches` - School branches (6 columns)
-- `classes` - Class definitions (8 columns)
-- `teachers` - Teacher-specific data (5 columns)
-- `students` - Student-specific data (11 columns including fees)
-- `parents` - Parent-specific data (4 columns)
-- `parent_student_links` - Parent-student relationships
-- `teacher_classes` - Teacher-class assignments with subjects
-- `attendance` - Daily attendance records (7 columns)
-- `grades` - Student grades (8 columns)
-- `finance_transactions` - All financial transactions (9 columns)
-- `audit_log` - System audit trail (7 columns)
-
-### Key Features
-- **Branch Isolation**: All queries filtered by `branch_id`
-- **Cascade Deletes**: Removing user cascades to related tables
-- **Fee Management**: Students have `fee_status` (standard/reduced) and `fee_approval_status`
-- **Audit Trail**: All critical operations logged to `audit_log`
+### 3. PIN Lifecycle Management
+* PINs are randomly generated automatically when the School Admin registers operational users.
+* The newly generated PIN is returned **once** in the creation response under the `temporaryPassword` key.
+* If a PIN is forgotten, a School Admin must trigger the reset endpoint (`POST /api/school-admin/users/:id/reset-pin`) to generate and return a new random 4-digit PIN.
+* Users can change their own PINs or passwords at any time via `POST /api/auth/change-password`.
 
 ---
 
 ## 🆔 Digital ID System
 
-Every user gets a unique Digital ID based on role and branch:
+To enforce consistency across branches, every registered identity receives a formatted Digital ID on creation.
 
 ### Format: `{ROLE_PREFIX}-{BRANCH_CODE}-{SEQUENCE}`
 
-**Examples:**
-- Super Admin: `SA-001`, `SA-002`
-- School Admin: `ADM-MB-0001`, `ADM-BL-0002`
-- Teacher: `TCH-MB-0001`, `TCH-BL-0001`
-- Student: `STD-MB-0001`, `STD-MG-0015`
-- Vice Principal: `VP-AD-0001`
-- Auditor: `AUD-MB-0001`
+#### Branch Codes
+* `MB` = Mogoro Hete Haroreti
+* `BL` = 180 Village
+* `MG` = Awash Melkasa
+* `AD` = Adama Kebele 10
 
-**Branch Codes:**
-- `MB` = Main Branch
-- `BL` = Bole Branch
-- `MG` = Megenagna Branch
-- `AD` = Adama Branch
+#### Role Prefixes
+| Role | Prefix | Example ID |
+|---|---|---|
+| Super Admin | `SA` | `SA-0001` (Global, no branch code) |
+| School Admin | `ADM` | `ADM-MB-0001` |
+| Vice Principal | `VP` | `VP-AD-0001` |
+| Teacher | `TCH` | `TCH-BL-0002` |
+| Student | `STD` | `STD-MG-0012` |
+| Parent | `PRT` | `PRT-MB-0043` |
+| Finance Clerk | `FIN` | `FIN-AD-0005` |
+| Auditor | `AUD` | `AUD-MB-0001` |
+| Librarian | `LIB` | `LIB-BL-0001` |
+| Clinic Admin | `CLN` | `CLN-AD-0002` |
+| Driver | `DRV` | `DRV-MG-0003` |
 
-**Sequence Logic:**
-- Increments per role per branch independently
-- Example: `TCH-MB-0001`, `TCH-MB-0002` (Main Branch teachers)
-- Example: `TCH-BL-0001`, `TCH-BL-0002` (Bole Branch teachers)
+*Sequence counts increment independently per role per branch, preventing cross-branch ID collisions.*
 
 ---
 
-## 🔒 Security & Access Control
+## 🔒 Security & Branch Isolation
 
-### Role-Based Access Control (RBAC)
+Data isolation is built directly into the database queries rather than relying solely on the application layer.
 
-**Permission Hierarchy:**
 ```
-Super Admin (Full System Access)
-  └─ Can create: School Admin, Vice Principal, Auditor
-  └─ Can manage: All users, all branches
-  └─ Can delete: Any user except other Super Admins
-
-School Admin (Branch-Level Access)
-  └─ Can create: Teacher, Student, Parent, Finance Clerk, Staff
-  └─ Can manage: Only users in their branch
-  └─ Can approve/revoke: Teachers, Students, Parents, Staff
-  └─ Cannot manage: Other admins, vice principals, auditors
-
-Vice Principal (Read + Academic Actions)
-  └─ View: Classes, teachers, students, attendance
-  └─ Action: Notify parents of absent students
-  └─ Cannot: Create, edit, or delete users
-
-Teacher (Class-Level Access)
-  └─ View: Only assigned classes and students
-  └─ Action: Mark attendance, submit grades
-  └─ Cannot: Access other teachers' classes
-
-Finance Clerk (Financial Access)
-  └─ View: All students with fee information
-  └─ Action: Record payments, update fees, request fee reductions
-  └─ Cannot: Approve fee reductions (Auditor only)
-
-Auditor (Read-Only + Fee Approval)
-  └─ View: All financial data, transactions, reports
-  └─ Action: Approve/reject fee reduction requests
-  └  Cannot: Create, edit, or delete any data
+                  ┌──────────────────────────────┐
+                  │   Super Admin (Global R/W)   │
+                  └──────────────┬───────────────┘
+                                 │
+         ┌───────────────────────┼───────────────────────┐
+         ▼                       ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│ Mogoro Hete (MB)│     │ 180 Village (BL)│     │Awash Melk. (MG) │ ...
+└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+         │                       │                       │
+         ├─ School Admin (R/W)   ├─ School Admin (R/W)   ├─ School Admin (R/W)
+         ├─ Teachers (R/W)       ├─ Teachers (R/W)       ├─ Teachers (R/W)
+         ├─ Students/Parents(R)  ├─ Students/Parents(R)  ├─ Students/Parents(R)
+         │                       │                       │
+         ▼                       ▼                       ▼
+   [DB Isolated]           [DB Isolated]           [DB Isolated]
 ```
 
-### Security Features
-
-✅ **JWT Authentication**
-- Access Token: 15 minutes expiry
-- Refresh Token: 7 days expiry
-- Tokens stored securely, invalidated on logout
-
-✅ **Password Security**
-- Bcrypt hashing with 12 salt rounds
-- Complex password requirements for admin roles
-- 4-digit PIN for operational roles
-
-✅ **Rate Limiting**
-- General API: 100 requests per 15 minutes
-- Login endpoint: 5 attempts per 15 minutes
-- Prevents brute force attacks
-
-✅ **Input Validation**
-- Joi schema validation on all endpoints
-- SQL injection protection (parameterized queries)
-- XSS protection with sanitization
-
-✅ **Security Headers**
-- Helmet.js for HTTP security headers
-- CORS configured for frontend domain only
-- Content Security Policy enabled
-
-✅ **Audit Logging**
-- All critical operations logged to `audit_log` table
-- Tracks: user_id, action, resource, timestamp, IP address
+### Multi-Tenant Isolation Rules
+1. **Branch Scoping**: All branches are identified by a unique UUID. Every user (except Super Admins) is linked to a specific `branch_id` in `silo_users` / `silo_identities`.
+2. **Database Queries**: Query builders systematically filter by the user's `branch_id`:
+   ```sql
+   SELECT * FROM silo_identities 
+   WHERE branch_id = $1 AND role = 'Student';
+   ```
+3. **Cascade Deletes**: Removing a user triggers a safe cascading cleanup that purges records in dependency tables (e.g., student grades, class enrollments, and attendance histories).
 
 ---
 
-## 🏛️ Multi-Tenancy & Branch Isolation
+## 📚 Complete API Endpoints Map
 
-## 🏛️ Multi-Tenancy & Branch Isolation
+### 🔒 Authentication & Account (5 Endpoints)
+* `POST /api/auth/login` - Authenticate using email + password/PIN.
+* `POST /api/auth/logout` - Invalidate active session and JWT tokens.
+* `POST /api/auth/refresh-token` - Retrieve new access JWT using refresh token.
+* `POST /api/auth/change-password` - User self-service change password or 4-digit PIN.
+* `GET /api/auth/me` - Resolve active JWT to return logged-in profile.
 
-### How It Works
+### 👑 Super Admin (19 Endpoints)
+* `POST /api/super-admin/create-school-admin` - Deploy School Admin to a branch.
+* `POST /api/super-admin/create-vice-principal` - Register a Vice Principal.
+* `POST /api/super-admin/create-auditor` - Register a financial Auditor.
+* `GET /api/super-admin/users` - Paginated global user list (with branch filters).
+* `GET /api/super-admin/users/:id` - Detailed user metadata.
+* `PATCH /api/super-admin/users/:id/status` - Modify state (`Approved`, `Revoked`, `Pending`).
+* `DELETE /api/super-admin/users/:id` - Complete user deletion with cascade cleaning.
+* `GET /api/super-admin/branches` - List all physical branch configurations.
+* `POST /api/super-admin/branches` - Register a new physical school branch.
+* `PATCH /api/super-admin/branches/:id` - Update branch metadata.
+* `DELETE /api/super-admin/branches/:id` - Remove a branch.
+* `GET /api/super-admin/reports/system` - Global system audit counts.
+* `GET /api/super-admin/reports/branch/:branchId` - Isolated branch-level performance.
+* `GET /api/super-admin/audit-logs` - System-wide immutable audit trail.
+* `GET /api/super-admin/classes` - View all classes across branches.
+* `POST /api/super-admin/classes` - Create a new course section globally.
+* `PATCH /api/super-admin/classes/:id` - Edit class name/level.
+* `DELETE /api/super-admin/classes/:id` - Purge class configuration.
 
-**Single School, Multiple Branches:**
-- System serves ONE school: Abdi Adama School
-- 4 physical branches: Main, Bole, Megenagna, Adama
-- Each branch operates independently with complete data isolation
+### 🏫 School Admin (28 Endpoints)
+* `POST /api/school-admin/register-user` - Register Teacher, Student, Parent, Clerk, Librarian, Clinic Admin, or Driver.
+* `GET /api/school-admin/users` - View users within the admin's isolated branch.
+* `GET /api/school-admin/users/:id` - Access specific branch user details.
+* `PATCH /api/school-admin/users/:id` - Edit user names, emails, and attributes.
+* `PATCH /api/school-admin/users/:id/status` - Grant/revoke branch user access.
+* `DELETE /api/school-admin/users/:id` - Remove branch user.
+* `POST /api/school-admin/users/:id/reset-pin` - Reset operational user to a new 4-digit PIN.
+* `GET /api/school-admin/classes` - List classes assigned to this branch.
+* `POST /api/school-admin/classes` - Configure new class inside the branch.
+* `PATCH /api/school-admin/classes/:id` - Modify branch class details.
+* `DELETE /api/school-admin/classes/:id` - Delete class (updates capacities).
+* `POST /api/school-admin/classes/:id/assign-teacher` - Assign teacher to a class with a specific subject.
+* `DELETE /api/school-admin/classes/:classId/teachers/:teacherId` - Unassign teacher.
+* `POST /api/school-admin/students/assign-class` - Enroll student in a class.
+* `DELETE /api/school-admin/students/:studentId/remove-class` - Unenroll student from class.
+* `GET /api/school-admin/teachers` - Directory of branch teachers.
+* `GET /api/school-admin/students` - Directory of branch students.
+* `GET /api/school-admin/parents` - Directory of branch parents.
+* `POST /api/school-admin/parents/:parentId/link-student/:studentId` - Create parent-child link.
+* `DELETE /api/school-admin/parents/:parentId/unlink-student/:studentId` - Remove parent-child link.
+* `GET /api/school-admin/reports/branch` - Academic and registration summaries for branch.
+* `GET /api/school-admin/reports/class/:classId` - Class grading and enrollment reports.
+* `GET /api/school-admin/reports/teacher/:teacherId` - Teacher feedback and attendance performance.
+* `GET /api/school-admin/audit-logs` - View branch-only audit trails.
 
-**Branch Isolation Enforcement:**
+### 🎓 Vice Principal (10 Endpoints)
+* `GET /api/vice-principal/classes` - List all branch classes and statistics.
+* `GET /api/vice-principal/classes/:id` - Detailed class enrollment roster.
+* `GET /api/vice-principal/teachers` - Branch-wide teacher performance logs.
+* `GET /api/vice-principal/teachers/:id/performance` - Specific teacher mark submissions and timetables.
+* `GET /api/vice-principal/attendance/absence-queue` - List of students with 3+ consecutive absences.
+* `POST /api/vice-principal/attendance/absence-queue/:studentId/notify` - Dispatch absence notice.
+* `GET /api/vice-principal/attendance/summary` - Branch-wide daily attendance ratios.
+* `GET /api/vice-principal/reports/academic` - Core grade averages and fail logs.
+* `GET /api/vice-principal/reports/attendance` - Monthly attendance charts.
+* `GET /api/vice-principal/reports/teacher-performance` - Compiled teacher audit grades.
 
-1. **School Admin Level:**
-   - Each School Admin assigned to ONE branch
-   - Can only create/view/manage users in their branch
-   - All queries automatically filtered: `WHERE branch_id = :adminBranchId`
+### 🍎 Teacher (13 Endpoints)
+* `GET /api/teacher/my-classes` - List courses assigned to the logged-in teacher.
+* `GET /api/teacher/classes/:id/students` - Roster of students in an assigned course.
+* `POST /api/teacher/attendance/mark` - Submit daily attendance codes.
+* `GET /api/teacher/attendance/history` - Historical class logs.
+* `PATCH /api/teacher/attendance/:id` - Modify attendance (locked to same-day edits).
+* `GET /api/teacher/students/:id` - Detailed view of student academic stats.
+* `GET /api/teacher/students/:id/attendance` - Single student's attendance ratios.
+* `POST /api/teacher/grades/submit` - Record student assessment marks.
+* `GET /api/teacher/grades/class/:classId` - View grades assigned to a specific course.
+* `PATCH /api/teacher/grades/:id` - Modify student marks (locked to current term).
+* `GET /api/teacher/reports/my-classes` - Aggregated averages for teacher's courses.
+* `GET /api/teacher/reports/student/:studentId` - Progress scorecard for a student.
+* `GET /api/teacher/profile` - View teacher's academic assignment stats.
 
-2. **Teacher Level:**
-   - Teachers belong to ONE branch
-   - Can only see classes and students in their branch
-   - Cannot access data from other branches
+### 💰 Finance Clerk (7 Endpoints)
+* `GET /api/finance/students` - Directory of students showing outstanding balances and statuses.
+* `GET /api/finance/students/:id` - Invoice breakdown (tuition, bus fees, registrations).
+* `PATCH /api/finance/students/:id/fees` - Adjust base student tuition fees.
+* `POST /api/finance/transactions` - Log tuition/bus fee payments.
+* `GET /api/finance/transactions` - List recent branch transactions.
+* `GET /api/finance/reports/summary` - Income summaries, categorized by payment methods.
+* `GET /api/finance/reports/outstanding` - Roster of delinquent students.
 
-3. **Student/Parent Level:**
-   - Students enrolled in ONE branch
-   - Parents linked to students in same branch
-   - Cross-branch enrollment not supported
+### 🔍 Auditor (6 Endpoints)
+* `GET /api/auditor/transactions` - Immutable ledger of all transactions in the branch.
+* `GET /api/auditor/reports/financial` - Multi-level audit logs showing income vs offsets.
+* `GET /api/auditor/reports/branch/:branchId` - Cross-branch audit balance comparison.
+* `GET /api/auditor/fee-reductions/pending` - Review fee-reduction requests filed by clerks.
+* `POST /api/auditor/fee-reductions/:studentId/approve` - Authorize discount request.
+* `POST /api/auditor/fee-reductions/:studentId/reject` - Deny discount request.
 
-4. **Super Admin Exception:**
-   - Only role with cross-branch access
-   - Can view/manage all branches
-   - Creates branch-specific admins
+### 🏥 Clinic Admin (8 Endpoints) - *New Role*
+* `GET /api/clinic/students` - Browse students showing blood groups and medical notes.
+* `POST /api/clinic/visits` - Register a new clinic visit.
+* `GET /api/clinic/visits/history` - Searchable logs of student clinic histories.
+* `GET /api/clinic/medicine` - Read current clinic pharmacy inventory.
+* `POST /api/clinic/medicine/deduct` - Deduct pharmacy items (e.g., when administering medicine).
+* `GET /api/clinic/chat` - Retrieve WhatsApp-style inbox or active conversation messages.
+* `POST /api/clinic/chat` - Direct chat message to a parent.
+* `PATCH /api/clinic/chat/read` - Mark parent conversation as read (clears unread badge count).
 
-**Database Implementation:**
-```sql
--- All user-related tables have branch_id foreign key
-users.branch_id -> branches.id
-classes.branch_id -> branches.id
-attendance.branch_id -> branches.id
-finance_transactions.branch_id -> branches.id
+### 🚌 Driver (4 Endpoints) - *New Role*
+* `GET /api/driver/manifest` - Fetch bus manifest showing students, grades, and locations.
+* `POST /api/driver/notice` - Post logistics updates with targeted stations.
+* `GET /api/driver/notices` - View logistics notices (Drivers see theirs; Admins see all).
+* `DELETE /api/driver/notice/:id` - Soft-delete an active logistics announcement.
 
--- Queries automatically filtered
-SELECT * FROM users WHERE branch_id = :userBranchId
+### 📚 Librarian (6 Endpoints) - *New Role*
+* `GET /api/library/stats` - Total books, active loans, and available shelf items.
+* `GET /api/library/books` - Browse book catalog showing availability and barcodes.
+* `POST /api/library/add-book` - Register a new book (auto-generates BK-XXXX codes).
+* `GET /api/library/loans` - View outstanding/returned loans showing overdue days and fines.
+* `POST /api/library/issue` - Log a new book loan (resolves UUID or physical Student School ID).
+* `POST /api/library/return/:loanId` - Log book return (restores stock level and records fines).
+
+### 👨‍👩‍👧 Parent (2 Endpoints) - *New Role*
+* `GET /api/parent/dashboard` - Single-pane dashboard showing kids, grades, attendance, and unified feed.
+* `GET /api/parent/child/:studentId/communication` - Access the current week's Academic Communication Book.
+
+### 🎓 Student (6 Endpoints) - *New Role*
+* `GET /api/student/profile` - Welcome profile payload.
+* `GET /api/student/dashboard` - Display today's schedule, deadlines, rewarded teachers, and notifications.
+* `GET /api/student/grades` - View marks breakdown (quizzes, assignments, exams, totals).
+* `GET /api/student/history` - Grouped academic transcript showing term GPAs.
+* `GET /api/student/current-courses` - Backward-compatible current semester course list.
+* `GET /api/student/academic-history` - Legacy semester-average logs.
+
+---
+
+## 🛠️ Deep-Dive Specialized Business Logic
+
+The backend executes several complex workflows that automate operational logic across these roles:
+
+### 1. WhatsApp-Style Clinic Communication & Badges
+* **Global Sorting**: `GET /api/clinic/chat` queries active parent threads and sorts them globally by **most recent message first** (`last_message_at DESC`).
+* **Unread Counter**: The inbox computes an dynamic `unread_count` for each thread by summing unread parent messages:
+  ```sql
+  COUNT(*) FILTER (WHERE is_read = FALSE)
+  ```
+* **Auto-Recipient Resolution**: When a Clinic Admin sends a message with only a `child_id`, the system automatically resolves the parent:
+  1. Searches for the last parent who messaged the clinic about that child.
+  2. Falls back to the first parent linked in `silo_family_links`.
+* **Badge Clearing**: Opening a conversation calls `PATCH /api/clinic/chat/read`, immediately setting `is_read = TRUE` for all messages from that sender.
+
+### 2. Transport Logistics notices & SSE Live Broadcasts
+* **Instant Pushes**: When a Driver publishes an update (`POST /api/driver/notice`), the system broadcasts the message in real-time via Server-Sent Events (SSE).
+* **Assigned Scoping**: Announcements are only sent to clients who are:
+  * Logged-in Students/Parents assigned to that driver's manifest.
+  * Branch Admins, Vice Principals, or Super Admins in the same branch.
+* **Auto-Expiry**: Notices automatically expire on the next Saturday:
+  ```ts
+  const expiresAt = getNextSaturday(new Date());
+  expiresAt.setHours(23, 59, 59, 999);
+  ```
+* **Background Housekeeping**: Old logistics notices are cleaned up automatically. When APIs are hit, a database routine hard-deletes notices older than 3 days, and hard-deletes soft-deleted records older than 24 hours.
+
+### 3. Library Barcodes & Real-Time Overdue Fines
+* **Automatic Book Codes**: Registering a book generates an permanent short Book ID (`BK-XXXX`) using cryptographically safe random patterns.
+* **Resilient Lookups**: Issuing books accepts either the student's internal UUID or their physical School ID (`STD-XX-XXXX`).
+* **Dynamic Fine Calculations**: Rather than storing static overdue balances, the API computes active fines on the fly during loan checks and book returns:
+  ```sql
+  CASE 
+    WHEN returned_at IS NOT NULL THEN 0
+    WHEN due_date < CURRENT_DATE THEN (CURRENT_DATE - due_date) * 5 -- 5 ETB per day
+    ELSE 0
+  END AS fine_amount
+  ```
+
+### 4. Consolidated Parent Dashboard Feeds & Thursday Cleanup
+* **Unified Notification Board**: The Parent Dashboard returns a single, chronological feed that merges:
+  1. General school-wide announcements.
+  2. Transport updates published by their child's specific bus driver.
+  3. High-priority medical messages from the school clinic (limited to the last 5 days).
+* **Weekly Academic Communication Book**: Parents access direct feedback from their children's teachers via a Weekly Communication Book log.
+* **Thursday Cleanups**: Weekly logs are managed on a cyclical timeline. Older logs are automatically archived, and the API restricts queries to the active week ending date, keeping information fresh.
+
+### 5. Section-Free Student timetables & Academic Transcripts
+* **Schedule Resolution**: To ensure schedules function without a `section_id` database column, `getDashboard()` dynamically resolves the student's class assignments by joining active course rosters directly to schedules:
+  ```sql
+  SELECT c.name, sc.start_time, sc.end_time, sc.room
+  FROM silo_schedule sc
+  JOIN silo_courses c ON c.id = sc.course_id
+  WHERE c.id IN (
+    SELECT course_id FROM silo_enrollments 
+    WHERE student_id = $1 AND academic_year = '2025/2026'
+  ) AND sc.day_of_week = EXTRACT(DOW FROM CURRENT_DATE);
+  ```
+* **Transcript Calculations**: Student transcript history groups all completed courses by academic year and semester, computing the overall semester average on the fly on the backend.
+
+---
+
+## 🏛️ Database Schema
+
+Here is a view of the database tables mapping the new modules:
+
+```mermaid
+erDiagram
+    silo_identities ||--o{ silo_enrollments : has
+    silo_identities ||--o{ silo_family_links : links
+    silo_identities ||--o{ silo_clinic_visits : visits
+    silo_identities ||--o{ silo_loans : borrows
+    silo_identities ||--o{ silo_routes : drives
+    
+    silo_users ||--o{ silo_clinic_messages : sends
+    silo_users ||--o{ silo_logistics_notices : posts
+    
+    silo_books ||--o{ silo_loans : recorded
+    silo_courses ||--o{ silo_schedule : scheduled
+    silo_courses ||--o{ silo_deadlines : has
+    
+    silo_identities {
+        uuid id PK
+        string school_id
+        string full_name
+        string role
+        string branch_id
+        string grade
+        string blood_group
+        string allergies
+    }
+    
+    silo_books {
+        uuid id PK
+        string book_code
+        string title
+        string author
+        string isbn
+        string shelf_location
+        int stock
+        int total_copies
+        string status
+    }
+    
+    silo_loans {
+        uuid id PK
+        uuid book_id FK
+        uuid student_id FK
+        date loan_date
+        date due_date
+        timestamp returned_at
+    }
+    
+    silo_clinic_messages {
+        uuid id PK
+        uuid sender_id FK
+        uuid receiver_id FK
+        uuid child_id FK
+        string message
+        boolean is_read
+        timestamp created_at
+    }
 ```
 
 ---
 
-## 📦 Key Features Implemented
-
-### 1. User Management
-- ✅ Create users with auto-generated Digital IDs
-- ✅ Two-tier password system (complex passwords + 4-digit PINs)
-- ✅ Approve/revoke user access
-- ✅ Reset PINs for operational roles
-- ✅ Delete users with cascade cleanup
-- ✅ Branch-isolated user queries
-
-### 2. Class Management
-- ✅ Create/update/delete classes
-- ✅ Assign teachers to classes with subjects
-- ✅ Assign students to classes (auto-updates student_count)
-- ✅ Remove teachers/students from classes
-- ✅ Track class capacity and current enrollment
-
-### 3. Attendance System
-- ✅ Teachers mark daily attendance (Present/Absent/Late/Excused)
-- ✅ Update attendance records (same day only)
-- ✅ Absence queue for Vice Principal (3+ absences)
-- ✅ Parent notification system
-- ✅ Attendance history and reports
-
-### 4. Fee Management
-- ✅ Student fee tracking (monthly, bus, penalty)
-- ✅ Fee status: standard or reduced
-- ✅ Fee reduction workflow: Finance Clerk requests → Auditor approves
-- ✅ Payment recording with transaction history
-- ✅ Outstanding fees reports
-- ✅ Financial summaries by branch
-
-### 5. Grade Management
-- ✅ Teachers submit grades for their classes
-- ✅ Update grades within same term
-- ✅ Grade history tracking
-- ✅ Student performance reports
-
-### 6. Parent-Student Linking
-- ✅ Link parents to multiple students
-- ✅ Unlink parent-student relationships
-- ✅ Parent portal access to linked students only
-
-### 7. Reporting System
-- ✅ System-wide reports (Super Admin)
-- ✅ Branch-specific reports (School Admin, Auditor)
-- ✅ Class reports (Vice Principal, Teacher)
-- ✅ Financial reports (Finance Clerk, Auditor)
-- ✅ Teacher performance reports (Vice Principal)
-- ✅ Attendance summaries (Vice Principal, Teacher)
-
-### 8. Audit Trail
-- ✅ All critical operations logged
-- ✅ Track user actions with timestamps
-- ✅ IP address logging
-- ✅ Audit log viewing (Super Admin, School Admin)
-
----
-
-## 📡 API Response Format
-
-### Success Response
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "id": "uuid",
-      "digitalId": "TCH-MB-0001",
-      "name": "John Doe",
-      "email": "john@example.com",
-      "role": "teacher",
-      "branchId": "branch-uuid",
-      "status": "Approved"
-    },
-    "temporaryPassword": "5847"
-  },
-  "message": "User created successfully"
-}
-```
-
-### Error Response
-```json
-{
-  "success": false,
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Invalid input data",
-    "details": [
-      "Email is required",
-      "Name must be at least 2 characters"
-    ]
-  }
-}
-```
-
-### Common Error Codes
-- `VALIDATION_ERROR` - Invalid input data
-- `UNAUTHORIZED` - Missing or invalid token
-- `FORBIDDEN` - Insufficient permissions
-- `NOT_FOUND` - Resource not found
-- `CONFLICT` - Duplicate resource (e.g., email exists)
-- `INTERNAL_ERROR` - Server error
-
----
-
-## 📦 Technology Stack
-
-### Backend
-- **Runtime**: Node.js 20.x LTS
-- **Language**: TypeScript 5.x
-- **Framework**: Express.js 4.x
-- **Database**: PostgreSQL 14+
-- **ORM**: Raw SQL with parameterized queries (pg library)
-
-### Security
-- **Authentication**: JWT (jsonwebtoken)
-- **Password Hashing**: bcrypt (12 rounds)
-- **Security Headers**: Helmet.js
-- **Rate Limiting**: express-rate-limit
-- **Validation**: Joi
-- **CORS**: cors middleware
-
-### Development
-- **Hot Reload**: ts-node-dev
-- **Testing**: Jest + Supertest
-- **Linting**: ESLint + Prettier
-- **Process Manager**: PM2
-
-### Deployment
-- **Server**: cPanel with Node.js Selector
-- **Web Server**: Apache with reverse proxy
-- **SSL**: Let's Encrypt (auto-renewed)
-- **Domain**: api.abdi-adama.com
-
----
-
-## 📁 Project Structure
-
-## 📁 Project Structure
+## 📁 Project Directory Structure
 
 ```
 abdi-adama-backend/
 ├── src/
 │   ├── config/
-│   │   ├── database.ts          # PostgreSQL connection pool
-│   │   └── constants.ts         # Role definitions, status enums
+│   │   ├── database.ts          # PostgreSQL pool connection configurations
+│   │   ├── db.ts                # PostgreSQL pool alias for legacy controllers
+│   │   └── constants.ts         # Digital ID Prefixes and Role Enums
 │   ├── middleware/
-│   │   ├── auth.ts              # JWT verification
-│   │   ├── roleGuard.ts         # Role-based access control
-│   │   ├── errorHandler.ts      # Global error handler
-│   │   └── validator.ts         # Joi validation schemas
+│   │   ├── authMiddleware.ts    # JWT token validation
+│   │   ├── roleGuard.ts         # Role permission validation
+│   │   └── errorHandler.ts      # Global middleware catches and logs errors
 │   ├── controllers/
-│   │   ├── auth.controller.ts
-│   │   ├── superAdmin.controller.ts
-│   │   ├── schoolAdmin.controller.ts
-│   │   ├── vicePrincipal.controller.ts
-│   │   ├── teacher.controller.ts
-│   │   ├── financeClerk.controller.ts
-│   │   └── auditor.controller.ts
+│   │   ├── auth.controller.ts            # Admin and Operational logins
+│   │   ├── superAdmin.controller.ts      # Global configuration management
+│   │   ├── schoolAdmin.controller.ts     # User generation, PIN resets, linkages
+│   │   ├── vicePrincipal.controller.ts   # Absence monitoring queue
+│   │   ├── teacher.controller.ts         # Marks submissions, attendance marking
+│   │   ├── financeClerk.controller.ts    # Invoice transactions logs
+│   │   ├── auditor.controller.ts         # Financial ledger logs
+│   │   ├── clinicController.ts           # Visits logs, stock levels, WhatsApp chats
+│   │   ├── driverController.ts           # Manifest logs, logistics updates
+│   │   ├── libraryController.ts          # Book registers, book loaning tracks
+│   │   ├── parentController.ts           # Dashboard feeds, communication logs
+│   │   └── studentController.ts          # Timetables, transcripts histories
 │   ├── routes/
 │   │   ├── auth.routes.ts
 │   │   ├── superAdmin.routes.ts
@@ -583,52 +483,35 @@ abdi-adama-backend/
 │   │   ├── vicePrincipal.routes.ts
 │   │   ├── teacher.routes.ts
 │   │   ├── financeClerk.routes.ts
-│   │   └── auditor.routes.ts
-│   ├── services/
-│   │   ├── auth.service.ts
-│   │   ├── user.service.ts
-│   │   ├── superAdmin.service.ts
-│   │   ├── schoolAdmin.service.ts
-│   │   ├── vicePrincipal.service.ts
-│   │   ├── teacher.service.ts
-│   │   ├── financeClerk.service.ts
-│   │   └── auditor.service.ts
+│   │   ├── auditor.routes.ts
+│   │   ├── clinicRoutes.ts               # Chat endpoints and visitor logs
+│   │   ├── driverRoutes.ts               # Timetable manifestations and notices
+│   │   ├── libraryRoutes.ts              # Catalog additions and loan registers
+│   │   ├── parentRoutes.ts               # Unified dashboard lists
+│   │   └── studentRoutes.ts              # Schedule logs, transcript lookups
+│   ├── shared/
+│   │   ├── sseManager.ts        # SSE manager for client broadcasts
+│   │   ├── cleanupUtils.ts      # Housekeeping tasks
+│   │   └── responseUtils.ts     # API envelope utility methods
 │   ├── types/
-│   │   └── index.ts             # TypeScript interfaces & types
+│   │   └── index.ts             # Global TypeScript type interfaces
 │   ├── utils/
-│   │   ├── jwt.ts               # JWT token generation/verification
-│   │   ├── password.ts          # Password hashing & PIN generation
-│   │   ├── idGenerator.ts       # Digital ID generation
-│   │   └── logger.ts            # Winston logger configuration
-│   ├── scripts/
-│   │   └── seedSuperAdmin.ts    # Seed initial admin accounts
-│   ├── app.ts                   # Express app configuration
-│   └── server.ts                # Server entry point
-├── dist/                        # Compiled JavaScript (generated)
-├── node_modules/
-├── .env                         # Environment variables (not in git)
-├── .env.example                 # Environment template
-├── .gitignore
+│   │   ├── jwt.ts               # Sign and verify access tokens
+│   │   └── idGenerator.ts       # Sequential Digital ID generator
+│   ├── app.ts                   # Express application initializations
+│   └── server.ts                # Application main entry point
+├── database/
+│   ├── schema.sql               # Primary system schema structure
+│   └── clinic_read_status.sql   # Clinic read-state migrations
 ├── package.json
-├── tsconfig.json                # TypeScript configuration
-├── schema.sql                   # Database schema
-└── README.md
+└── tsconfig.json
 ```
 
 ---
 
-## 🚀 Deployment Guide
+## 🚀 Production Deployment Guide
 
-### Production Environment
-
-**Server Details:**
-- Host: cPanel (91.204.209.22)
-- Domain: api.abdi-adama.com
-- Node.js: 20.x
-- Database: PostgreSQL (localhost)
-- Process Manager: PM2
-
-**Environment Variables (.env):**
+### Environment Variables (.env)
 ```env
 NODE_ENV=production
 PORT=5001
@@ -636,335 +519,72 @@ PORT=5001
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=abdiadam_school_db
-DB_USER=abdiadam
-DB_PASSWORD=yMV+r23P9.rx7E
+DB_USER=abdiadam_super-admin
+DB_PASSWORD=AbdiAdama@Server@
 DB_SSL=false
 
-JWT_SECRET=your_super_secret_jwt_key_min_32_chars
-JWT_REFRESH_SECRET=your_super_secret_refresh_key_min_32_chars
+JWT_SECRET=your_long_secure_jwt_key_min_32_characters
+JWT_REFRESH_SECRET=your_long_secure_refresh_key_min_32_characters
 
 FRONTEND_URL=https://app.abdi-adama.com
 ```
 
-### Deployment Steps
-
-1. **Build TypeScript:**
+### Production PM2 Commands
+Activate your server's Node virtual environment, then start the compiled backend with PM2:
 ```bash
-npm run build
-```
-
-2. **Upload to Server:**
-- Upload `dist/` folder to `/home/abdiadam/abdi-adama-backend/dist/`
-- Upload `package.json` and `.env`
-- Upload `node_modules/` or run `npm install --production`
-
-3. **Activate Node.js Environment:**
-```bash
+# Activate virtual environment
 source ~/nodevenv/abdi-adama-backend/20/bin/activate
-```
 
-4. **Start/Restart PM2:**
-```bash
-# First time
+# Build TypeScript code
+npm run build
+
+# Start server using PM2
 pm2 start dist/server.js --name abdi-adama-api
 
-# Restart after updates
-pm2 restart abdi-adama-api
-
-# View logs
+# View runtime server logs
 pm2 logs abdi-adama-api
-
-# Monitor
-pm2 monit
-```
-
-5. **Apache Reverse Proxy (.htaccess):**
-```apache
-RewriteEngine On
-RewriteCond %{HTTPS} off
-RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(.*)$ http://localhost:5001/$1 [P,L]
-```
-
-### Quick Update Process
-
-```bash
-# Local machine
-npm run build
-
-# Upload dist/ folder via cPanel File Manager
-
-# SSH to server
-source ~/nodevenv/abdi-adama-backend/20/bin/activate
-pm2 restart abdi-adama-api
 ```
 
 ---
 
-## 🧪 Testing the API
+## 🧪 API Testing Guide
 
-### Using cURL
-
-**1. Login:**
+### 1. Test Login (Operational User)
 ```bash
 curl -X POST https://api.abdi-adama.com/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"abdiadamaschooloffice@gmail.com","password":"SuperAdmin@2026"}'
+  -d '{"email":"student@abdi-adama.com","password":"1234"}'
 ```
 
-**2. Get Current User:**
+### 2. Query Student Timetable (Enforced Role check)
 ```bash
-curl -X GET https://api.abdi-adama.com/api/auth/me \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+curl -X GET https://api.abdi-adama.com/api/student/dashboard \
+  -H "Authorization: Bearer YOUR_ACCESS_JWT_TOKEN"
 ```
 
-**3. Create Teacher:**
+### 3. Log a Medical Visit (Clinic Admin only)
 ```bash
-curl -X POST https://api.abdi-adama.com/api/school-admin/register-user \
+curl -X POST https://api.abdi-adama.com/api/clinic/visits \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -d '{"name":"John Teacher","email":"john@example.com","role":"teacher"}'
+  -H "Authorization: Bearer CLINIC_ADMIN_JWT_TOKEN" \
+  -d '{"student_id":"STD-MB-0012","reason":"Mild Fever","treatment":"Administered 2x Paracetamol"}'
 ```
-
-### Using Postman
-
-1. **Import Collection:**
-   - Base URL: `https://api.abdi-adama.com/api`
-   - Create environment variable: `{{baseUrl}}`
-
-2. **Authentication:**
-   - Login to get access token
-   - Set `{{accessToken}}` environment variable
-   - Add to headers: `Authorization: Bearer {{accessToken}}`
-
-3. **Test Endpoints:**
-   - Start with Auth endpoints
-   - Then Super Admin endpoints
-   - Then role-specific endpoints
 
 ---
 
-## 📝 Important Notes
+## 📝 Important Notes & Troubleshooting
 
-### User Status Workflow
-1. **Pending** - User created, awaiting approval
-2. **Approved** - User can login and access system
-3. **Revoked** - User access disabled, cannot login
+### Database Connection Failures
+* Ensure PostgreSQL is active on `localhost:5432`.
+* Check that your database name matches `abdiadam_school_db` and that credentials have appropriate R/W schema privileges.
 
-### Password Management
-- **Admin roles**: Must change password on first login
-- **Operational roles**: PIN returned once during creation
-- **Lost PIN**: School Admin can reset via `/users/:id/reset-pin`
-- **Password change**: Users can change via `/auth/change-password`
+### JWT Expired State
+* Access Tokens are configured to expire after 15 minutes.
+* Use `POST /api/auth/refresh-token` with the secure HTTP-Only Refresh token to retrieve new Access tokens without prompting users to re-login.
 
-### Branch Management
-- School Admins are locked to their assigned branch
-- Cannot create users in other branches
-- Cannot view users from other branches
-- Super Admin has cross-branch access
-
-### Class Assignment
-- Students can be in ONE class at a time
-- Assigning to new class removes from previous class
-- Class `student_count` auto-updates on assign/remove
-- Teachers can be assigned to multiple classes
-
-### Attendance Rules
-- Can only mark attendance for current date
-- Can update attendance on same day only
-- Absence queue triggers at 3+ absences
-- Vice Principal can notify parents from queue
-
-### Fee Reduction Workflow
-1. Finance Clerk sets `fee_status = 'reduced'`
-2. System sets `fee_approval_status = 'pending'`
-3. Auditor approves/rejects request
-4. Status becomes 'approved' or 'rejected'
-
-### Deletion Rules
-- Super Admin can delete any user except other Super Admins
-- School Admin can delete: teachers, students, parents, staff
-- School Admin CANNOT delete: admins, vice principals, auditors
-- Deleting user cascades to related tables (attendance, grades, etc.)
-
----
-
-## 🐛 Troubleshooting
-
-### Database Connection Error
-```bash
-# Check PostgreSQL is running
-sudo systemctl status postgresql
-
-# Test connection
-psql -U abdiadam -d abdiadam_school_db -h localhost
-
-# Check .env file has correct credentials
-```
-
-### JWT Token Expired
-- Access tokens expire in 15 minutes
-- Use refresh token endpoint to get new access token
-- Refresh tokens expire in 7 days
-- After 7 days, user must login again
-
-### 503 Service Unavailable
-- Check PM2 process is running: `pm2 list`
-- Check logs: `pm2 logs abdi-adama-api`
-- Restart: `pm2 restart abdi-adama-api`
-- Ensure Node.js environment is activated
-
-### Rate Limit Exceeded
-- Wait 15 minutes for rate limit to reset
-- General API: 100 requests per 15 minutes
-- Login: 5 attempts per 15 minutes
-
-### CORS Error
-- Check `FRONTEND_URL` in .env matches your frontend domain
-- Ensure frontend sends requests to `https://api.abdi-adama.com/api`
-
-### Branch Isolation Not Working
-- Verify user has correct `branch_id` in database
-- Check JWT token contains correct `branchId`
-- Ensure queries include `WHERE branch_id = :branchId`
-
----
-
-## 📊 System Statistics
-
-- **Total Endpoints**: 88
-- **Roles Implemented**: 6
-- **Database Tables**: 12
-- **Lines of Code**: ~8,000+
-- **API Response Time**: <100ms average
-- **Uptime**: 99.9% (PM2 auto-restart)
-
----
-
-## 🛠️ Development
-
-### Local Setup
-
-1. **Clone repository:**
-```bash
-git clone <repository-url>
-cd abdi-adama-backend
-```
-
-2. **Install dependencies:**
-```bash
-npm install
-```
-
-3. **Setup database:**
-```bash
-# Create database
-createdb abdiadam_school_db
-
-# Run schema
-psql -U postgres -d abdiadam_school_db -f schema.sql
-```
-
-4. **Configure environment:**
-```bash
-cp .env.example .env
-# Edit .env with your local database credentials
-```
-
-5. **Seed admin accounts:**
-```bash
-npm run seed:superadmin
-```
-
-6. **Start development server:**
-```bash
-npm run dev
-```
-
-Server runs on `http://localhost:5000`
-
-### Available Scripts
-
-```bash
-npm run dev          # Start development server with hot reload
-npm run build        # Compile TypeScript to JavaScript
-npm start            # Start production server
-npm run seed:superadmin  # Seed initial admin accounts
-npm test             # Run tests (if configured)
-```
-
-### Code Style
-
-- **TypeScript**: Strict mode enabled
-- **Naming**: camelCase for variables, PascalCase for types
-- **Async/Await**: Preferred over promises
-- **Error Handling**: Try-catch blocks with proper error responses
-- **Comments**: Minimal, code should be self-documenting
-
----
-
-## 🔐 Security Best Practices
-
-### For Developers
-- Never commit `.env` file to git
-- Use environment variables for all secrets
-- Always validate user input with Joi
-- Use parameterized queries (never string concatenation)
-- Hash passwords with bcrypt (never store plain text)
-- Implement rate limiting on all endpoints
-- Log all critical operations to audit_log
-
-### For Administrators
-- Change default passwords immediately
-- Use strong passwords for admin accounts
-- Regularly review audit logs
-- Monitor failed login attempts
-- Keep Node.js and dependencies updated
-- Backup database regularly
-- Use HTTPS only (never HTTP)
-
----
-
-## 📞 Support & Contact
-
-For technical support or questions:
-- **Email**: abdiadamaschooloffice@gmail.com
-- **API Issues**: Check PM2 logs first
-- **Database Issues**: Contact database administrator
-
----
-
-## 📜 License
-
-Proprietary - Abdi Adama School Management System
-
-All rights reserved. This software is proprietary and confidential.
-
----
-
-## ✅ Project Status
-
-**Backend Development**: ✅ 100% Complete
-
-- [x] Authentication system
-- [x] User management (6 roles)
-- [x] Branch management
-- [x] Class management
-- [x] Attendance system
-- [x] Grade management
-- [x] Fee management
-- [x] Parent-student linking
-- [x] Reporting system
-- [x] Audit logging
-- [x] Multi-tenancy
-- [x] Security implementation
-- [x] Production deployment
-- [x] API documentation
-
-**Next Steps**: Frontend integration
+### SSE Connection Drops
+* Event broadcasting relies on active SSE channels.
+* Ensure your reverse proxy configuration (e.g., Nginx, Apache) does not buffer or drop connection channels, and has `Cache-Control: no-cache` headers enabled.
 
 ---
 
