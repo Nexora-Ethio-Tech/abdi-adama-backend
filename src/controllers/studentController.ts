@@ -4,15 +4,22 @@ import { AuthRequest } from '../middleware/authMiddleware';
 import { sendSuccess, sendError } from '../shared/responseUtils';
 import { performAllCleanups } from '../shared/cleanupUtils';
 
-// â”€â”€â”€ Helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
 /**
- * Resolve a student's section_id from their identity_id.
- * Returns the section UUID, or null if not found.
+ * Returns the enrolled course IDs (current semester) for a student.
+ * Used by getDashboard to resolve schedule and deadlines without
+ * requiring a section_id column on silo_enrollments.
  */
-const getStudentSection = async (studentIdentityId: string): Promise<string | null> => {
-  // Note: silo_enrollments does not currently have a section_id column.
-  // We return null for now to prevent the 'column section_id does not exist' crash.
-  return null;
+const getEnrolledCourseIds = async (studentIdentityId: string): Promise<string[]> => {
+  const result = await pool.query(
+    `SELECT course_id::text FROM silo_enrollments
+     WHERE student_id = $1
+       AND academic_year = '2025/2026'
+       AND semester = 2`,
+    [studentIdentityId]
+  );
+  return result.rows.map((r: any) => r.course_id);
 };
 
 /**
@@ -26,7 +33,7 @@ const verifyParentLink = async (parentUserId: string, studentId: string): Promis
   return result.rows.length > 0;
 };
 
-// â”€â”€â”€ GET /api/student/profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── GET /api/student/profile ─────────────────────────────────────────────────
 /**
  * Returns the authenticated student's own profile including full_name for the
  * "Welcome back, <Name>!" greeting on the dashboard header.
@@ -40,13 +47,8 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
       `SELECT
          si.school_id,
          si.full_name   AS "fullName",
-         ss.name        AS section,
-         ss.grade
+         si.grade
        FROM silo_identities si
-       LEFT JOIN silo_enrollments se ON se.student_id = si.id
-                                    AND se.academic_year = '2025/2026'
-                                    AND se.semester = 2
-       -- Note: silo_enrollments does not have section_id. Joining directly on identities for grade.
        WHERE si.id = $1
        LIMIT 1`,
       [identityId]
@@ -62,58 +64,72 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// â”€â”€â”€ GET /api/student/dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── GET /api/student/dashboard ──────────────────────────────────────────────
 /**
  * Returns three data sources for the student dashboard:
  *  - schedule:           Today's classes (subject, time, room)
- *  - deadlines:          Upcoming assignments/tasks (NOT exam logic â€” read-only)
+ *  - deadlines:          Upcoming assignments/tasks (read-only, no live exam)
  *  - teacherOfTheMonth:  Up to 3 monthly-rewarded teachers
+ *  - announcements:      General + Logistics notices
+ *  - stats:              Attendance, rank, active courses
+ *
+ * Schedule and deadlines are resolved via silo_enrollments → silo_courses,
+ * so no section_id column is required.
  */
 export const getDashboard = async (req: AuthRequest, res: Response) => {
   const studentIdentityId = req.user?.identity_id;
   console.log(`[Dashboard] Fetching for student: ${studentIdentityId}`);
 
   try {
-    const sectionId = await getStudentSection(studentIdentityId!);
+    // Resolve enrolled course IDs (avoids broken section_id dependency)
+    const enrolledCourseIds = await getEnrolledCourseIds(studentIdentityId!);
 
-    // â”€â”€ Today's schedule â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // day_of_week: 0=Sunday â€¦ 6=Saturday, matching JavaScript / PostgreSQL EXTRACT
-    const scheduleResult = await pool.query(
-      `SELECT
-         c.name        AS subject,
-         c.code,
-         i.full_name   AS teacher,
-         to_char(sc.start_time, 'HH24:MI') AS start_time,
-         to_char(sc.end_time,   'HH24:MI') AS end_time,
-         sc.room
-       FROM silo_schedule sc
-       JOIN silo_courses c ON c.id = sc.course_id
-       LEFT JOIN silo_identities i ON i.id = c.teacher_id
-       WHERE sc.section_id = $1
-         AND sc.day_of_week = EXTRACT(DOW FROM CURRENT_DATE)::int
-       ORDER BY sc.start_time`,
-      [sectionId]
-    );
+    // ── Today's schedule ────────────────────────────────────────────────────────
+    // Joins through enrolled courses → silo_schedule.
+    // day_of_week: 0=Sunday … 6=Saturday (PostgreSQL EXTRACT(DOW))
+    let scheduleResult: any = { rows: [] };
+    if (enrolledCourseIds.length > 0) {
+      scheduleResult = await pool.query(
+        `SELECT
+           c.name        AS subject,
+           c.code,
+           i.full_name   AS teacher,
+           to_char(sc.start_time, 'HH24:MI') AS start_time,
+           to_char(sc.end_time,   'HH24:MI') AS end_time,
+           sc.room
+         FROM silo_schedule sc
+         JOIN silo_courses c ON c.id = sc.course_id
+         LEFT JOIN silo_identities i ON i.id = c.teacher_id
+         WHERE c.id = ANY($1::uuid[])
+           AND sc.day_of_week = EXTRACT(DOW FROM CURRENT_DATE)::int
+         ORDER BY sc.start_time`,
+        [enrolledCourseIds]
+      );
+    }
 
-    // â”€â”€ Upcoming deadlines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // Excludes 'Live Exam' type â€” exam logic is reserved for future work
-    const deadlineResult = await pool.query(
-      `SELECT
-         d.id,
-         d.title,
-         d.type,
-         d.due_date,
-         c.name AS subject
-       FROM silo_deadlines d
-       LEFT JOIN silo_courses c ON c.id = d.course_id
-       WHERE d.section_id = $1
-         AND d.due_date >= CURRENT_DATE
-       ORDER BY d.due_date ASC
-       LIMIT 10`,
-      [sectionId]
-    );
+    // ── Upcoming deadlines ──────────────────────────────────────────────────────
+    // Scoped to enrolled courses; excludes 'Live Exam' type
+    let deadlineResult: any = { rows: [] };
+    if (enrolledCourseIds.length > 0) {
+      deadlineResult = await pool.query(
+        `SELECT
+           d.id,
+           d.title,
+           d.type,
+           d.due_date,
+           c.name AS subject
+         FROM silo_deadlines d
+         LEFT JOIN silo_courses c ON c.id = d.course_id
+         WHERE d.course_id = ANY($1::uuid[])
+           AND d.due_date >= CURRENT_DATE
+           AND LOWER(COALESCE(d.type, '')) <> 'live exam'
+         ORDER BY d.due_date ASC
+         LIMIT 10`,
+        [enrolledCourseIds]
+      );
+    }
 
-    // â”€â”€ Teacher of the Month â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Teacher of the Month ────────────────────────────────────────────────────
     const teacherResult = await pool.query(
       `SELECT
          i.full_name   AS name,
@@ -128,7 +144,7 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
        LIMIT 3`
     );
 
-    // â”€â”€ Combined Announcements (General + Logistics) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Combined Announcements (General + Logistics) ────────────────────────────
     const announcementsResult = await pool.query(
       `SELECT 
          id::text, 
@@ -152,17 +168,17 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
        WHERE n.deleted_at IS NULL
          AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
          AND n.branch_id = (SELECT branch_id FROM silo_identities WHERE id = $1)
-        AND n.sender_id IN (
-          SELECT r.driver_id FROM silo_routes r
-          JOIN silo_route_manifest rm ON r.id = rm.route_id
-          WHERE rm.student_id = $1
-        )
+         AND n.sender_id IN (
+           SELECT r.driver_id FROM silo_routes r
+           JOIN silo_route_manifest rm ON r.id = rm.route_id
+           WHERE rm.student_id = $1
+         )
        ORDER BY timestamp DESC
        LIMIT 10`,
       [studentIdentityId]
     );
 
-    // â”€â”€ Additional Stats (Attendance, Rank, Courses) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Additional Stats (Attendance, Rank, Courses) ────────────────────────────
     const statsResult = await pool.query(
       `SELECT
          (SELECT ROUND(COUNT(*) FILTER (WHERE status = 'Present')::numeric / NULLIF(COUNT(*), 0) * 100, 1)::text || '%' 
@@ -190,19 +206,20 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// â”€â”€â”€ GET /api/student/grades â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── GET /api/student/grades ──────────────────────────────────────────────────
 /**
  * Query params:
  *   ?semester=1|2          (defaults to 2)
- *   ?subject_id=<uuid>     (optional â€” if omitted returns summary list)
+ *   ?subject_id=<uuid>     (optional – if omitted returns summary list)
  *
  * Response includes mid_30, quiz_10, assignment_10, final_50, and computed total.
+ * Parent role is also allowed — controller verifies the parent-child link.
  */
 export const getGrades = async (req: AuthRequest, res: Response) => {
   let studentIdentityId = req.user?.identity_id;
   const targetStudentId = req.query.student_id as string;
 
-  // â”€â”€ Support Parent Viewing Child â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Support Parent Viewing Child ─────────────────────────────────────────────
   if (req.user?.role === 'Parent' && targetStudentId) {
     const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
     if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
@@ -213,7 +230,6 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
   const subjectId = req.query.subject_id as string | undefined;
 
   try {
-    // â”€â”€ Course list for this semester â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const coursesResult = await pool.query(
       `SELECT
          e.id          AS enrollment_id,
@@ -227,13 +243,12 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
          COALESCE(g.mid_30,        0) AS mid_30,
          COALESCE(g.final_50,      0) AS final_50,
          COALESCE(g.total,         0) AS total,
-         -- max possible per component
          10  AS max_quiz,
          10  AS max_assignment,
          30  AS max_mid,
          50  AS max_final,
          100 AS max_total,
-         -- legacy granular marks (for backward compatibility)
+         -- legacy granular marks (backward compatibility)
          g.quiz_1, g.quiz_2, g.test_1, g.test_2,
          g.participation, g.mid_exam, g.final_exam
        FROM silo_enrollments e
@@ -253,7 +268,6 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
     return sendSuccess(res, {
       semester,
       courses:  coursesResult.rows,
-      // If a specific subject was requested, surface it at the top level too
       selected: subjectId ? (coursesResult.rows[0] ?? null) : null,
     });
   } catch (err: any) {
@@ -261,20 +275,20 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// â”€â”€â”€ GET /api/student/history â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── GET /api/student/history ─────────────────────────────────────────────────
 /**
  * Query params:
- *   ?year=2024/2025     (required â€” academic year filter)
- *   ?semester=1|2       (optional â€” if omitted returns both semesters)
+ *   ?year=2024/2025     (required – academic year filter)
+ *   ?semester=1|2       (optional – if omitted returns both semesters)
  *
  * The semester_average is calculated on the backend as AVG(total) for that
  * year+semester so the frontend summary header can display it directly.
+ * Parent role is also allowed — controller verifies the parent-child link.
  */
 export const getHistory = async (req: AuthRequest, res: Response) => {
   let studentIdentityId = req.user?.identity_id;
   const targetStudentId = req.query.student_id as string;
 
-  // â”€â”€ Support Parent Viewing Child â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (req.user?.role === 'Parent' && targetStudentId) {
     const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
     if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
@@ -339,7 +353,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// â”€â”€â”€ GET /api/student/current-courses â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── GET /api/student/current-courses ────────────────────────────────────────
 /**
  * Backward-compatible endpoint for the existing "Grades & Courses" dropdown.
  * Returns current semester courses with legacy granular mark fields.
@@ -389,9 +403,9 @@ export const getCurrentCourses = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// â”€â”€â”€ GET /api/student/academic-history (legacy) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── GET /api/student/academic-history (legacy) ───────────────────────────────
 /**
- * Legacy endpoint â€” kept for backward compat. Prefer /api/student/history.
+ * Legacy endpoint — kept for backward compat. Prefer /api/student/history.
  */
 export const getAcademicHistory = async (req: AuthRequest, res: Response) => {
   const studentIdentityId = req.user?.identity_id;
@@ -435,4 +449,3 @@ export const getAcademicHistory = async (req: AuthRequest, res: Response) => {
     return sendError(res, 'Failed to fetch academic history.', 500, err.message);
   }
 };
-

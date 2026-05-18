@@ -6,7 +6,8 @@ import {
   getMedicines, 
   deductMedicine,
   getChatMessages,
-  sendChatMessage
+  sendChatMessage,
+  markMessagesRead
 } from '../controllers/clinicController';
 import { authenticateToken, authorizeRoles } from '../middleware/authMiddleware';
 
@@ -26,5 +27,9 @@ router.post('/medicine/deduct',       authorizeRoles('ClinicAdmin'), deductMedic
 // Chat - ClinicAdmin and Parent
 router.get('/chat',                   authorizeRoles('ClinicAdmin', 'Parent'), getChatMessages);
 router.post('/chat',                  authorizeRoles('ClinicAdmin', 'Parent'), sendChatMessage);
+
+// Mark messages as read (per-conversation) - ClinicAdmin only
+// Called when ClinicAdmin opens a parent conversation to clear the unread badge
+router.patch('/chat/read',            authorizeRoles('ClinicAdmin'), markMessagesRead);
 
 export default router;

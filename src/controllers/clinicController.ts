@@ -155,7 +155,6 @@ export const getMedicines = async (req: Request, res: Response) => {
  * POST /api/clinic/medicine/deduct
  * Deducts stock from a medicine (e.g., when administered during a visit).
  * Body: { medicine_id, quantity }
- * Returns updated medicine row.
  */
 export const deductMedicine = async (req: Request, res: Response) => {
   const { medicine_id, quantity } = req.body;
@@ -165,7 +164,6 @@ export const deductMedicine = async (req: Request, res: Response) => {
   }
 
   try {
-    // Atomic decrement with stock floor check
     const result = await pool.query(
       `UPDATE silo_medicines
           SET stock = GREATEST(stock - $1, 0),
@@ -187,7 +185,17 @@ export const deductMedicine = async (req: Request, res: Response) => {
 
 /**
  * GET /api/clinic/chat
- * Retrieves chat history between Parent and ClinicAdmin.
+ *
+ * For ClinicAdmin (no params):
+ *   Returns the inbox — one row per parent conversation, sorted by
+ *   MOST RECENT MESSAGE FIRST (WhatsApp-style). Each row includes
+ *   unread_count so the frontend can display a badge.
+ *
+ * For ClinicAdmin (with ?otherUserId or ?childId):
+ *   Returns the full message thread for that specific conversation.
+ *
+ * For Parent:
+ *   Returns all messages between this parent and the clinic (their thread only).
  */
 export const getChatMessages = async (req: Request, res: Response) => {
   const { user_id: userId, role } = (req as any).user;
@@ -207,6 +215,7 @@ export const getChatMessages = async (req: Request, res: Response) => {
           m.receiver_id, 
           m.message AS text, 
           m.child_id,
+          m.is_read,
           to_char(m.created_at, 'HH:MI AM') AS timestamp,
           CASE WHEN m.sender_id = $1 THEN 'parent' ELSE 'clinic' END as role
         FROM silo_clinic_messages m
@@ -215,28 +224,64 @@ export const getChatMessages = async (req: Request, res: Response) => {
         ORDER BY m.created_at ASC
       `;
       params = childId ? [userId, childId] : [userId];
+
     } else if (role === 'ClinicAdmin') {
       if (!otherUserId && !childId) {
-        // Return list of parents who have messaged (Inbox view)
+        // ── INBOX VIEW ────────────────────────────────────────────────────────
+        // WhatsApp-style: newest conversation at top.
+        //
+        // We use a CTE to get the latest message per sender (DISTINCT ON),
+        // then wrap it in an outer query to allow sorting by last_message_at.
+        // We also compute unread_count per conversation.
         queryText = `
-          SELECT DISTINCT ON (m.sender_id)
-            m.sender_id,
-            i.full_name as sender_name,
-            m.message as last_message,
-            to_char(m.created_at, 'YYYY-MM-DD HH:MI AM') as last_time,
-            st.full_name as student_name,
-            m.child_id as student_id
-          FROM silo_clinic_messages m
-          JOIN silo_users u ON m.sender_id = u.id
+          WITH latest_per_sender AS (
+            SELECT DISTINCT ON (m.sender_id)
+              m.sender_id,
+              m.message        AS last_message,
+              m.child_id       AS student_id,
+              m.created_at     AS last_message_at
+            FROM silo_clinic_messages m
+            WHERE m.receiver_id IS NULL
+               OR m.receiver_id IN (
+                 SELECT id FROM silo_users WHERE role = 'ClinicAdmin'
+               )
+            ORDER BY m.sender_id, m.created_at DESC
+          ),
+          unread_counts AS (
+            SELECT
+              m.sender_id,
+              COUNT(*) FILTER (WHERE m.is_read = FALSE) AS unread_count
+            FROM silo_clinic_messages m
+            WHERE (m.receiver_id IS NULL
+                   OR m.receiver_id IN (
+                     SELECT id FROM silo_users WHERE role = 'ClinicAdmin'
+                   ))
+              AND m.sender_id IN (SELECT sender_id FROM latest_per_sender)
+            GROUP BY m.sender_id
+          )
+          SELECT
+            lps.sender_id,
+            i.full_name                                   AS sender_name,
+            lps.last_message,
+            to_char(lps.last_message_at, 'YYYY-MM-DD HH:MI AM') AS last_time,
+            lps.last_message_at,
+            st.full_name                                  AS student_name,
+            lps.student_id,
+            COALESCE(uc.unread_count, 0)::int             AS unread_count
+          FROM latest_per_sender lps
+          JOIN silo_users u ON lps.sender_id = u.id
           JOIN silo_identities i ON u.identity_id = i.id
-          LEFT JOIN silo_identities st ON m.child_id = st.id
-          WHERE m.receiver_id IS NULL OR m.receiver_id IN (SELECT id FROM silo_users WHERE role = 'ClinicAdmin')
-          ORDER BY m.sender_id, m.created_at DESC
+          LEFT JOIN silo_identities st ON lps.student_id = st.id
+          LEFT JOIN unread_counts uc ON uc.sender_id = lps.sender_id
+          ORDER BY lps.last_message_at DESC
         `;
         params = [];
+
       } else {
-        // Specific conversation (by parent OR by child)
-        const filter = childId ? 'WHERE m.child_id = $1' : 'WHERE (m.sender_id = $1 OR m.receiver_id = $1)';
+        // ── SPECIFIC CONVERSATION ─────────────────────────────────────────────
+        const filter = childId
+          ? 'WHERE m.child_id = $1'
+          : 'WHERE (m.sender_id = $1 OR m.receiver_id = $1)';
         queryText = `
           SELECT 
             m.id, 
@@ -244,9 +289,14 @@ export const getChatMessages = async (req: Request, res: Response) => {
             m.receiver_id, 
             m.message AS text, 
             m.child_id,
-            st.full_name as student_name,
+            m.is_read,
+            st.full_name AS student_name,
             to_char(m.created_at, 'HH:MI AM') AS timestamp,
-            CASE WHEN m.sender_id IN (SELECT id FROM silo_users WHERE role = 'ClinicAdmin') THEN 'clinic' ELSE 'parent' END as role
+            CASE 
+              WHEN m.sender_id IN (SELECT id FROM silo_users WHERE role = 'ClinicAdmin')
+              THEN 'clinic' 
+              ELSE 'parent' 
+            END AS role
           FROM silo_clinic_messages m
           LEFT JOIN silo_identities st ON m.child_id = st.id
           ${filter}
@@ -303,8 +353,8 @@ export const sendChatMessage = async (req: Request, res: Response) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO silo_clinic_messages (sender_id, receiver_id, message, child_id)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO silo_clinic_messages (sender_id, receiver_id, message, child_id, is_read)
+       VALUES ($1, $2, $3, $4, FALSE)
        RETURNING *, to_char(created_at, 'HH:MI AM') AS timestamp`,
       [senderId, finalReceiverId || null, message, childId || null]
     );
@@ -315,3 +365,46 @@ export const sendChatMessage = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * PATCH /api/clinic/chat/read
+ * Marks all messages from a given sender as read (per-conversation, WhatsApp-style).
+ *
+ * Body: { sender_id: string }
+ *
+ * Called when ClinicAdmin opens a chat conversation. All unread messages from
+ * that parent in that conversation are immediately marked as is_read = TRUE,
+ * causing the unread badge to disappear on the next inbox fetch.
+ */
+export const markMessagesRead = async (req: Request, res: Response) => {
+  const { role } = (req as any).user;
+  const { sender_id } = req.body;
+
+  if (role !== 'ClinicAdmin') {
+    return sendError(res, 'Only ClinicAdmin can mark messages as read.', 403);
+  }
+
+  if (!sender_id) {
+    return sendError(res, 'sender_id is required.', 400);
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE silo_clinic_messages
+          SET is_read = TRUE
+        WHERE sender_id = $1
+          AND is_read = FALSE
+          AND (
+            receiver_id IS NULL
+            OR receiver_id IN (SELECT id FROM silo_users WHERE role = 'ClinicAdmin')
+          )
+        RETURNING id`,
+      [sender_id]
+    );
+
+    return sendSuccess(res, {
+      marked_read: result.rowCount ?? 0
+    }, `${result.rowCount ?? 0} message(s) marked as read.`);
+  } catch (err: any) {
+    return sendError(res, 'Failed to mark messages as read.', 500, err.message);
+  }
+};
