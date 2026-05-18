@@ -12,10 +12,10 @@ Complete, production-grade REST API backend for the Abdi Adama School Management
 The system serves **ONE School** operating across **4 physical branches** with strict data isolation. 
 
 Legacy branch name references have been updated to represent their actual physical sites:
-* **Mogoro Hete Haroreti** (Legacy: *Main Branch* | Code: `MB`)
-* **180 Village** (Legacy: *Bole Branch* | Code: `BL`)
-* **Awash Melkasa** (Legacy: *Megenagna Branch* | Code: `MG`)
-* **Adama Kebele 10** (Legacy: *Adama Branch* | Code: `AD`)
+* **Adama Kebele 10** (Code: `MB`)
+* **180 Village** (Code: `BL`)
+* **Awash Melkasa** (Code: `MG`)
+* **Mogoro Hete Haroreti** (Code: `AD`)
 
 ### System Roles (11 Total)
 The API implements complete workflows for **11 distinct user roles**, each mapped to specific permissions and business processes:
@@ -129,10 +129,10 @@ To enforce consistency across branches, every registered identity receives a for
 ### Format: `{ROLE_PREFIX}-{BRANCH_CODE}-{SEQUENCE}`
 
 #### Branch Codes
-* `MB` = Mogoro Hete Haroreti
+* `MB` = Adama Kebele 10
 * `BL` = 180 Village
 * `MG` = Awash Melkasa
-* `AD` = Adama Kebele 10
+* `AD` = Mogoro Hete Haroreti
 
 #### Role Prefixes
 | Role | Prefix | Example ID |
@@ -164,9 +164,9 @@ Data isolation is built directly into the database queries rather than relying s
                                  │
          ┌───────────────────────┼───────────────────────┐
          ▼                       ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│ Mogoro Hete (MB)│     │ 180 Village (BL)│     │Awash Melk. (MG) │ ...
-└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+┌──────────────────┐     ┌─────────────────┐     ┌──────────────────┐
+│Adama Kebele (MB) │     │ 180 Village (BL)│     │Awash Melk. (MG)  │ ...
+└────────┬─────────┘     └────────┬────────┘     └────────┬─────────┘
          │                       │                       │
          ├─ School Admin (R/W)   ├─ School Admin (R/W)   ├─ School Admin (R/W)
          ├─ Teachers (R/W)       ├─ Teachers (R/W)       ├─ Teachers (R/W)
