@@ -16,10 +16,13 @@ END $$;
 -- Students and their Parents SHARE a single identity (same school_id).
 -- Staff (Driver, Librarian, ClinicAdmin) each get their own identity.
 CREATE TABLE IF NOT EXISTS silo_identities (
-  id         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-  school_id  VARCHAR(20)  NOT NULL UNIQUE,   -- e.g. "STU-000123"
-  full_name  VARCHAR(200) NOT NULL,
-  created_at TIMESTAMPTZ  DEFAULT CURRENT_TIMESTAMP
+  id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id   VARCHAR(20)  NOT NULL UNIQUE,   -- e.g. "STU-000123"
+  full_name   VARCHAR(200) NOT NULL,
+  grade       VARCHAR(50),
+  blood_group VARCHAR(10),
+  allergies   TEXT,
+  created_at  TIMESTAMPTZ  DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_silo_identities_school_id ON silo_identities(school_id);

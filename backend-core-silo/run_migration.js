@@ -15,7 +15,7 @@ const sqlFiles = [
   'clinic_setup.sql',
   'exam_schema.sql',
   'family_academic_setup.sql',
-  'library_update.sql',
+  'fix_library_schema.sql',
   'logistics_setup.sql',
   'schema_alignment.sql',
   'seed_bikila_family.sql',

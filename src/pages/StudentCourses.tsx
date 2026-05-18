@@ -58,6 +58,7 @@ export const StudentCourses = () => {
 
     const fetchGrades = async () => {
       setLoading(true);
+      try {
         const res = await apiFetch(`/api/student/grades?semester=${currentSemester}`);
         if (res.ok) {
           const result = await res.json();
@@ -79,6 +80,7 @@ export const StudentCourses = () => {
 
     const fetchHistory = async () => {
       setLoading(true);
+      try {
         const res = await apiFetch(`/api/student/history?year=${selectedYear}&semester=${selectedHistSemester}`);
         if (res.ok) {
           const result = await res.json();
