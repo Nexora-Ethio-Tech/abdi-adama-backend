@@ -11,6 +11,11 @@ import financeClerkRoutes from './routes/financeClerk.routes';
 import teacherRoutes from './routes/teacher.routes';
 import vicePrincipalRoutes from './routes/vicePrincipal.routes';
 import auditorRoutes from './routes/auditor.routes';
+import studentRoutes from './routes/studentRoutes';
+import parentRoutes from './routes/parentRoutes';
+import driverRoutes from './routes/driverRoutes';
+import clinicRoutes from './routes/clinicRoutes';
+import libraryRoutes from './routes/libraryRoutes';
 
 const app = express();
 
@@ -74,6 +79,11 @@ app.use('/api/finance-clerk', financeClerkRoutes);
 app.use('/api/teacher', teacherRoutes);
 app.use('/api/vice-principal', vicePrincipalRoutes);
 app.use('/api/auditor', auditorRoutes);
+app.use('/api/student', studentRoutes);
+app.use('/api/parent', parentRoutes);
+app.use('/api/driver', driverRoutes);
+app.use('/api/clinic', clinicRoutes);
+app.use('/api/library', libraryRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({
