@@ -52,6 +52,20 @@ const financialPolicySchema = Joi.object({
   academicYear: Joi.string().required()
 });
 
+const createEventSchema = Joi.object({
+  title: Joi.string().min(3).max(200).required(),
+  date: Joi.date().iso().required(),
+  type: Joi.string().min(2).max(50).required(),
+  description: Joi.string().max(1000).allow('', null)
+});
+
+const updateEventSchema = Joi.object({
+  title: Joi.string().min(3).max(200),
+  date: Joi.date().iso(),
+  type: Joi.string().min(2).max(50),
+  description: Joi.string().max(1000).allow('', null)
+}).min(1);
+
 // User Management (existing)
 router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
 router.get('/users', schoolAdminController.getBranchUsers);
@@ -98,5 +112,18 @@ router.get('/dashboard', schoolAdminController.getDashboard);
 router.get('/teachers', schoolAdminController.getBranchTeachers);
 router.get('/students', schoolAdminController.getBranchStudents);
 router.get('/students/:id', schoolAdminController.getStudentById);
+
+// ============================================================
+// DASHBOARD FEATURES
+// ============================================================
+
+// At-Risk Students
+router.get('/dashboard/at-risk-students', schoolAdminController.getAtRiskStudents);
+
+// Events Calendar
+router.get('/dashboard/upcoming-events', schoolAdminController.getUpcomingEvents);
+router.post('/events', validate(createEventSchema), schoolAdminController.createEvent);
+router.patch('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
+router.delete('/events/:id', schoolAdminController.deleteEvent);
 
 export default router;
