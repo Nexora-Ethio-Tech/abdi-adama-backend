@@ -521,6 +521,102 @@ class SchoolAdminController {
       next(error);
     }
   }
+
+  // ============================================================
+  // DASHBOARD FEATURES
+  // ============================================================
+
+  // Get At-Risk Students
+  async getAtRiskStudents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const result = await schoolAdminService.getAtRiskStudents(branchId!);
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get Upcoming Events
+  async getUpcomingEvents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+
+      const events = await schoolAdminService.getUpcomingEvents(branchId!, limit);
+
+      res.json({
+        success: true,
+        data: events
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Create Event
+  async createEvent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { title, date, type, description } = req.body;
+
+      const event = await schoolAdminService.createEvent({
+        title,
+        date,
+        type,
+        description,
+        branchId: branchId!
+      });
+
+      res.status(201).json({
+        success: true,
+        data: event,
+        message: 'Event created successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Update Event
+  async updateEvent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+      const updateData = req.body;
+
+      const event = await schoolAdminService.updateEvent(id, branchId!, updateData);
+
+      res.json({
+        success: true,
+        data: event,
+        message: 'Event updated successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Delete Event
+  async deleteEvent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+
+      const event = await schoolAdminService.deleteEvent(id, branchId!);
+
+      res.json({
+        success: true,
+        message: `Event "${event.title}" deleted successfully`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new SchoolAdminController();
