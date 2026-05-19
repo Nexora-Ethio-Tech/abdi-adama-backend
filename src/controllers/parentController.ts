@@ -60,7 +60,6 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
        LEFT JOIN silo_identities i ON i.id = n.sender_id
        WHERE n.deleted_at IS NULL
          AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
-         AND n.branch_id = (SELECT branch_id FROM silo_identities WHERE id = (SELECT identity_id FROM silo_users WHERE id = $1))
          AND (
            -- Only see notices from drivers assigned to at least one of this parent's children
            n.sender_id IN (
