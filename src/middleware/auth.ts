@@ -21,13 +21,46 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     const token = authHeader.substring(7);
     const decoded = verifyAccessToken(token);
 
-    const result = await pool.query<User>(
+    let result = await pool.query<User>(
       `SELECT id, digital_id, username, name, email, role, branch_id, status, is_active 
        FROM users WHERE id = $1`,
       [decoded.userId]
     );
 
-    if (result.rows.length === 0) {
+    let user: any = null;
+    const mapRole = (role: string): string => {
+      const r = role.toLowerCase();
+      if (r === 'clinicadmin') return 'clinic-admin';
+      return r;
+    };
+
+    if (result.rows.length > 0) {
+      user = result.rows[0];
+    } else {
+      const siloResult = await pool.query(
+        `SELECT u.id, u.identity_id, u.role, u.is_active, i.school_id, i.full_name AS name, (SELECT id FROM branches LIMIT 1) AS branch_id
+         FROM silo_users u
+         JOIN silo_identities i ON u.identity_id = i.id
+         WHERE u.id = $1`,
+        [decoded.userId]
+      );
+      if (siloResult.rows.length > 0) {
+        const siloRow = siloResult.rows[0];
+        user = {
+          id: siloRow.id,
+          digital_id: siloRow.school_id,
+          username: siloRow.school_id,
+          name: siloRow.name,
+          email: siloRow.school_id,
+          role: mapRole(siloRow.role),
+          branch_id: siloRow.branch_id,
+          status: 'Approved',
+          is_active: siloRow.is_active
+        };
+      }
+    }
+
+    if (!user) {
       res.status(401).json({
         success: false,
         error: {
@@ -37,8 +70,6 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       });
       return;
     }
-
-    const user = result.rows[0];
 
     if (!user.is_active) {
       res.status(403).json({

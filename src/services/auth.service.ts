@@ -8,19 +8,65 @@ import { User, JWTPayload } from '../types';
 class AuthService {
   async login(email: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
     try {
-      const result = await pool.query<User>(
+      // 1. Check standard users first
+      let result = await pool.query<User>(
         `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.password_hash, 
                 u.role, u.branch_id, u.status, u.is_active
          FROM users u
-         WHERE u.email = $1`,
+         WHERE u.email = $1 OR u.username = $1`,
         [email]
       );
 
-      if (result.rows.length === 0) {
-        throw new Error('Invalid email or password');
+      let user: any = null;
+      let isSiloUser = false;
+      let identityId = '';
+
+      const mapRole = (role: string): string => {
+        const r = role.toLowerCase();
+        if (r === 'clinicadmin') return 'clinic-admin';
+        return r;
+      };
+
+      if (result.rows.length > 0) {
+        user = result.rows[0];
+      } else {
+        // 2. Check silo_users if not found in standard users
+        const cleanInput = email.replace('-MB-', '-');
+        const siloResult = await pool.query(
+          `SELECT u.id, u.identity_id, u.role, u.password_hash, u.is_active, 
+                  i.school_id, i.full_name AS name, (SELECT id FROM branches LIMIT 1) AS branch_id
+           FROM silo_users u
+           JOIN silo_identities i ON u.identity_id = i.id
+           WHERE i.school_id = $1 
+              OR REPLACE(i.school_id, '-MB-', '-') = $1
+              OR i.school_id = $2
+              OR REPLACE(i.school_id, '-MB-', '-') = $2`,
+          [email, cleanInput]
+        );
+
+        if (siloResult.rows.length > 0) {
+          const siloRow = siloResult.rows[0];
+          identityId = siloRow.identity_id;
+          const normalizedRole = mapRole(siloRow.role);
+          user = {
+            id: siloRow.id,
+            digital_id: siloRow.school_id,
+            username: siloRow.school_id,
+            name: siloRow.name,
+            email: siloRow.school_id,
+            password_hash: siloRow.password_hash,
+            role: normalizedRole,
+            branch_id: siloRow.branch_id,
+            status: 'Approved',
+            is_active: siloRow.is_active
+          };
+          isSiloUser = true;
+        }
       }
 
-      const user = result.rows[0];
+      if (!user) {
+        throw new Error('Invalid email or password');
+      }
 
       if (!user.is_active) {
         throw new Error('Account is inactive. Please contact administrator');
@@ -34,17 +80,23 @@ class AuthService {
         throw new Error('Account is pending approval');
       }
 
+      // bcrypt check
       const isPasswordValid = await comparePassword(password, user.password_hash!);
-      
       if (!isPasswordValid) {
         throw new Error('Invalid email or password');
       }
 
-      const payload: JWTPayload = {
+      const payload: any = {
         userId: user.id,
+        user_id: user.id,
         digitalId: user.digital_id,
+        digital_id: user.digital_id,
+        school_id: user.digital_id,
+        identityId: identityId,
+        identity_id: identityId,
         role: user.role,
-        branchId: user.branch_id
+        branchId: user.branch_id || '',
+        branch_id: user.branch_id || ''
       };
 
       const accessToken = generateAccessToken(payload);
@@ -69,23 +121,55 @@ class AuthService {
     try {
       const decoded = verifyRefreshToken(refreshToken);
 
-      const result = await pool.query<User>(
+      let result = await pool.query<User>(
         `SELECT id, digital_id, role, branch_id, is_active, status 
          FROM users WHERE id = $1`,
         [decoded.userId]
       );
 
-      if (result.rows.length === 0 || !result.rows[0].is_active) {
+      let user: any = null;
+      const mapRole = (role: string): string => {
+        const r = role.toLowerCase();
+        if (r === 'clinicadmin') return 'clinic-admin';
+        return r;
+      };
+
+      if (result.rows.length > 0) {
+        user = result.rows[0];
+      } else {
+        const siloResult = await pool.query(
+          `SELECT u.id, u.role, u.is_active, i.school_id, (SELECT id FROM branches LIMIT 1) AS branch_id
+           FROM silo_users u
+           JOIN silo_identities i ON u.identity_id = i.id
+           WHERE u.id = $1`,
+          [decoded.userId]
+        );
+        if (siloResult.rows.length > 0) {
+          const siloRow = siloResult.rows[0];
+          user = {
+            id: siloRow.id,
+            digital_id: siloRow.school_id,
+            role: mapRole(siloRow.role),
+            branch_id: siloRow.branch_id,
+            is_active: siloRow.is_active,
+            status: 'Approved'
+          };
+        }
+      }
+
+      if (!user || !user.is_active) {
         throw new Error('Invalid refresh token');
       }
 
-      const user = result.rows[0];
-
-      const payload: JWTPayload = {
+      const payload: any = {
         userId: user.id,
+        user_id: user.id,
         digitalId: user.digital_id,
+        digital_id: user.digital_id,
+        school_id: user.digital_id,
         role: user.role,
-        branchId: user.branch_id
+        branchId: user.branch_id || '',
+        branch_id: user.branch_id || ''
       };
 
       const newAccessToken = generateAccessToken(payload);
@@ -106,14 +190,45 @@ class AuthService {
          FROM users u
          LEFT JOIN branches b ON b.id = u.branch_id
          WHERE u.id = $1`,
+         [userId]
+      );
+
+      if (result.rows.length > 0) {
+        return result.rows[0];
+      }
+
+      // Check silo_users
+      const siloResult = await pool.query(
+        `SELECT u.id, u.identity_id, u.role, u.is_active, i.school_id, i.full_name AS name, (SELECT id FROM branches LIMIT 1) AS branch_id
+         FROM silo_users u
+         JOIN silo_identities i ON u.identity_id = i.id
+         WHERE u.id = $1`,
         [userId]
       );
 
-      if (result.rows.length === 0) {
+      if (siloResult.rows.length === 0) {
         throw new Error('User not found');
       }
 
-      return result.rows[0];
+      const siloRow = siloResult.rows[0];
+      const mapRole = (role: string): string => {
+        const r = role.toLowerCase();
+        if (r === 'clinicadmin') return 'clinic-admin';
+        return r;
+      };
+
+      return {
+        id: siloRow.id,
+        digital_id: siloRow.school_id,
+        username: siloRow.school_id,
+        name: siloRow.name,
+        email: siloRow.school_id,
+        role: mapRole(siloRow.role) as any,
+        branch_id: siloRow.branch_id,
+        status: 'Approved' as any,
+        is_active: siloRow.is_active,
+        created_at: new Date()
+      } as any;
     } catch (error) {
       logger.error('Get current user error:', error);
       throw error;

@@ -82,6 +82,7 @@ app.use('/api/auditor', auditorRoutes);
 app.use('/api/student', studentRoutes);
 app.use('/api/parent', parentRoutes);
 app.use('/api/driver', driverRoutes);
+app.use('/api/transport', driverRoutes);
 app.use('/api/clinic', clinicRoutes);
 app.use('/api/library', libraryRoutes);
 
