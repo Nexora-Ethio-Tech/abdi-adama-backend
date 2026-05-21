@@ -193,6 +193,23 @@ class VicePrincipalController {
       next(error);
     }
   }
+
+  // Student Transcript
+  async getStudentTranscript(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { studentId } = req.params;
+      const branchId = req.user!.branch_id;
+
+      const transcript = await vicePrincipalService.getStudentTranscript(studentId, branchId!);
+
+      res.json({
+        success: true,
+        data: transcript
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new VicePrincipalController();

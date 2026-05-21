@@ -70,6 +70,104 @@ class TeacherService {
     return result.rows[0];
   }
 
+  // Bulk enter grades
+  async bulkEnterGrades(teacherId: string, courseId: string, grades: Array<{
+    studentId: string;
+    type: string;
+    score: number;
+    total: number;
+    weight?: string;
+  }>) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id, branch_id FROM teachers WHERE user_id = $1',
+        [teacherId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+
+      const teacher = teacherResult.rows[0];
+
+      // Verify teacher owns this course
+      const courseResult = await client.query(
+        'SELECT teacher_id FROM courses WHERE id = $1',
+        [courseId]
+      );
+
+      if (courseResult.rows.length === 0) {
+        throw new Error('Course not found');
+      }
+
+      if (courseResult.rows[0].teacher_id !== teacher.id) {
+        throw new Error('You can only enter grades for courses you teach');
+      }
+
+      // Get all students' grade levels to check locks
+      const studentIds = grades.map(g => g.studentId);
+      const studentsResult = await client.query(
+        `SELECT DISTINCT s.grade, s.branch_id 
+         FROM students s 
+         WHERE s.id = ANY($1::uuid[])`,
+        [studentIds]
+      );
+
+      // Check if any grade level is locked
+      for (const student of studentsResult.rows) {
+        const lockResult = await client.query(
+          `SELECT is_locked FROM grade_locks 
+           WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
+          [student.grade, student.branch_id]
+        );
+
+        if (lockResult.rows.length > 0) {
+          throw new Error(`Grades are locked for ${student.grade}. Contact Vice Principal to unlock.`);
+        }
+      }
+
+      // Validate all grades
+      for (const grade of grades) {
+        if (grade.score > grade.total) {
+          throw new Error(`Score (${grade.score}) cannot exceed total (${grade.total}) for student ${grade.studentId}`);
+        }
+        if (grade.score < 0) {
+          throw new Error(`Score cannot be negative for student ${grade.studentId}`);
+        }
+        if (grade.total <= 0) {
+          throw new Error(`Total must be positive for student ${grade.studentId}`);
+        }
+      }
+
+      // Bulk insert grades
+      const insertedGrades = [];
+      for (const grade of grades) {
+        const result = await client.query(
+          `INSERT INTO grades (student_id, course_id, type, score, total, weight)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING *`,
+          [grade.studentId, courseId, grade.type, grade.score, grade.total, grade.weight || null]
+        );
+        insertedGrades.push(result.rows[0]);
+      }
+
+      await client.query('COMMIT');
+      return {
+        count: insertedGrades.length,
+        grades: insertedGrades
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   // Get grades by course
   async getGradesByCourse(courseId: string) {
     const result = await pool.query(
@@ -86,6 +184,144 @@ class TeacherService {
     );
 
     return result.rows;
+  }
+
+  // Update grade
+  async updateGrade(gradeId: string, teacherId: string, data: {
+    score: number;
+    total: number;
+    type?: string;
+    weight?: string;
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get grade with student and course info
+      const gradeResult = await client.query(
+        `SELECT g.*, s.grade as grade_level, s.branch_id, c.teacher_id
+         FROM grades g
+         JOIN students s ON g.student_id = s.id
+         JOIN courses c ON g.course_id = c.id
+         WHERE g.id = $1`,
+        [gradeId]
+      );
+
+      if (gradeResult.rows.length === 0) {
+        throw new Error('Grade not found');
+      }
+
+      const grade = gradeResult.rows[0];
+
+      // Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id FROM teachers WHERE user_id = $1',
+        [teacherId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+
+      // Verify teacher owns this course
+      if (grade.teacher_id !== teacherResult.rows[0].id) {
+        throw new Error('You can only update grades for courses you teach');
+      }
+
+      // Check if grades are locked for this grade level
+      const lockResult = await client.query(
+        `SELECT is_locked FROM grade_locks 
+         WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
+        [grade.grade_level, grade.branch_id]
+      );
+
+      if (lockResult.rows.length > 0) {
+        throw new Error(`Grades are locked for ${grade.grade_level}. Contact Vice Principal to unlock.`);
+      }
+
+      // Validate score doesn't exceed total
+      if (data.score > data.total) {
+        throw new Error('Score cannot exceed total marks');
+      }
+
+      // Update grade
+      const updateResult = await client.query(
+        `UPDATE grades SET
+         score = $1, total = $2, type = COALESCE($3, type), weight = COALESCE($4, weight)
+         WHERE id = $5
+         RETURNING *`,
+        [data.score, data.total, data.type, data.weight, gradeId]
+      );
+
+      await client.query('COMMIT');
+      return updateResult.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Delete grade
+  async deleteGrade(gradeId: string, teacherId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get grade with student and course info
+      const gradeResult = await client.query(
+        `SELECT g.*, s.grade as grade_level, s.branch_id, c.teacher_id
+         FROM grades g
+         JOIN students s ON g.student_id = s.id
+         JOIN courses c ON g.course_id = c.id
+         WHERE g.id = $1`,
+        [gradeId]
+      );
+
+      if (gradeResult.rows.length === 0) {
+        throw new Error('Grade not found');
+      }
+
+      const grade = gradeResult.rows[0];
+
+      // Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id FROM teachers WHERE user_id = $1',
+        [teacherId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+
+      // Verify teacher owns this course
+      if (grade.teacher_id !== teacherResult.rows[0].id) {
+        throw new Error('You can only delete grades for courses you teach');
+      }
+
+      // Check if grades are locked for this grade level
+      const lockResult = await client.query(
+        `SELECT is_locked FROM grade_locks 
+         WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
+        [grade.grade_level, grade.branch_id]
+      );
+
+      if (lockResult.rows.length > 0) {
+        throw new Error(`Grades are locked for ${grade.grade_level}. Contact Vice Principal to unlock.`);
+      }
+
+      // Delete grade
+      await client.query('DELETE FROM grades WHERE id = $1', [gradeId]);
+
+      await client.query('COMMIT');
+      return { id: gradeId, deleted: true };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Get assigned classes
@@ -315,6 +551,177 @@ class TeacherService {
     );
 
     return result.rows;
+  }
+
+  // Get student's all grades (teacher view)
+  async getStudentGrades(studentId: string, teacherId: string) {
+    const client = await pool.connect();
+    try {
+      // Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id, branch_id FROM teachers WHERE user_id = $1',
+        [teacherId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+
+      const teacher = teacherResult.rows[0];
+
+      // Get student info and verify they're in teacher's branch
+      const studentResult = await client.query(
+        `SELECT 
+          s.id, s.grade, s.status,
+          u.name, u.email, u.digital_id
+        FROM students s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.id = $1 AND s.branch_id = $2`,
+        [studentId, teacher.branch_id]
+      );
+
+      if (studentResult.rows.length === 0) {
+        throw new Error('Student not found or not in your branch');
+      }
+
+      const student = studentResult.rows[0];
+
+      // Verify teacher has access to this student (student must be in one of teacher's classes)
+      const accessResult = await client.query(
+        `SELECT COUNT(*) as count
+         FROM classes c
+         JOIN students s ON s.grade = c.name AND s.branch_id = c.branch_id
+         WHERE c.teacher_id = $1 AND s.id = $2`,
+        [teacher.id, studentId]
+      );
+
+      if (parseInt(accessResult.rows[0].count) === 0) {
+        throw new Error('You can only view grades for students in your classes');
+      }
+
+      // Get all grades grouped by course
+      const gradesResult = await client.query(
+        `SELECT 
+          g.id, g.type, g.score, g.total, g.weight, g.created_at,
+          c.id as course_id, c.name as course_name, c.code as course_code,
+          t.id as teacher_id,
+          u.name as teacher_name,
+          CASE WHEN t.id = $2 THEN true ELSE false END as is_my_course
+        FROM grades g
+        JOIN courses c ON g.course_id = c.id
+        LEFT JOIN teachers t ON c.teacher_id = t.id
+        LEFT JOIN users u ON t.user_id = u.id
+        WHERE g.student_id = $1
+        ORDER BY is_my_course DESC, c.name, g.created_at DESC`,
+        [studentId, teacher.id]
+      );
+
+      // Group grades by course and calculate averages
+      const courseMap = new Map();
+      let totalWeightedScore = 0;
+      let totalWeight = 0;
+      let myCoursesAverage = 0;
+      let myCoursesCount = 0;
+
+      for (const grade of gradesResult.rows) {
+        const courseId = grade.course_id;
+
+        if (!courseMap.has(courseId)) {
+          courseMap.set(courseId, {
+            courseId: grade.course_id,
+            courseName: grade.course_name,
+            courseCode: grade.course_code,
+            teacherId: grade.teacher_id,
+            teacherName: grade.teacher_name,
+            isMyCourse: grade.is_my_course,
+            grades: [],
+            totalScore: 0,
+            totalPossible: 0,
+            average: 0,
+            gradeCount: 0
+          });
+        }
+
+        const course = courseMap.get(courseId);
+        const percentage = grade.total > 0 ? (grade.score / grade.total) * 100 : 0;
+
+        course.grades.push({
+          id: grade.id,
+          type: grade.type,
+          score: grade.score,
+          total: grade.total,
+          weight: grade.weight,
+          percentage: parseFloat(percentage.toFixed(2)),
+          createdAt: grade.created_at
+        });
+
+        course.totalScore += grade.score;
+        course.totalPossible += grade.total;
+        course.gradeCount++;
+
+        // Calculate weighted contribution for overall average
+        if (grade.weight) {
+          const weight = parseFloat(grade.weight);
+          totalWeightedScore += percentage * weight;
+          totalWeight += weight;
+        }
+      }
+
+      // Calculate course averages and separate my courses
+      const myCourses = [];
+      const otherCourses = [];
+
+      for (const course of courseMap.values()) {
+        course.average = course.totalPossible > 0 
+          ? parseFloat(((course.totalScore / course.totalPossible) * 100).toFixed(2))
+          : 0;
+
+        if (course.isMyCourse) {
+          myCourses.push(course);
+          myCoursesAverage += course.average;
+          myCoursesCount++;
+        } else {
+          otherCourses.push(course);
+        }
+      }
+
+      const courses = [...myCourses, ...otherCourses];
+
+      // Calculate overall average
+      const overallAverage = totalWeight > 0 
+        ? parseFloat((totalWeightedScore / totalWeight).toFixed(2))
+        : courses.length > 0
+          ? parseFloat((courses.reduce((sum, c) => sum + c.average, 0) / courses.length).toFixed(2))
+          : 0;
+
+      const myAverage = myCoursesCount > 0 
+        ? parseFloat((myCoursesAverage / myCoursesCount).toFixed(2))
+        : 0;
+
+      return {
+        student: {
+          id: student.id,
+          name: student.name,
+          email: student.email,
+          digitalId: student.digital_id,
+          grade: student.grade,
+          status: student.status
+        },
+        myCourses,
+        otherCourses,
+        summary: {
+          totalCourses: courses.length,
+          myCoursesCount,
+          otherCoursesCount: courses.length - myCoursesCount,
+          totalGrades: gradesResult.rows.length,
+          overallAverage,
+          myCoursesAverage: myAverage,
+          gradeStatus: overallAverage >= 50 ? 'Passing' : 'Needs Improvement'
+        }
+      };
+    } finally {
+      client.release();
+    }
   }
 
   // Get teacher schedule

@@ -6,15 +6,15 @@ import logger from '../utils/logger';
 import { User, JWTPayload } from '../types';
 
 class AuthService {
-  async login(email: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
+  async login(emailOrDigitalId: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
     try {
-      // 1. Check standard users first
+      // 1. Check standard users first - support both email and digital_id
       let result = await pool.query<User>(
         `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.password_hash, 
                 u.role, u.branch_id, u.status, u.is_active
          FROM users u
-         WHERE u.email = $1 OR u.username = $1`,
-        [email]
+         WHERE u.email = $1 OR u.username = $1 OR u.digital_id = $1`,
+        [emailOrDigitalId]
       );
 
       let user: any = null;
@@ -31,7 +31,7 @@ class AuthService {
         user = result.rows[0];
       } else {
         // 2. Check silo_users if not found in standard users
-        const cleanInput = email.replace('-MB-', '-');
+        const cleanInput = emailOrDigitalId.replace('-MB-', '-');
         const siloResult = await pool.query(
           `SELECT u.id, u.identity_id, u.role, u.password_hash, u.is_active, 
                   i.school_id, i.full_name AS name, (SELECT id FROM branches LIMIT 1) AS branch_id
@@ -41,7 +41,7 @@ class AuthService {
               OR REPLACE(i.school_id, '-MB-', '-') = $1
               OR i.school_id = $2
               OR REPLACE(i.school_id, '-MB-', '-') = $2`,
-          [email, cleanInput]
+          [emailOrDigitalId, cleanInput]
         );
 
         if (siloResult.rows.length > 0) {
@@ -68,6 +68,10 @@ class AuthService {
         throw new Error('Invalid email or password');
       }
 
+      if (!user) {
+        throw new Error('Invalid email or password');
+      }
+
       if (!user.is_active) {
         throw new Error('Account is inactive. Please contact administrator');
       }
@@ -83,7 +87,7 @@ class AuthService {
       // bcrypt check
       const isPasswordValid = await comparePassword(password, user.password_hash!);
       if (!isPasswordValid) {
-        throw new Error('Invalid email or password');
+        throw new Error('Invalid credentials');
       }
 
       const payload: any = {
@@ -104,7 +108,7 @@ class AuthService {
 
       delete user.password_hash;
 
-      logger.info(`User logged in: ${user.email} (${user.role})`);
+      logger.info(`User logged in: ${user.email} (${user.digital_id}) - ${user.role}`);
 
       return {
         user,
@@ -190,7 +194,7 @@ class AuthService {
          FROM users u
          LEFT JOIN branches b ON b.id = u.branch_id
          WHERE u.id = $1`,
-         [userId]
+        [userId]
       );
 
       if (result.rows.length > 0) {
@@ -237,7 +241,7 @@ class AuthService {
 
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<{ message: string }> {
     const client: PoolClient = await pool.connect();
-    
+
     try {
       await client.query('BEGIN');
 
@@ -251,7 +255,7 @@ class AuthService {
       }
 
       const isValid = await comparePassword(currentPassword, result.rows[0].password_hash);
-      
+
       if (!isValid) {
         throw new Error('Current password is incorrect');
       }

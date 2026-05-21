@@ -11,7 +11,9 @@ class SchoolAdminService {
 
   async getBranchUsers(branchId: string, role?: string, status?: string) {
     let query = `
-      SELECT u.*, b.name as branch_name
+      SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role, 
+             u.branch_id, u.status, u.is_active, u.created_at, u.updated_at,
+             b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
       WHERE u.branch_id = $1
@@ -40,7 +42,9 @@ class SchoolAdminService {
 
   async getUserById(userId: string, branchId: string) {
     const result = await pool.query(
-      `SELECT u.*, b.name as branch_name
+      `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role,
+              u.branch_id, u.status, u.is_active, u.created_at, u.updated_at,
+              b.name as branch_name
        FROM users u
        LEFT JOIN branches b ON u.branch_id = b.id
        WHERE u.id = $1 AND u.branch_id = $2`,
@@ -732,6 +736,280 @@ class SchoolAdminService {
     );
 
     return result.rows;
+  }
+
+  // Get branch students with class info
+  async getBranchStudents(branchId: string, grade?: string, status?: string) {
+    let query = `
+      SELECT 
+        s.id as student_id,
+        s.user_id,
+        s.grade,
+        s.monthly_fee,
+        s.bus_fee,
+        s.penalty_fee,
+        s.fee_status,
+        s.fee_approval_status,
+        u.digital_id,
+        u.name,
+        u.email,
+        u.status,
+        u.is_active,
+        u.created_at,
+        c.id as class_id,
+        c.name as class_name,
+        c.section as class_section,
+        c.capacity as class_capacity,
+        c.student_count as class_student_count
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+      WHERE s.branch_id = $1
+    `;
+
+    const params: any[] = [branchId];
+    let paramCount = 1;
+
+    if (grade) {
+      paramCount++;
+      query += ` AND s.grade = $${paramCount}`;
+      params.push(grade);
+    }
+
+    if (status) {
+      paramCount++;
+      query += ` AND u.status = $${paramCount}`;
+      params.push(status);
+    }
+
+    query += ' ORDER BY s.grade, u.name';
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  // Get student by ID with full details
+  async getStudentById(studentId: string, branchId: string) {
+    const result = await pool.query(
+      `SELECT 
+        s.id as student_id,
+        s.user_id,
+        s.grade,
+        s.monthly_fee,
+        s.bus_fee,
+        s.penalty_fee,
+        s.fee_status,
+        s.fee_approval_status,
+        u.digital_id,
+        u.name,
+        u.email,
+        u.status,
+        u.is_active,
+        u.created_at,
+        u.updated_at,
+        c.id as class_id,
+        c.name as class_name,
+        c.section as class_section,
+        c.capacity as class_capacity,
+        c.student_count as class_student_count,
+        c.teacher_id,
+        tu.name as teacher_name
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+      LEFT JOIN teachers t ON c.teacher_id = t.id
+      LEFT JOIN users tu ON t.user_id = tu.id
+      WHERE s.user_id = $1 AND s.branch_id = $2`,
+      [studentId, branchId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('Student not found in your branch');
+    }
+
+    return result.rows[0];
+  }
+
+  // ============================================================
+  // DASHBOARD FEATURES
+  // ============================================================
+
+  // Get At-Risk Students (High/Medium risk levels)
+  async getAtRiskStudents(branchId: string) {
+    const result = await pool.query(
+      `SELECT 
+        s.id as student_id,
+        s.user_id,
+        s.risk_level,
+        s.risk_factor,
+        s.grade,
+        s.monthly_fee,
+        s.bus_fee,
+        s.penalty_fee,
+        s.fee_status,
+        u.digital_id,
+        u.name,
+        u.email,
+        u.created_at,
+        -- Attendance count (last 30 days)
+        COALESCE(
+          (SELECT COUNT(*) 
+           FROM student_attendance sa 
+           WHERE sa.student_id = s.id 
+             AND sa.status = 'absent'
+             AND sa.date >= CURRENT_DATE - INTERVAL '30 days'),
+          0
+        ) as absence_count,
+        -- Average grade across all courses
+        COALESCE(
+          (SELECT ROUND(AVG((g.score / g.total) * 100), 2)
+           FROM grades g
+           JOIN courses c ON g.course_id = c.id
+           JOIN classes cl ON c.class_id = cl.id
+           WHERE g.student_id = s.id 
+             AND cl.branch_id = s.branch_id),
+          0
+        ) as average_grade
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.branch_id = $1
+        AND s.risk_level IN ('High', 'Medium')
+        AND u.status = 'Approved'
+      ORDER BY 
+        CASE s.risk_level 
+          WHEN 'High' THEN 1 
+          WHEN 'Medium' THEN 2 
+          ELSE 3 
+        END,
+        u.name`,
+      [branchId]
+    );
+
+    // Calculate summary counts
+    const summary = {
+      high: result.rows.filter(s => s.risk_level === 'High').length,
+      medium: result.rows.filter(s => s.risk_level === 'Medium').length
+    };
+
+    return {
+      students: result.rows,
+      summary
+    };
+  }
+
+  // Get Upcoming Events for branch
+  async getUpcomingEvents(branchId: string, limit: number = 10) {
+    const result = await pool.query(
+      `SELECT 
+        id,
+        title,
+        date,
+        type,
+        description,
+        created_at
+      FROM events
+      WHERE branch_id = $1
+        AND date >= CURRENT_DATE
+      ORDER BY date ASC, created_at ASC
+      LIMIT $2`,
+      [branchId, limit]
+    );
+
+    return result.rows;
+  }
+
+  // Create Event
+  async createEvent(data: {
+    title: string;
+    date: string;
+    type: string;
+    description?: string;
+    branchId: string;
+  }) {
+    const result = await pool.query(
+      `INSERT INTO events (title, date, type, description, branch_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [data.title, data.date, data.type, data.description || null, data.branchId]
+    );
+
+    return result.rows[0];
+  }
+
+  // Update Event
+  async updateEvent(eventId: string, branchId: string, data: {
+    title?: string;
+    date?: string;
+    type?: string;
+    description?: string;
+  }) {
+    // Verify event belongs to branch
+    const checkResult = await pool.query(
+      'SELECT id FROM events WHERE id = $1 AND branch_id = $2',
+      [eventId, branchId]
+    );
+
+    if (checkResult.rows.length === 0) {
+      throw new Error('Event not found or access denied');
+    }
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramCount = 0;
+
+    if (data.title) {
+      paramCount++;
+      fields.push(`title = $${paramCount}`);
+      values.push(data.title);
+    }
+
+    if (data.date) {
+      paramCount++;
+      fields.push(`date = $${paramCount}`);
+      values.push(data.date);
+    }
+
+    if (data.type) {
+      paramCount++;
+      fields.push(`type = $${paramCount}`);
+      values.push(data.type);
+    }
+
+    if (data.description !== undefined) {
+      paramCount++;
+      fields.push(`description = $${paramCount}`);
+      values.push(data.description);
+    }
+
+    if (fields.length === 0) {
+      throw new Error('No fields to update');
+    }
+
+    paramCount++;
+    values.push(eventId);
+
+    const result = await pool.query(
+      `UPDATE events SET ${fields.join(', ')}
+       WHERE id = $${paramCount}
+       RETURNING *`,
+      values
+    );
+
+    return result.rows[0];
+  }
+
+  // Delete Event
+  async deleteEvent(eventId: string, branchId: string) {
+    const result = await pool.query(
+      'DELETE FROM events WHERE id = $1 AND branch_id = $2 RETURNING id, title',
+      [eventId, branchId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('Event not found or access denied');
+    }
+
+    return result.rows[0];
   }
 }
 
