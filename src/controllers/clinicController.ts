@@ -12,36 +12,38 @@ export const getStudents = async (req: Request, res: Response) => {
 
   try {
     const filter = search 
-      ? `AND (i.full_name ILIKE $1 OR i.school_id ILIKE $1)` 
+      ? `AND (u.name ILIKE $1 OR u.digital_id ILIKE $1)` 
       : '';
     const params = search ? [`%${search}%`, limit, offset] : [limit, offset];
 
     const query = `
-      SELECT DISTINCT ON (i.full_name, i.id)
-        i.id, 
-        i.full_name AS name, 
-        i.school_id, 
-        i.grade, 
-        i.blood_group, 
-        i.allergies 
-      FROM silo_identities i
-      LEFT JOIN silo_clinic_visits v ON i.id = v.student_id
-      LEFT JOIN silo_clinic_messages m ON i.id = m.child_id
-      WHERE i.school_id LIKE 'STU-%' 
+      SELECT DISTINCT ON (u.name, s.id)
+        s.id, 
+        u.name, 
+        u.digital_id, 
+        s.grade, 
+        s.blood_group, 
+        s.allergies 
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN clinic_visits v ON s.id = v.student_id
+      LEFT JOIN clinic_chat_messages m ON s.id = m.student_id
+      WHERE u.role = 'student'
         ${search ? '' : 'AND (v.id IS NOT NULL OR m.id IS NOT NULL)'}
         ${filter}
-      ORDER BY i.full_name ASC
+      ORDER BY u.name ASC
       LIMIT ${search ? '$2 OFFSET $3' : '$1 OFFSET $2'}
     `;
 
     const result = await pool.query(query, params);
 
     const countQuery = `
-      SELECT COUNT(DISTINCT i.id) 
-      FROM silo_identities i
-      LEFT JOIN silo_clinic_visits v ON i.id = v.student_id
-      LEFT JOIN silo_clinic_messages m ON i.id = m.child_id
-      WHERE i.school_id LIKE 'STU-%' 
+      SELECT COUNT(DISTINCT s.id) 
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN clinic_visits v ON s.id = v.student_id
+      LEFT JOIN clinic_chat_messages m ON s.id = m.student_id
+      WHERE u.role = 'student'
         ${search ? '' : 'AND (v.id IS NOT NULL OR m.id IS NOT NULL)'}
         ${filter}
     `;
@@ -71,9 +73,9 @@ export const logVisit = async (req: Request, res: Response) => {
   }
 
   try {
-    // 1. Lookup the student in silo_identities using school_id or internal ID
+    // 1. Lookup the student using digital_id or internal ID
     const identityResult = await pool.query(
-      'SELECT id, full_name FROM silo_identities WHERE school_id = $1 OR id::text = $1',
+      'SELECT s.id, u.name FROM students s JOIN users u ON s.user_id = u.id WHERE s.id::text = $1 OR u.digital_id = $1',
       [student_id]
     );
 
@@ -81,14 +83,14 @@ export const logVisit = async (req: Request, res: Response) => {
       return sendError(res, `Student with ID ${student_id} not found.`, 404);
     }
 
-    const { id: identity_uuid, full_name: student_name } = identityResult.rows[0];
+    const { id: student_uuid, name: student_name } = identityResult.rows[0];
 
     // 2. Log the visit
     const result = await pool.query(
-      `INSERT INTO silo_clinic_visits (student_id, student_name, reason, treatment)
+      `INSERT INTO clinic_visits (student_id, student_name, reason, treatment)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [identity_uuid, student_name, reason, treatment]
+      [student_uuid, student_name, reason, treatment]
     );
 
     return sendSuccess(res, result.rows[0], 'Visit logged successfully.', 201);
@@ -121,7 +123,7 @@ export const getVisitHistory = async (req: Request, res: Response) => {
          reason,
          treatment,
          'Logged' AS status
-       FROM silo_clinic_visits 
+       FROM clinic_visits 
        ${filter}
        ORDER BY visit_time DESC
        LIMIT ${search ? '$2 OFFSET $3' : '$1 OFFSET $2'}`,
@@ -142,7 +144,7 @@ export const getMedicines = async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT id, name, stock, unit, description
-         FROM silo_medicines
+         FROM medicine_inventory
         ORDER BY name ASC`
     );
     return sendSuccess(res, result.rows);
@@ -165,7 +167,7 @@ export const deductMedicine = async (req: Request, res: Response) => {
 
   try {
     const result = await pool.query(
-      `UPDATE silo_medicines
+      `UPDATE medicine_inventory
           SET stock = GREATEST(stock - $1, 0),
               updated_at = NOW()
         WHERE id = $2
@@ -254,7 +256,7 @@ export const getChatMessages = async (req: Request, res: Response) => {
             FROM silo_clinic_messages m
             WHERE (m.receiver_id IS NULL
                    OR m.receiver_id IN (
-                     SELECT id FROM silo_users WHERE role = 'ClinicAdmin'
+                 SELECT id FROM users WHERE role = 'clinic-admin'
                    ))
               AND m.sender_id IN (SELECT sender_id FROM latest_per_sender)
             GROUP BY m.sender_id
@@ -269,9 +271,9 @@ export const getChatMessages = async (req: Request, res: Response) => {
             lps.student_id,
             COALESCE(uc.unread_count, 0)::int             AS unread_count
           FROM latest_per_sender lps
-          JOIN silo_users u ON lps.sender_id = u.id
-          JOIN silo_identities i ON u.identity_id = i.id
-          LEFT JOIN silo_identities st ON lps.student_id = st.id
+          JOIN users u ON lps.sender_id = u.id
+          LEFT JOIN students st ON lps.student_id = st.id
+          LEFT JOIN users su ON st.user_id = su.id
           LEFT JOIN unread_counts uc ON uc.sender_id = lps.sender_id
           ORDER BY lps.last_message_at DESC
         `;
@@ -293,12 +295,12 @@ export const getChatMessages = async (req: Request, res: Response) => {
             st.full_name AS student_name,
             to_char(m.created_at, 'HH:MI AM') AS timestamp,
             CASE 
-              WHEN m.sender_id IN (SELECT id FROM silo_users WHERE role = 'ClinicAdmin')
+              WHEN m.sender_id IN (SELECT id FROM users WHERE role = 'clinic-admin')
               THEN 'clinic' 
               ELSE 'parent' 
             END AS role
-          FROM silo_clinic_messages m
-          LEFT JOIN silo_identities st ON m.child_id = st.id
+          FROM clinic_chat_messages m
+          LEFT JOIN students st ON m.student_id = st.id
           ${filter}
           ORDER BY m.created_at ASC
         `;
@@ -332,8 +334,8 @@ export const sendChatMessage = async (req: Request, res: Response) => {
     if (senderRole === 'ClinicAdmin' && !finalReceiverId && childId) {
       // 1. Try to find the last parent who messaged about this child
       const lastParentMsg = await pool.query(
-        `SELECT sender_id FROM silo_clinic_messages 
-         WHERE child_id = $1 AND sender_id IN (SELECT id FROM silo_users WHERE role = 'Parent')
+        `SELECT sender_id FROM clinic_chat_messages 
+         WHERE student_id = $1 AND sender_id IN (SELECT id FROM users WHERE role = 'parent')
          ORDER BY created_at DESC LIMIT 1`,
         [childId]
       );
@@ -353,7 +355,7 @@ export const sendChatMessage = async (req: Request, res: Response) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO silo_clinic_messages (sender_id, receiver_id, message, child_id, is_read)
+      `INSERT INTO clinic_chat_messages (sender_id, receiver_id, message, student_id, is_read)
        VALUES ($1, $2, $3, $4, FALSE)
        RETURNING *, to_char(created_at, 'HH:MI AM') AS timestamp`,
       [senderId, finalReceiverId || null, message, childId || null]
@@ -389,13 +391,13 @@ export const markMessagesRead = async (req: Request, res: Response) => {
 
   try {
     const result = await pool.query(
-      `UPDATE silo_clinic_messages
+      `UPDATE clinic_chat_messages
           SET is_read = TRUE
         WHERE sender_id = $1
           AND is_read = FALSE
           AND (
             receiver_id IS NULL
-            OR receiver_id IN (SELECT id FROM silo_users WHERE role = 'ClinicAdmin')
+            OR receiver_id IN (SELECT id FROM users WHERE role = 'clinic-admin')
           )
         RETURNING id`,
       [sender_id]

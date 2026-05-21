@@ -34,33 +34,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       return r;
     };
 
-    if (result.rows.length > 0) {
-      user = result.rows[0];
-    } else {
-      const siloResult = await pool.query(
-        `SELECT u.id, u.identity_id, u.role, u.is_active, i.school_id, i.full_name AS name, (SELECT id FROM branches LIMIT 1) AS branch_id
-         FROM silo_users u
-         JOIN silo_identities i ON u.identity_id = i.id
-         WHERE u.id = $1`,
-        [decoded.userId]
-      );
-      if (siloResult.rows.length > 0) {
-        const siloRow = siloResult.rows[0];
-        user = {
-          id: siloRow.id,
-          digital_id: siloRow.school_id,
-          username: siloRow.school_id,
-          name: siloRow.name,
-          email: siloRow.school_id,
-          role: mapRole(siloRow.role),
-          branch_id: siloRow.branch_id,
-          status: 'Approved',
-          is_active: siloRow.is_active
-        };
-      }
-    }
-
-    if (!user) {
+    if (result.rows.length === 0) {
       res.status(401).json({
         success: false,
         error: {
@@ -70,6 +44,8 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       });
       return;
     }
+
+    user = result.rows[0];
 
     if (!user.is_active) {
       res.status(403).json({

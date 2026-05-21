@@ -12,7 +12,7 @@ import pool from '../config/db';
  */
 
 /**
- * Performs a hard cleanup of the silo_communication_logs table.
+ * Performs a hard cleanup of the communication_logs table.
  * Removes any records that are outside the current weekly window.
  */
 export const performCommunicationCleanup = async () => {
@@ -24,7 +24,7 @@ export const performCommunicationCleanup = async () => {
     // Logic: Delete records where week_ending is more than 6 days old.
     // This ensures that a record posted for Sunday stays through the following Thursday.
     await pool.query(
-      "DELETE FROM silo_communication_logs WHERE week_ending < CURRENT_DATE - INTERVAL '6 days'"
+      "DELETE FROM communication_logs WHERE week_ending < CURRENT_DATE - INTERVAL '6 days'"
     );
   } catch (err) {
     console.error('[commBookUtils] Cleanup failed:', err);

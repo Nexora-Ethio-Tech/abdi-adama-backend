@@ -17,60 +17,11 @@ class AuthService {
         [emailOrDigitalId]
       );
 
-      let user: any = null;
-      let isSiloUser = false;
-      let identityId = '';
-
-      const mapRole = (role: string): string => {
-        const r = role.toLowerCase();
-        if (r === 'clinicadmin') return 'clinic-admin';
-        return r;
-      };
-
-      if (result.rows.length > 0) {
-        user = result.rows[0];
-      } else {
-        // 2. Check silo_users if not found in standard users
-        const cleanInput = emailOrDigitalId.replace('-MB-', '-');
-        const siloResult = await pool.query(
-          `SELECT u.id, u.identity_id, u.role, u.password_hash, u.is_active, 
-                  i.school_id, i.full_name AS name, (SELECT id FROM branches LIMIT 1) AS branch_id
-           FROM silo_users u
-           JOIN silo_identities i ON u.identity_id = i.id
-           WHERE i.school_id = $1 
-              OR REPLACE(i.school_id, '-MB-', '-') = $1
-              OR i.school_id = $2
-              OR REPLACE(i.school_id, '-MB-', '-') = $2`,
-          [emailOrDigitalId, cleanInput]
-        );
-
-        if (siloResult.rows.length > 0) {
-          const siloRow = siloResult.rows[0];
-          identityId = siloRow.identity_id;
-          const normalizedRole = mapRole(siloRow.role);
-          user = {
-            id: siloRow.id,
-            digital_id: siloRow.school_id,
-            username: siloRow.school_id,
-            name: siloRow.name,
-            email: siloRow.school_id,
-            password_hash: siloRow.password_hash,
-            role: normalizedRole,
-            branch_id: siloRow.branch_id,
-            status: 'Approved',
-            is_active: siloRow.is_active
-          };
-          isSiloUser = true;
-        }
-      }
-
-      if (!user) {
+      if (result.rows.length === 0) {
         throw new Error('Invalid email or password');
       }
 
-      if (!user) {
-        throw new Error('Invalid email or password');
-      }
+      const user: any = result.rows[0];
 
       if (!user.is_active) {
         throw new Error('Account is inactive. Please contact administrator');
@@ -95,9 +46,6 @@ class AuthService {
         user_id: user.id,
         digitalId: user.digital_id,
         digital_id: user.digital_id,
-        school_id: user.digital_id,
-        identityId: identityId,
-        identity_id: identityId,
         role: user.role,
         branchId: user.branch_id || '',
         branch_id: user.branch_id || ''
@@ -141,24 +89,7 @@ class AuthService {
       if (result.rows.length > 0) {
         user = result.rows[0];
       } else {
-        const siloResult = await pool.query(
-          `SELECT u.id, u.role, u.is_active, i.school_id, (SELECT id FROM branches LIMIT 1) AS branch_id
-           FROM silo_users u
-           JOIN silo_identities i ON u.identity_id = i.id
-           WHERE u.id = $1`,
-          [decoded.userId]
-        );
-        if (siloResult.rows.length > 0) {
-          const siloRow = siloResult.rows[0];
-          user = {
-            id: siloRow.id,
-            digital_id: siloRow.school_id,
-            role: mapRole(siloRow.role),
-            branch_id: siloRow.branch_id,
-            is_active: siloRow.is_active,
-            status: 'Approved'
-          };
-        }
+        throw new Error('Invalid refresh token');
       }
 
       if (!user || !user.is_active) {
@@ -201,38 +132,7 @@ class AuthService {
         return result.rows[0];
       }
 
-      // Check silo_users
-      const siloResult = await pool.query(
-        `SELECT u.id, u.identity_id, u.role, u.is_active, i.school_id, i.full_name AS name, (SELECT id FROM branches LIMIT 1) AS branch_id
-         FROM silo_users u
-         JOIN silo_identities i ON u.identity_id = i.id
-         WHERE u.id = $1`,
-        [userId]
-      );
-
-      if (siloResult.rows.length === 0) {
-        throw new Error('User not found');
-      }
-
-      const siloRow = siloResult.rows[0];
-      const mapRole = (role: string): string => {
-        const r = role.toLowerCase();
-        if (r === 'clinicadmin') return 'clinic-admin';
-        return r;
-      };
-
-      return {
-        id: siloRow.id,
-        digital_id: siloRow.school_id,
-        username: siloRow.school_id,
-        name: siloRow.name,
-        email: siloRow.school_id,
-        role: mapRole(siloRow.role) as any,
-        branch_id: siloRow.branch_id,
-        status: 'Approved' as any,
-        is_active: siloRow.is_active,
-        created_at: new Date()
-      } as any;
+      throw new Error('User not found');
     } catch (error) {
       logger.error('Get current user error:', error);
       throw error;

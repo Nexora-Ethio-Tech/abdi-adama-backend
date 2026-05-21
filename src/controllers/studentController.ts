@@ -9,11 +9,11 @@ import { performAllCleanups } from '../shared/cleanupUtils';
 /**
  * Returns the enrolled course IDs (current semester) for a student.
  * Used by getDashboard to resolve schedule and deadlines without
- * requiring a section_id column on silo_enrollments.
+ * The student views courses via enrollments/courses.
  */
 const getEnrolledCourseIds = async (studentIdentityId: string): Promise<string[]> => {
   const result = await pool.query(
-    `SELECT course_id::text FROM silo_enrollments
+    `SELECT course_id::text FROM courses
      WHERE student_id = $1
        AND academic_year = '2025/2026'
        AND semester = 2`,
@@ -27,7 +27,7 @@ const getEnrolledCourseIds = async (studentIdentityId: string): Promise<string[]
  */
 const verifyParentLink = async (parentUserId: string, studentId: string): Promise<boolean> => {
   const result = await pool.query(
-    'SELECT 1 FROM silo_family_links WHERE parent_user_id = $1 AND student_identity_id = $2',
+    'SELECT 1 FROM parent_student WHERE parent_id = $1 AND student_id = $2',
     [parentUserId, studentId]
   );
   return result.rows.length > 0;
@@ -48,7 +48,8 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
          si.school_id,
          si.full_name   AS "fullName",
          si.grade
-       FROM silo_identities si
+       FROM students si
+       JOIN users u ON si.user_id = u.id
        WHERE si.id = $1
        LIMIT 1`,
       [identityId]
@@ -73,7 +74,7 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
  *  - announcements:      General + Logistics notices
  *  - stats:              Attendance, rank, active courses
  *
- * Schedule and deadlines are resolved via silo_enrollments → silo_courses,
+ * Schedule and deadlines are resolved via courses.
  * so no section_id column is required.
  */
 export const getDashboard = async (req: AuthRequest, res: Response) => {
@@ -85,7 +86,7 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
     const enrolledCourseIds = await getEnrolledCourseIds(studentIdentityId!);
 
     // ── Today's schedule ────────────────────────────────────────────────────────
-    // Joins through enrolled courses → silo_schedule.
+    // Joins through enrolled courses → schedules.
     // day_of_week: 0=Sunday … 6=Saturday (PostgreSQL EXTRACT(DOW))
     let scheduleResult: any = { rows: [] };
     if (enrolledCourseIds.length > 0) {
@@ -97,9 +98,9 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
            to_char(sc.start_time, 'HH24:MI') AS start_time,
            to_char(sc.end_time,   'HH24:MI') AS end_time,
            sc.room
-         FROM silo_schedule sc
-         JOIN silo_courses c ON c.id = sc.course_id
-         LEFT JOIN silo_identities i ON i.id = c.teacher_id
+         FROM schedules sc
+         JOIN courses c ON c.id = sc.course_id
+         LEFT JOIN users i ON i.id = c.teacher_id
          WHERE c.id = ANY($1::uuid[])
            AND sc.day_of_week = EXTRACT(DOW FROM CURRENT_DATE)::int
          ORDER BY sc.start_time`,
@@ -118,8 +119,8 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
            d.type,
            d.due_date,
            c.name AS subject
-         FROM silo_deadlines d
-         LEFT JOIN silo_courses c ON c.id = d.course_id
+         FROM deadlines d
+         LEFT JOIN courses c ON c.id = d.course_id
          WHERE d.course_id = ANY($1::uuid[])
            AND d.due_date >= CURRENT_DATE
            AND LOWER(COALESCE(d.type, '')) <> 'live exam'
@@ -136,8 +137,8 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
          tr.award_label,
          tr.reward_month,
          tr.reward_year
-       FROM silo_teacher_rewards tr
-       JOIN silo_identities i ON i.id = tr.teacher_identity_id
+       FROM grades g
+       JOIN users i ON i.id = g.id
        WHERE tr.reward_month = EXTRACT(MONTH FROM CURRENT_DATE)::int
          AND tr.reward_year  = EXTRACT(YEAR  FROM CURRENT_DATE)::int
        ORDER BY tr.created_at DESC
@@ -153,7 +154,7 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
          content, 
          timestamp::timestamptz AS timestamp,
          'Academic'::text AS category
-       FROM silo_announcements
+       FROM notices
        
        UNION ALL
        
@@ -164,13 +165,13 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
          n.message             AS content, 
          n.published_at::timestamptz AS timestamp,
          'Logistics'::text     AS category
-       FROM silo_logistics_notices n
+       FROM logistics_notices n
        WHERE n.deleted_at IS NULL
          AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
-         AND n.branch_id = (SELECT branch_id FROM silo_identities WHERE id = $1)
+         AND n.branch_id = (SELECT branch_id FROM students WHERE id = $1)
          AND n.sender_id IN (
-           SELECT r.driver_id FROM silo_routes r
-           JOIN silo_route_manifest rm ON r.id = rm.route_id
+           SELECT r.driver_id FROM routes r
+           JOIN student_routes rm ON r.id = rm.route_id
            WHERE rm.student_id = $1
          )
        ORDER BY timestamp DESC
@@ -182,14 +183,15 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
     const statsResult = await pool.query(
       `SELECT
          (SELECT ROUND(COUNT(*) FILTER (WHERE status = 'Present')::numeric / NULLIF(COUNT(*), 0) * 100, 1)::text || '%' 
-          FROM silo_attendance WHERE student_id = $1) AS attendance,
+          FROM student_attendance WHERE student_id = $1) AS attendance,
          CASE 
            WHEN s.academic_rank IS NOT NULL THEN '#' || s.academic_rank::text
            ELSE 'Pending'
          END AS rank,
-         (SELECT json_agg(c.name) FROM silo_enrollments e JOIN silo_courses c ON e.course_id = c.id WHERE e.student_id = $1) AS active_courses
-       FROM silo_identities i
-       LEFT JOIN silo_student_stats s ON i.id = s.student_id
+         (SELECT json_agg(c.name) FROM courses c WHERE c.id = ANY(ARRAY(SELECT course_id FROM grades WHERE student_id = $1))) AS active_courses
+       FROM students i
+       LEFT JOIN users u ON i.user_id = u.id
+       LEFT JOIN users s ON i.id = s.id
        WHERE i.id = $1`,
       [studentIdentityId]
     );

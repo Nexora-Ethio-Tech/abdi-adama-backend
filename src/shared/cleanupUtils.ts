@@ -16,13 +16,13 @@ export const performAllCleanups = async (): Promise<void> => {
   try {
     // 1. Hard-delete driver logistics notices older than 3 days
     const hardDelete = await pool.query(`
-      DELETE FROM silo_logistics_notices
-      WHERE published_at < NOW() - INTERVAL '3 days'
+      DELETE FROM logistics_notices
+      WHERE created_at < NOW() - INTERVAL '3 days'
     `);
 
     // 2. Hard-delete soft-deleted notices older than 1 day (cleanup of deleted_at records)
     const softDelete = await pool.query(`
-      DELETE FROM silo_logistics_notices
+      DELETE FROM logistics_notices
       WHERE deleted_at IS NOT NULL
         AND deleted_at < NOW() - INTERVAL '1 day'
     `);

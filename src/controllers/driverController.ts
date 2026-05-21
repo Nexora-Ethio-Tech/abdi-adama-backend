@@ -21,7 +21,7 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
   try {
     // 1. Find the driver's route
     const routeResult = await pool.query(
-      'SELECT id, bus_number, route_name FROM silo_routes WHERE driver_id = $1',
+      'SELECT id, name FROM routes WHERE driver_id = $1',
       [identity_id]
     );
 
@@ -39,8 +39,8 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
          i.school_id  AS digital_id,
          i.grade,
          $1::text     AS route_name
-       FROM silo_route_manifest rm
-       JOIN silo_identities i ON i.id = rm.student_id
+       FROM student_routes rm
+       JOIN students s ON s.id = rm.student_id
        WHERE rm.route_id = $2
        ORDER BY i.full_name ASC`,
       [route.route_name, route.id]
@@ -73,7 +73,7 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
   try {
     // Get driver's full name for the notice
     const driverResult = await pool.query(
-      'SELECT full_name FROM silo_identities WHERE id = $1',
+      'SELECT u.name FROM users WHERE id = $1',
       [identity_id]
     );
     const driverName = driverResult.rows[0]?.full_name || 'Driver';
@@ -85,7 +85,7 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
     const branchId = req.user?.branch_id || '1';
 
     const result = await pool.query(
-      `INSERT INTO silo_logistics_notices (sender_id, message, title, stations, published_at, expires_at, branch_id)
+      `INSERT INTO logistics_notices (sender_id, message, title, created_at)
        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6)
        RETURNING *`,
       [identity_id, content, title || null, stations || null, expiresAt, branchId]
@@ -108,7 +108,7 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
 
     // 3. Find assigned students for this driver (to restrict broadcast)
     const manifestResult = await pool.query(
-      'SELECT student_id FROM silo_route_manifest rm JOIN silo_routes r ON r.id = rm.route_id WHERE r.driver_id = $1',
+      'SELECT student_id FROM student_routes rm JOIN routes r ON r.id = rm.route_id WHERE r.driver_id = $1',
       [identity_id]
     );
     const assignedStudentIds = manifestResult.rows.map(r => r.student_id);
@@ -152,8 +152,8 @@ export const getNotices = async (req: AuthRequest, res: Response) => {
         i.full_name    AS driverName,
         'Logistics'::text AS category,
         false AS is_pending
-      FROM silo_logistics_notices n
-      LEFT JOIN silo_identities i ON i.id = n.sender_id
+      FROM logistics_notices n
+      LEFT JOIN users u ON u.id = n.sender_id
       WHERE n.deleted_at IS NULL
         AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
         AND n.branch_id = $1
@@ -187,7 +187,7 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
 
   try {
     const checkResult = await pool.query(
-      'SELECT sender_id, branch_id FROM silo_logistics_notices WHERE id = $1',
+      'SELECT sender_id FROM logistics_notices WHERE id = $1',
       [id]
     );
 
@@ -209,7 +209,7 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
     }
 
     const deleteResult = await pool.query(
-      'UPDATE silo_logistics_notices SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id',
+      'UPDATE logistics_notices SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id',
       [id]
     );
 
