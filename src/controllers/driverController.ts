@@ -247,7 +247,7 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
 
   // Extract token from query parameter or Authorization header
   let token: string | undefined = req.query.token as string | undefined;
-  
+
   if (!token) {
     const authHeader = req.headers['authorization'];
     token = authHeader && authHeader.split(' ')[1];
@@ -268,10 +268,10 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
     const branchId = user?.branch_id || '1';
     const role = user?.role || 'Guest';
     const identityId = user?.identity_id || 'unknown';
-    
+
     // Get child identities for parents (for filtering logistics notices to assigned children)
     let childIdentityIds: string[] | undefined = undefined;
-    
+
     // Send SSE headers
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -282,7 +282,7 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
 
     res.write(':keep-alive\n\n');
     res.write(`data: ${JSON.stringify({ type: 'connected', branchId, role, identityId })}\n\n`);
-    
+
     // Register this client with SSE manager
     addClient(res, {
       branchId,

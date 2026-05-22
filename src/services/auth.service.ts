@@ -46,6 +46,7 @@ class AuthService {
       const payload: any = {
         userId: user.id,
         user_id: user.id,
+        identity_id: user.id,
         digitalId: user.digital_id,
         digital_id: user.digital_id,
         role: user.role,
@@ -57,6 +58,8 @@ class AuthService {
       const refreshToken = generateRefreshToken(payload);
 
       delete user.password_hash;
+      // Ensure identity_id is included in user object returned to frontend
+      user.identity_id = user.id;
 
       logger.info(`User logged in: ${user.email} (${user.digital_id}) - ${user.role}`);
 
@@ -101,6 +104,7 @@ class AuthService {
       const payload: any = {
         userId: user.id,
         user_id: user.id,
+        identity_id: user.id,
         digitalId: user.digital_id,
         digital_id: user.digital_id,
         school_id: user.digital_id,
@@ -131,7 +135,10 @@ class AuthService {
       );
 
       if (result.rows.length > 0) {
-        return result.rows[0];
+        const user: any = result.rows[0];
+        // Ensure identity_id is included
+        user.identity_id = user.id;
+        return user;
       }
 
       throw new Error('User not found');
