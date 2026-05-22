@@ -34,14 +34,14 @@ export const getBooks = async (req: Request, res: Response) => {
 
   try {
     const searchFilter = search
-      ? `WHERE title ILIKE $3 OR author ILIKE $3 OR isbn ILIKE $3`
+      ? `WHERE title ILIKE $3 OR author ILIKE $3`
       : '';
     const params: any[] = search
       ? [limit, offset, `%${search}%`]
       : [limit, offset];
 
     const countQuery = search
-      ? `SELECT COUNT(*) FROM library_books WHERE title ILIKE $1 OR author ILIKE $1 OR isbn ILIKE $1`
+      ? `SELECT COUNT(*) FROM library_books WHERE title ILIKE $1 OR author ILIKE $1`
       : `SELECT COUNT(*) FROM library_books`;
     const countParams = search ? [`%${search}%`] : [];
 
@@ -51,12 +51,11 @@ export const getBooks = async (req: Request, res: Response) => {
            id,
            title,
            author,
-           isbn,
            shelf,
            total,
            available,
            status,
-           isbn AS book_code,
+           book_code,
            created_at
          FROM library_books
          ${searchFilter}
@@ -83,7 +82,7 @@ export const getBooks = async (req: Request, res: Response) => {
  * POST /api/library/add-book
  */
 export const addBook = async (req: Request, res: Response) => {
-  const { title, author, isbn, shelf_location, stock } = req.body;
+  const { title, author, shelf_location, stock } = req.body;
 
   if (!title || !author) {
     return sendError(res, 'Title and author are required.');
@@ -95,10 +94,10 @@ export const addBook = async (req: Request, res: Response) => {
     const bookCode = `BK-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const result = await pool.query(
-      `INSERT INTO library_books (title, author, isbn, shelf, total, available, status)
-       VALUES ($1, $2, $3, $4, $5, $5, 'Available')
-       RETURNING id, title, author, isbn, shelf, total, available, status, isbn AS book_code, created_at`,
-      [title, author, isbn && isbn.trim() !== '' ? isbn.trim() : null, shelf_location, stockNum]
+      `INSERT INTO library_books (title, author, shelf, total, available, status, book_code)
+       VALUES ($1, $2, $3, $4, $4, 'Available', $5)
+       RETURNING id, title, author, shelf, total, available, status, book_code, created_at`,
+      [title, author, shelf_location, stockNum, bookCode]
     );
 
     res.status(201).json({
@@ -108,9 +107,6 @@ export const addBook = async (req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
-    if (err.code === '23505') {
-      return sendError(res, 'A book with this ISBN already exists.', 409);
-    }
     sendError(res, 'Failed to add book.', 500, err.message);
   }
 };

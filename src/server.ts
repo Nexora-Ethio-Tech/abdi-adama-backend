@@ -16,6 +16,39 @@ pool.query('SELECT NOW()', (err, res) => {
   logger.info(`Database time: ${res.rows[0].now}`);
 });
 
+// Ensure schema extensions are applied (idempotent: safe to run every boot)
+async function ensureSchemaExtensions(): Promise<void> {
+  const migrations = [
+    // Classes — capacity & section columns (from schema_additions.sql)
+    `ALTER TABLE classes ADD COLUMN IF NOT EXISTS capacity INT DEFAULT 0`,
+    `ALTER TABLE classes ADD COLUMN IF NOT EXISTS section VARCHAR(10)`,
+    // Pending applications — new columns used by academic application workflow
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_name VARCHAR(200)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_email VARCHAR(255)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_phone VARCHAR(30)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS grade_applying VARCHAR(20)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS parent_phone VARCHAR(30)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS gender VARCHAR(10)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS address TEXT`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS notes TEXT`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL`,
+    // Library book code column (used for human-friendly Book ID like BK-1234)
+    `ALTER TABLE library_books ADD COLUMN IF NOT EXISTS book_code VARCHAR(50)`,
+  ];
+
+  for (const sql of migrations) {
+    try {
+      await pool.query(sql);
+    } catch (err: any) {
+      // Log but don't crash — columns may already exist under a different constraint
+      logger.warn(`Schema migration skipped: ${sql.slice(0, 60)}... — ${err.message}`);
+    }
+  }
+  logger.info('✅ Schema extensions verified');
+}
+
+ensureSchemaExtensions();
+
 const server = app.listen(PORT, () => {
   logger.info(`🚀 Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
