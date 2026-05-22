@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import pool from '../config/db';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { sendSuccess, sendError, getPagination } from '../shared/responseUtils';
 import { getNextSaturday } from '../shared/dateUtils';
-import { broadcast } from '../shared/sseManager';
+import { broadcast, addClient, removeClient } from '../shared/sseManager';
 import { performAllCleanups } from '../shared/cleanupUtils';
 
 /**
@@ -47,10 +48,10 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
     );
 
     return sendSuccess(res, {
-      bus_number:  route.bus_number,
-      route_name:  route.route_name,
+      bus_number: route.bus_number,
+      route_name: route.route_name,
       student_count: manifestResult.rows.length,
-      manifest:    manifestResult.rows,
+      manifest: manifestResult.rows,
     });
   } catch (err: any) {
     return sendError(res, 'Failed to fetch manifest.', 500, err.message);
@@ -73,37 +74,38 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
   try {
     // Get driver's full name for the notice
     const driverResult = await pool.query(
-      'SELECT u.name FROM users WHERE id = $1',
+      'SELECT full_name FROM users WHERE id = $1',
       [identity_id]
     );
     const driverName = driverResult.rows[0]?.full_name || 'Driver';
 
-    const expiresAt = getNextSaturday(new Date());
-    // Set expiration to end of Saturday (e.g., 11:59 PM)
+    // Auto-expire after 5 days
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 5);
     expiresAt.setHours(23, 59, 59, 999);
 
     const branchId = req.user?.branch_id || '1';
 
     const result = await pool.query(
-      `INSERT INTO logistics_notices (sender_id, message, title, created_at)
-       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6)
+      `INSERT INTO logistics_notices (sender_id, message, title, stations, expires_at, branch_id, driver_name, category, published_at, timestamp, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Logistics', NOW(), NOW(), CURRENT_TIMESTAMP)
        RETURNING *`,
-      [identity_id, content, title || null, stations || null, expiresAt, branchId]
+      [identity_id, content, title || 'Logistics Update', stations || null, expiresAt, branchId, driverName]
     );
 
     const notice = result.rows[0];
     const broadcastPayload = {
-      id:         notice.id,
-      title:      notice.title || 'Logistics Update',
-      content:    notice.message,
-      stations:   notice.stations,
+      id: notice.id,
+      title: notice.title || 'Logistics Update',
+      content: notice.message,
+      stations: notice.stations,
       driverName,
-      timestamp:  notice.published_at,
-      category:   'Logistics',
-      priority:   'Normal',
+      timestamp: notice.published_at,
+      category: 'Logistics',
+      priority: 'Normal',
       expires_at: notice.expires_at,
-      branchId:   notice.branch_id,
-      senderId:   identity_id
+      branchId: notice.branch_id,
+      senderId: identity_id
     };
 
     // 3. Find assigned students for this driver (to restrict broadcast)
@@ -114,7 +116,7 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
     const assignedStudentIds = manifestResult.rows.map(r => r.student_id);
 
     // Push to relevant SSE clients instantly (Assigned Student/Parent + Admin/VP in branch)
-    const allowedRoles = ['Student', 'Parent', 'Admin', 'SchoolAdmin', 'VicePrincipal'];
+    const allowedRoles = ['Student', 'Parent', 'Admin', 'SchoolAdmin', 'VicePrincipal', 'SuperAdmin'];
     broadcast('LOGISTICS_NOTICE', broadcastPayload, branchId, allowedRoles, assignedStudentIds);
 
     return sendSuccess(res, {
@@ -149,11 +151,10 @@ export const getNotices = async (req: AuthRequest, res: Response) => {
         n.published_at,
         n.expires_at,
         n.branch_id,
-        i.full_name    AS driverName,
+        n.driver_name  AS driverName,
         'Logistics'::text AS category,
         false AS is_pending
       FROM logistics_notices n
-      LEFT JOIN users u ON u.id = n.sender_id
       WHERE n.deleted_at IS NULL
         AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
         AND n.branch_id = $1
@@ -178,7 +179,8 @@ export const getNotices = async (req: AuthRequest, res: Response) => {
 
 /**
  * DELETE /api/driver/notice/:id
- * Soft deletes a notice. Only the sender can delete their own notice.
+ * Soft deletes a notice and broadcasts deletion to all connected clients.
+ * Only the sender can delete their own notice.
  */
 export const deleteNotice = async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
@@ -187,7 +189,7 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
 
   try {
     const checkResult = await pool.query(
-      'SELECT sender_id FROM logistics_notices WHERE id = $1',
+      'SELECT sender_id, branch_id FROM logistics_notices WHERE id = $1',
       [id]
     );
 
@@ -217,8 +219,85 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
       return sendError(res, 'Notice could not be deleted.', 500);
     }
 
+    // 3. Broadcast deletion event to all connected clients (immediate real-time sync)
+    // Find assigned students for the driver posting this notice
+    const manifestResult = await pool.query(
+      'SELECT student_id FROM student_routes rm JOIN routes r ON r.id = rm.route_id WHERE r.driver_id = $1',
+      [notice.sender_id]
+    );
+    const assignedStudentIds = manifestResult.rows.map(r => r.student_id);
+
+    // Broadcast to all relevant roles (drivers, students, parents, admins, VP, super admin)
+    const allowedRoles = ['Driver', 'Student', 'Parent', 'Admin', 'SchoolAdmin', 'VicePrincipal', 'SuperAdmin'];
+    broadcast('NOTICE_DELETED', { id, deletedBy: identity_id, deletedAt: new Date().toISOString() }, notice.branch_id, allowedRoles, assignedStudentIds);
+
     return sendSuccess(res, null, 'Notice deleted successfully.');
   } catch (err: any) {
     return sendError(res, 'Failed to delete notice.', 500, err.message);
   }
+};
+
+/**
+ * GET /api/driver/stream
+ * SSE stream endpoint. Client connects here to receive real-time notice updates (deletions, new posts).
+ * Supports token via query parameter (for EventSource API) or Authorization header.
+ */
+export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
+  const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+
+  // Extract token from query parameter or Authorization header
+  let token: string | undefined = req.query.token as string | undefined;
+  
+  if (!token) {
+    const authHeader = req.headers['authorization'];
+    token = authHeader && authHeader.split(' ')[1];
+  }
+
+  if (!token) {
+    res.status(401).json({ message: 'Authentication token required' });
+    return;
+  }
+
+  // Verify and decode token
+  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+    if (err) {
+      res.status(403).json({ message: 'Invalid or expired token' });
+      return;
+    }
+
+    const branchId = user?.branch_id || '1';
+    const role = user?.role || 'Guest';
+    const identityId = user?.identity_id || 'unknown';
+    
+    // Get child identities for parents (for filtering logistics notices to assigned children)
+    let childIdentityIds: string[] | undefined = undefined;
+    
+    // Send SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
+    });
+
+    res.write(':keep-alive\n\n');
+    res.write(`data: ${JSON.stringify({ type: 'connected', branchId, role, identityId })}\n\n`);
+    
+    // Register this client with SSE manager
+    addClient(res, {
+      branchId,
+      role,
+      identityId,
+      childIdentityIds
+    });
+
+    // Handle client disconnect
+    res.on('close', () => {
+      removeClient(res);
+    });
+
+    res.on('error', () => {
+      removeClient(res);
+    });
+  });
 };

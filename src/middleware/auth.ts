@@ -28,11 +28,20 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     );
 
     const mapRole = (role: string): string => {
-      const r = role.toLowerCase().replace(/_/g, '-');
-      if (r === 'clinicadmin') return 'clinic-admin';
-      if (r === 'financeadmin' || r === 'finance-admin') return 'finance-clerk';
-      if (r === 'viceprincipal') return 'vice-principal';
-      return r;
+      if (!role) return '';
+      // Normalize common DB variants to the hyphenated role slugs used across the app
+      let r = role.toString().toLowerCase().trim();
+      r = r.replace(/[_\s]+/g, '-');
+      // Handle common compacted forms
+      if (r === 'clinicadmin' || r === 'clinic-admin') return 'clinic-admin';
+      if (r === 'financeadmin' || r === 'finance-admin' || r === 'finance_clerk') return 'finance-clerk';
+      if (r === 'viceprincipal' || r === 'vice-principal') return 'vice-principal';
+      if (r === 'schooladmin' || r === 'school-admin') return 'school-admin';
+      if (r === 'superadmin' || r === 'super-admin') return 'super-admin';
+      if (r === 'audit' || r === 'auditor') return 'auditor';
+      if (r === 'driver') return 'driver';
+      // Default: ensure hyphenated form
+      return r.replace(/_/g, '-');
     };
 
     if (result.rows.length === 0) {

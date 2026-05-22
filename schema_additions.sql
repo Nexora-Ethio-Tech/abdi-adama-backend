@@ -1,4 +1,4 @@
-🚀 Server running on port 5000 Environment: development Health check: http: // localhost :5000 / health -- ============================================================
+-- ============================================================
 -- ADDITIONAL SCHEMA CHANGES FOR NEW FEATURES
 -- Date: May 9, 2026
 -- ============================================================
@@ -122,6 +122,16 @@ CREATE TRIGGER IF NOT EXISTS trg_revenue_targets_updated BEFORE
 UPDATE ON revenue_targets FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER IF NOT EXISTS trg_profit_goals_updated BEFORE
 UPDATE ON profit_goals FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- 13. LOGISTICS NOTICES - ADD MISSING COLUMNS FOR DRIVER NOTIFICATIONS
+ALTER TABLE logistics_notices ADD COLUMN IF NOT EXISTS message TEXT;
+ALTER TABLE logistics_notices ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE logistics_notices ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE logistics_notices ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES branches(id) ON DELETE CASCADE;
+ALTER TABLE logistics_notices ADD COLUMN IF NOT EXISTS timestamp TIMESTAMPTZ DEFAULT NOW();
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_logistics_notices_branch_id ON logistics_notices(branch_id);
+CREATE INDEX IF NOT EXISTS idx_logistics_notices_sender_id ON logistics_notices(sender_id);
+CREATE INDEX IF NOT EXISTS idx_logistics_notices_deleted_at ON logistics_notices(deleted_at);
 -- ============================================================
 -- END OF ADDITIONAL SCHEMA
 -- ============================================================

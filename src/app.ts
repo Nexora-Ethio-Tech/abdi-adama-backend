@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { errorHandler } from './middleware/errorHandler';
 import logger from './utils/logger';
+import { startKeepalive } from './shared/sseManager';
 import authRoutes from './routes/auth.routes';
 import superAdminRoutes from './routes/superAdmin.routes';
 import schoolAdminRoutes from './routes/schoolAdmin.routes';
@@ -19,6 +20,9 @@ import libraryRoutes from './routes/libraryRoutes';
 import academicRoutes from './routes/academic.routes';
 
 const app = express();
+
+// Start SSE keepalive for real-time client connections
+startKeepalive();
 
 app.use(helmet());
 

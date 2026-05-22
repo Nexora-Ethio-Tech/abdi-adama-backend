@@ -1,10 +1,13 @@
 import { Router } from 'express';
-import { getManifest, postNotice, getNotices, deleteNotice } from '../controllers/driverController';
+import { getManifest, postNotice, getNotices, deleteNotice, subscribeToNotifications } from '../controllers/driverController';
 import { authenticateToken, authorizeRoles } from '../middleware/authMiddleware';
 
 const router = Router();
 
-// All routes require Driver JWT
+// SSE stream for real-time notification updates (handles its own authentication)
+router.get('/stream', subscribeToNotifications);
+
+// All other routes require Driver JWT
 router.use(authenticateToken);
 
 // Manifest is Driver-only
