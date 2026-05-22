@@ -14,10 +14,10 @@ export const getStats = async (req: Request, res: Response) => {
     ]);
 
     res.json({
-      totalCollection: parseInt(coll.rows[0].total   || '0', 10),
-      activeLoans:     parseInt(loans.rows[0].active  || '0', 10),
-      availableNow:    parseInt(avail.rows[0].available || '0', 10),
-      timestamp:       new Date().toISOString(),
+      totalCollection: parseInt(coll.rows[0].total || '0', 10),
+      activeLoans: parseInt(loans.rows[0].active || '0', 10),
+      availableNow: parseInt(avail.rows[0].available || '0', 10),
+      timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
     sendError(res, 'Failed to fetch library stats.', 500, err.message);
@@ -67,8 +67,8 @@ export const getBooks = async (req: Request, res: Response) => {
     ]);
 
     res.json({
-      data:      dataResult.rows,
-      total:     parseInt(countResult.rows[0].count, 10),
+      data: dataResult.rows,
+      total: parseInt(countResult.rows[0].count, 10),
       page,
       limit,
       timestamp: new Date().toISOString(),
@@ -101,9 +101,9 @@ export const addBook = async (req: Request, res: Response) => {
     );
 
     res.status(201).json({
-      status:  'success',
+      status: 'success',
       message: 'Book added successfully.',
-      data:    result.rows[0],
+      data: result.rows[0],
       timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
@@ -160,7 +160,7 @@ export const getLoans = async (req: Request, res: Response) => {
     ]);
 
     res.json({
-      data:      dataResult.rows,
+      data: dataResult.rows,
       page,
       limit,
       timestamp: new Date().toISOString(),
@@ -229,9 +229,9 @@ export const issueBook = async (req: Request, res: Response) => {
     await client.query('COMMIT');
 
     res.status(201).json({
-      status:  'success',
+      status: 'success',
       message: `Book "${book.title}" issued to ${student.full_name}.`,
-      data:    loanResult.rows[0],
+      data: loanResult.rows[0],
       timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
@@ -286,7 +286,7 @@ export const returnBook = async (req: Request, res: Response) => {
     await client.query('COMMIT');
 
     res.json({
-      status:  'success',
+      status: 'success',
       message: 'Book returned successfully.',
       timestamp: new Date().toISOString(),
     });
