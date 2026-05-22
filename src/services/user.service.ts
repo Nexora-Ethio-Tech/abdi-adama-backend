@@ -18,6 +18,31 @@ class UserService {
 
       const { name, email, role, branchId, password, username, grade } = userData;
 
+      // Proactively check for duplicate email
+      const emailCheck = await client.query(
+        'SELECT id FROM users WHERE email = $1',
+        [email]
+      );
+      if (emailCheck.rows.length > 0) {
+        const error: any = new Error('A user with this email address already exists');
+        error.statusCode = 409;
+        error.code = 'EMAIL_EXISTS';
+        throw error;
+      }
+
+      const userUsername = username || email.split('@')[0];
+      // Proactively check for duplicate username
+      const usernameCheck = await client.query(
+        'SELECT id FROM users WHERE username = $1',
+        [userUsername]
+      );
+      if (usernameCheck.rows.length > 0) {
+        const error: any = new Error('A user with this username already exists');
+        error.statusCode = 409;
+        error.code = 'USERNAME_EXISTS';
+        throw error;
+      }
+
       let branchName: string | null = null;
       if (branchId) {
         const branchResult = await client.query<{ name: string }>(
@@ -33,7 +58,6 @@ class UserService {
       // Use complex password for admin roles
       const userPassword = password || (PIN_BASED_ROLES.includes(role) ? generate4DigitPIN() : generateRandomPassword());
       const passwordHash = await hashPassword(userPassword);
-      const userUsername = username || email.split('@')[0];
 
       const userResult = await client.query<User>(
         `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)

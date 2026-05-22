@@ -573,6 +573,34 @@ class SchoolAdminService {
   }
 
   // Student Application Management
+  async createPendingApplication(data: {
+    branchId: string;
+    applicantName: string;
+    applicantEmail?: string;
+    applicantPhone?: string;
+    gradeApplying: string;
+    parentName?: string;
+    parentPhone?: string;
+    dob?: string;
+    gender?: string;
+    address?: string;
+    notes?: string;
+  }) {
+    const result = await pool.query(
+      `INSERT INTO pending_applications (
+        branch_id, applicant_name, applicant_email, applicant_phone, 
+        grade_applying, parent_name, parent_phone, dob, gender, address, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *`,
+      [
+        data.branchId, data.applicantName, data.applicantEmail || null, data.applicantPhone || null,
+        data.gradeApplying, data.parentName || null, data.parentPhone || null,
+        data.dob || null, data.gender || null, data.address || null, data.notes || null
+      ]
+    );
+    return result.rows[0];
+  }
+
   async getPendingApplications(branchId: string, status?: string) {
     let query = 'SELECT * FROM pending_applications WHERE branch_id = $1';
     const params: any[] = [branchId];

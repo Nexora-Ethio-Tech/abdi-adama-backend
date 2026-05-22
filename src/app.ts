@@ -16,6 +16,7 @@ import parentRoutes from './routes/parentRoutes';
 import driverRoutes from './routes/driverRoutes';
 import clinicRoutes from './routes/clinicRoutes';
 import libraryRoutes from './routes/libraryRoutes';
+import academicRoutes from './routes/academic.routes';
 
 const app = express();
 
@@ -28,7 +29,7 @@ app.use(cors({
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: process.env.NODE_ENV === 'production' ? 100 : 2000,
   message: {
     success: false,
     error: {
@@ -40,7 +41,7 @@ const limiter = rateLimit({
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: process.env.NODE_ENV === 'production' ? 5 : 50,
   message: {
     success: false,
     error: {
@@ -85,6 +86,7 @@ app.use('/api/driver', driverRoutes);
 app.use('/api/transport', driverRoutes);
 app.use('/api/clinic', clinicRoutes);
 app.use('/api/library', libraryRoutes);
+app.use('/api/academic', academicRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({

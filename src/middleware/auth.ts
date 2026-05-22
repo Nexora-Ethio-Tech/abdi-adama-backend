@@ -27,10 +27,11 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       [decoded.userId]
     );
 
-    let user: any = null;
     const mapRole = (role: string): string => {
-      const r = role.toLowerCase();
+      const r = role.toLowerCase().replace(/_/g, '-');
       if (r === 'clinicadmin') return 'clinic-admin';
+      if (r === 'financeadmin' || r === 'finance-admin') return 'finance-clerk';
+      if (r === 'viceprincipal') return 'vice-principal';
       return r;
     };
 
@@ -45,7 +46,9 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       return;
     }
 
-    user = result.rows[0];
+    const user: any = result.rows[0];
+    // Normalize role to lowercase-hyphen format before roleGuard comparison
+    user.role = mapRole(user.role as string) as any;
 
     if (!user.is_active) {
       res.status(403).json({

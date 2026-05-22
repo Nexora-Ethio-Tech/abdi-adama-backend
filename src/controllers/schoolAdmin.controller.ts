@@ -383,6 +383,35 @@ class SchoolAdminController {
   }
 
   // Student Application Management
+  async createPendingApplication(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const {
+        applicantName, applicantEmail, applicantPhone,
+        gradeApplying, parentName, parentPhone, dob, gender, address, notes
+      } = req.body;
+
+      if (!applicantName || !gradeApplying) {
+        res.status(400).json({ success: false, message: 'Applicant name and grade applying are required' });
+        return;
+      }
+
+      const application = await schoolAdminService.createPendingApplication({
+        branchId: branchId!,
+        applicantName, applicantEmail, applicantPhone,
+        gradeApplying, parentName, parentPhone, dob, gender, address, notes
+      });
+
+      res.status(201).json({
+        success: true,
+        data: application,
+        message: 'Application submitted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getPendingApplications(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;

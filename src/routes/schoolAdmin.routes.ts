@@ -100,6 +100,7 @@ router.get('/academic-years', schoolAdminController.getAcademicYears);
 router.patch('/academic-years/:id/activate', schoolAdminController.activateAcademicYear);
 
 // Student Applications
+router.post('/applications', schoolAdminController.createPendingApplication);
 router.get('/applications', schoolAdminController.getPendingApplications);
 router.patch('/applications/:id/status', schoolAdminController.updateApplicationStatus);
 

@@ -11,8 +11,10 @@ class AuthService {
       // 1. Check standard users first - support both email and digital_id
       let result = await pool.query<User>(
         `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.password_hash, 
-                u.role, u.branch_id, u.status, u.is_active
+                u.role, u.branch_id, u.status, u.is_active,
+                b.name as branch_name
          FROM users u
+         LEFT JOIN branches b ON b.id = u.branch_id
          WHERE u.email = $1 OR u.username = $1 OR u.digital_id = $1`,
         [emailOrDigitalId]
       );
