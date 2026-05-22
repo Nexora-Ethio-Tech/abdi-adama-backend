@@ -284,17 +284,30 @@ class SchoolAdminService {
   }
 
   async getClasses(branchId: string) {
+    // Ensure class_teachers table exists (safe no-op if already created)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS class_teachers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+        branch_id UUID NOT NULL,
+        assigned_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(class_id, teacher_id)
+      )
+    `);
+
     const result = await pool.query(
       `SELECT 
         c.*,
-        u.name as teacher_name,
+        COALESCE(json_agg(json_build_object('teacher_id', ct.teacher_id, 'teacher_name', u.name, 'teacher_user_id', t.user_id) ) FILTER (WHERE ct.id IS NOT NULL), '[]') as teachers,
         COUNT(DISTINCT s.id) as actual_student_count
       FROM classes c
-      LEFT JOIN teachers t ON c.teacher_id = t.id
+      LEFT JOIN class_teachers ct ON ct.class_id = c.id
+      LEFT JOIN teachers t ON ct.teacher_id = t.id
       LEFT JOIN users u ON t.user_id = u.id
       LEFT JOIN students s ON s.grade = c.name AND s.branch_id = c.branch_id
       WHERE c.branch_id = $1
-      GROUP BY c.id, u.name
+      GROUP BY c.id
       ORDER BY c.name`,
       [branchId]
     );
@@ -409,12 +422,52 @@ class SchoolAdminService {
     // Use the actual teacher table id
     const actualTeacherId = teacherRecord.rows[0].id;
 
-    const result = await pool.query(
-      'UPDATE classes SET teacher_id = $1 WHERE id = $2 RETURNING *',
-      [actualTeacherId, classId]
+    // Ensure class_teachers table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS class_teachers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+        branch_id UUID NOT NULL,
+        assigned_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(class_id, teacher_id)
+      )
+    `);
+
+    // Insert assignment if not exists
+    await pool.query(
+      `INSERT INTO class_teachers (class_id, teacher_id, branch_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (class_id, teacher_id) DO NOTHING`,
+      [classId, actualTeacherId, branchId]
     );
 
-    return result.rows[0];
+    // Return updated class row
+    const updated = await pool.query(
+      `SELECT c.* FROM classes c WHERE c.id = $1`,
+      [classId]
+    );
+
+    return updated.rows[0];
+  }
+
+  async unassignTeacherFromClass(classId: string, teacherId: string, branchId: string) {
+    // Ensure assignment exists
+    const check = await pool.query(
+      `SELECT id FROM class_teachers WHERE class_id = $1 AND teacher_id = $2 AND branch_id = $3`,
+      [classId, teacherId, branchId]
+    );
+
+    if (check.rows.length === 0) {
+      throw new Error('Assignment not found or access denied');
+    }
+
+    await pool.query(
+      `DELETE FROM class_teachers WHERE class_id = $1 AND teacher_id = $2 AND branch_id = $3`,
+      [classId, teacherId, branchId]
+    );
+
+    return { message: 'Teacher unassigned from class' };
   }
 
   // Course Management
@@ -573,29 +626,62 @@ class SchoolAdminService {
   }
 
   // Student Application Management
-  async createPendingApplication(data: {
-    branchId: string;
-    applicantName: string;
-    applicantEmail?: string;
-    applicantPhone?: string;
-    gradeApplying: string;
-    parentName?: string;
-    parentPhone?: string;
-    dob?: string;
-    gender?: string;
-    address?: string;
-    notes?: string;
-  }) {
+  async createPendingApplication(data: any) {
     const result = await pool.query(
       `INSERT INTO pending_applications (
-        branch_id, applicant_name, applicant_email, applicant_phone, 
-        grade_applying, parent_name, parent_phone, dob, gender, address, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        branch_id,
+        applicant_name,
+        applicant_email,
+        applicant_phone,
+        digital_id,
+        dob,
+        gender,
+        parent_name,
+        parent_phone,
+        address,
+        previous_school,
+        grade_applying,
+        last_grade_completed,
+        registration_fee_status,
+        blood_group,
+        allergies,
+        chronic_conditions,
+        current_medications,
+        transcript_file_path,
+        transcript_file_name,
+        transcript_file_size,
+        transcript_uploaded_at,
+        status,
+        notes,
+        created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
       RETURNING *`,
       [
-        data.branchId, data.applicantName, data.applicantEmail || null, data.applicantPhone || null,
-        data.gradeApplying, data.parentName || null, data.parentPhone || null,
-        data.dob || null, data.gender || null, data.address || null, data.notes || null
+        data.branchId,
+        data.applicantName,
+        data.applicantEmail || null,
+        data.applicantPhone || null,
+        data.digitalId || null,
+        data.dob || null,
+        data.gender || null,
+        data.parentName || null,
+        data.parentPhone || null,
+        data.address || null,
+        data.previousSchool || null,
+        data.gradeApplying,
+        data.lastGradeCompleted || null,
+        data.registrationFeeStatus || 'Pending',
+        data.bloodGroup || null,
+        data.allergies || null,
+        data.chronicConditions || null,
+        data.currentMedications || null,
+        data.transcriptFilePath || null,
+        data.transcriptFileName || null,
+        data.transcriptFileSize || null,
+        data.transcriptUploadedAt || null,
+        'pending',
+        data.notes || null,
+        data.createdBy
       ]
     );
     return result.rows[0];

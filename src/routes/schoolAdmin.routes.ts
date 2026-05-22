@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
 import { validate, schemas } from '../middleware/validator';
 import { UserRole } from '../types';
+import { uploadTranscript, handleUploadError } from '../middleware/upload';
 import Joi from 'joi';
 
 const router = Router();
@@ -84,6 +85,11 @@ router.post('/classes', validate(createClassSchema), schoolAdminController.creat
 router.get('/classes', schoolAdminController.getClasses);
 router.patch('/classes/:id', schoolAdminController.updateClass);
 router.delete('/classes/:id', schoolAdminController.deleteClass);
+// Assign single teacher (adds assignment without replacing existing)
+router.post('/classes/:id/teachers', validate(assignTeacherSchema), schoolAdminController.assignTeacherToClass);
+// Unassign teacher from class
+router.delete('/classes/:id/teachers/:teacherId', schoolAdminController.unassignTeacherFromClass);
+// Backwards-compatible route (old) kept for now
 router.patch('/classes/:id/assign-teacher', validate(assignTeacherSchema), schoolAdminController.assignTeacherToClass);
 
 // Course Management
@@ -100,7 +106,11 @@ router.get('/academic-years', schoolAdminController.getAcademicYears);
 router.patch('/academic-years/:id/activate', schoolAdminController.activateAcademicYear);
 
 // Student Applications
-router.post('/applications', schoolAdminController.createPendingApplication);
+router.post('/applications', 
+  uploadTranscript.single('transcript'),
+  handleUploadError,
+  schoolAdminController.createPendingApplication
+);
 router.get('/applications', schoolAdminController.getPendingApplications);
 router.patch('/applications/:id/status', schoolAdminController.updateApplicationStatus);
 

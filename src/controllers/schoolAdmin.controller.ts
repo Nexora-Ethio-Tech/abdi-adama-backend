@@ -1,6 +1,12 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import schoolAdminService from '../services/schoolAdmin.service';
+import {
+  validateRegistrationForm,
+  validateAndFormatPhoneNumber,
+  validateFileSize,
+} from '../utils/validation';
+import { deleteUploadedFile } from '../middleware/upload';
 
 class SchoolAdminController {
   // User Management (existing methods)
@@ -253,6 +259,23 @@ class SchoolAdminController {
     }
   }
 
+  async unassignTeacherFromClass(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id, teacherId } = req.params; // id is class id
+      const branchId = req.user!.branch_id;
+
+      const result = await schoolAdminService.unassignTeacherFromClass(id, teacherId, branchId!);
+
+      res.json({
+        success: true,
+        data: result,
+        message: 'Teacher unassigned successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Course Management
   async createCourse(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -386,28 +409,127 @@ class SchoolAdminController {
   async createPendingApplication(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
+      const userId = req.user!.id;
+
+      // Extract form data
       const {
-        applicantName, applicantEmail, applicantPhone,
-        gradeApplying, parentName, parentPhone, dob, gender, address, notes
+        name,
+        digital_id,
+        dob,
+        gender,
+        email,
+        parentName,
+        parentPhone,
+        address,
+        previousSchool,
+        grade,
+        feeStatus,
+        bloodGroup,
+        allergies,
+        chronicConditions,
+        medications,
+        notes,
       } = req.body;
 
-      if (!applicantName || !gradeApplying) {
-        res.status(400).json({ success: false, message: 'Applicant name and grade applying are required' });
-        return;
+      // Prepare form data for validation
+      const formData = {
+        name,
+        digital_id,
+        dob,
+        gender,
+        email,
+        parentName,
+        parentPhone,
+        address,
+        previousSchool,
+        grade,
+        feeStatus,
+        bloodGroup,
+        allergies,
+        chronicConditions,
+        medications,
+      };
+
+      // Validate all required fields
+      const validation = validateRegistrationForm(formData);
+      if (!validation.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: validation.errors,
+        });
       }
 
-      const application = await schoolAdminService.createPendingApplication({
+      // Validate and format phone number
+      const phoneValidation = validateAndFormatPhoneNumber(parentPhone);
+      if (!phoneValidation.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid phone number',
+          errors: {
+            parentPhone: phoneValidation.error,
+          },
+        });
+      }
+
+      // Prepare application data with formatted phone
+      const applicationData = {
         branchId: branchId!,
-        applicantName, applicantEmail, applicantPhone,
-        gradeApplying, parentName, parentPhone, dob, gender, address, notes
-      });
+        applicantName: name,
+        applicantEmail: email,
+        applicantPhone: phoneValidation.formatted,
+        digitalId: digital_id,
+        dob,
+        gender,
+        parentName,
+        parentPhone: phoneValidation.formatted,
+        address,
+        previousSchool,
+        gradeApplying: grade,
+        lastGradeCompleted: grade,
+        registrationFeeStatus: feeStatus,
+        bloodGroup,
+        allergies,
+        chronicConditions,
+        currentMedications: medications,
+        notes,
+        createdBy: userId,
+      };
+
+      // Handle file upload if provided
+      if (req.file) {
+        // Validate file size
+        const fileSizeValidation = validateFileSize(req.file.size);
+        if (!fileSizeValidation.isValid) {
+          deleteUploadedFile(req.file.path);
+          return res.status(400).json({
+            success: false,
+            message: 'File upload failed',
+            errors: {
+              transcriptFile: fileSizeValidation.error,
+            },
+          });
+        }
+
+        applicationData.transcriptFilePath = req.file.path;
+        applicationData.transcriptFileName = req.file.filename;
+        applicationData.transcriptFileSize = req.file.size;
+        applicationData.transcriptUploadedAt = new Date();
+      }
+
+      // Create the application
+      const application = await schoolAdminService.createPendingApplication(applicationData);
 
       res.status(201).json({
         success: true,
         data: application,
-        message: 'Application submitted successfully'
+        message: 'Application submitted successfully',
       });
     } catch (error) {
+      // Clean up uploaded file if error occurs
+      if (req.file) {
+        deleteUploadedFile(req.file.path);
+      }
       next(error);
     }
   }

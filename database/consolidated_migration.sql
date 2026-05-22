@@ -681,6 +681,102 @@ CREATE TABLE financial_policies (
 );
 
 -- ============================================================
+-- Student Application Management
+-- ============================================================
+CREATE TABLE pending_applications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+  
+  -- Applicant Information
+  applicant_name VARCHAR(255) NOT NULL,
+  applicant_email VARCHAR(255),
+  applicant_phone VARCHAR(30),
+  digital_id VARCHAR(50),
+  dob DATE,
+  gender VARCHAR(20),
+  
+  -- Parent/Guardian Information
+  parent_name VARCHAR(255),
+  parent_phone VARCHAR(30),
+  address TEXT,
+  
+  -- Academic Information
+  grade_applying VARCHAR(10),
+  previous_school VARCHAR(255),
+  last_grade_completed VARCHAR(10),
+  
+  -- Medical Information (optional)
+  blood_group VARCHAR(10),
+  allergies TEXT,
+  chronic_conditions TEXT,
+  current_medications TEXT,
+  
+  -- Registration & Financial Status
+  registration_fee_status VARCHAR(20) DEFAULT 'Pending',
+  
+  -- Document Storage
+  transcript_file_path VARCHAR(512),
+  transcript_file_name VARCHAR(255),
+  transcript_file_size BIGINT,
+  transcript_uploaded_at TIMESTAMPTZ,
+  
+  -- Application Pipeline Status
+  status VARCHAR(30) DEFAULT 'pending',
+  
+  -- Exam Details (if applicable)
+  exam_date DATE,
+  exam_time TIME,
+  exam_location VARCHAR(255),
+  exam_subjects TEXT,
+  exam_notes TEXT,
+  
+  -- Additional Notes
+  notes TEXT,
+  
+  -- System Fields
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_by UUID REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_applications_branch ON pending_applications(branch_id);
+CREATE INDEX IF NOT EXISTS idx_pending_applications_status ON pending_applications(status);
+CREATE INDEX IF NOT EXISTS idx_pending_applications_email ON pending_applications(applicant_email);
+CREATE INDEX IF NOT EXISTS idx_pending_applications_created ON pending_applications(created_at);
+CREATE INDEX IF NOT EXISTS idx_pending_applications_pipeline ON pending_applications(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS application_transcripts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  application_id UUID NOT NULL REFERENCES pending_applications(id) ON DELETE CASCADE,
+  
+  -- File Information
+  file_name VARCHAR(255) NOT NULL,
+  file_path VARCHAR(512) NOT NULL,
+  file_size BIGINT NOT NULL,
+  file_mime_type VARCHAR(100),
+  
+  -- Upload Information
+  uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+  uploaded_by UUID REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_application_transcripts_app_id ON application_transcripts(application_id);
+CREATE INDEX IF NOT EXISTS idx_application_transcripts_uploaded_at ON application_transcripts(uploaded_at);
+
+CREATE OR REPLACE FUNCTION update_pending_applications_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER pending_applications_updated_at
+  BEFORE UPDATE ON pending_applications
+  FOR EACH ROW
+  EXECUTE FUNCTION update_pending_applications_timestamp();
+
+-- ============================================================
 -- SEED: Default branches
 -- ============================================================
 INSERT INTO branches (name, location) VALUES
