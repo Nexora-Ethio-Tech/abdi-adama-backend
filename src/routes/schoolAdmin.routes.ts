@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import schoolAdminController from '../controllers/schoolAdmin.controller';
-import { authenticate } from '../middleware/auth';
+import { authenticate, requireBranchId } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
 import { validate, schemas } from '../middleware/validator';
 import { UserRole } from '../types';
@@ -10,6 +10,7 @@ import Joi from 'joi';
 const router = Router();
 
 router.use(authenticate);
+router.use(requireBranchId);
 router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
 
 // Validation schemas

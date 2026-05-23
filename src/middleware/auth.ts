@@ -1,7 +1,46 @@
 import { Response, NextFunction } from 'express';
 import { verifyAccessToken } from '../utils/jwt';
 import pool from '../config/database';
-import { AuthRequest, User } from '../types';
+import { AuthRequest, User, UserRole } from '../types';
+import logger from '../utils/logger';
+
+/**
+ * Normalize role string to standard UserRole enum format (hyphenated lowercase)
+ */
+const normalizeRole = (role: string | null | undefined): UserRole | null => {
+  if (!role) return null;
+  let r = role.toString().toLowerCase().trim();
+  // Replace underscores and spaces with hyphens
+  r = r.replace(/[_\s]+/g, '-');
+  // Handle common database variants
+  const roleMap: Record<string, UserRole> = {
+    'clinicadmin': UserRole.CLINIC_ADMIN,
+    'clinic-admin': UserRole.CLINIC_ADMIN,
+    'financeadmin': UserRole.FINANCE_CLERK,
+    'finance-admin': UserRole.FINANCE_CLERK,
+    'finance-clerk': UserRole.FINANCE_CLERK,
+    'finance_clerk': UserRole.FINANCE_CLERK,
+    'viceprincipal': UserRole.VICE_PRINCIPAL,
+    'vice-principal': UserRole.VICE_PRINCIPAL,
+    'vice_principal': UserRole.VICE_PRINCIPAL,
+    'schooladmin': UserRole.SCHOOL_ADMIN,
+    'school-admin': UserRole.SCHOOL_ADMIN,
+    'school_admin': UserRole.SCHOOL_ADMIN,
+    'superadmin': UserRole.SUPER_ADMIN,
+    'super-admin': UserRole.SUPER_ADMIN,
+    'super_admin': UserRole.SUPER_ADMIN,
+    'audit': UserRole.AUDITOR,
+    'auditor': UserRole.AUDITOR,
+    'driver': UserRole.DRIVER,
+    'librarian': UserRole.LIBRARIAN,
+    'teacher': UserRole.TEACHER,
+    'student': UserRole.STUDENT,
+    'parent': UserRole.PARENT
+  };
+  
+  // Return mapped role or the normalized string if not in map
+  return roleMap[r] || (r as UserRole);
+};
 
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -27,23 +66,6 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       [decoded.userId]
     );
 
-    const mapRole = (role: string): string => {
-      if (!role) return '';
-      // Normalize common DB variants to the hyphenated role slugs used across the app
-      let r = role.toString().toLowerCase().trim();
-      r = r.replace(/[_\s]+/g, '-');
-      // Handle common compacted forms
-      if (r === 'clinicadmin' || r === 'clinic-admin') return 'clinic-admin';
-      if (r === 'financeadmin' || r === 'finance-admin' || r === 'finance_clerk') return 'finance-clerk';
-      if (r === 'viceprincipal' || r === 'vice-principal') return 'vice-principal';
-      if (r === 'schooladmin' || r === 'school-admin') return 'school-admin';
-      if (r === 'superadmin' || r === 'super-admin') return 'super-admin';
-      if (r === 'audit' || r === 'auditor') return 'auditor';
-      if (r === 'driver') return 'driver';
-      // Default: ensure hyphenated form
-      return r.replace(/_/g, '-');
-    };
-
     if (result.rows.length === 0) {
       res.status(401).json({
         success: false,
@@ -56,8 +78,22 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     }
 
     const user: any = result.rows[0];
-    // Normalize role to lowercase-hyphen format before roleGuard comparison
-    user.role = mapRole(user.role as string) as any;
+    
+    // Normalize role to standard format
+    const normalizedRole = normalizeRole(user.role);
+    if (!normalizedRole) {
+      logger.error(`Invalid role for user ${user.id}: ${user.role}`);
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'INVALID_ROLE',
+          message: 'Invalid user role'
+        }
+      });
+      return;
+    }
+    
+    user.role = normalizedRole;
 
     if (!user.is_active) {
       res.status(403).json({
@@ -82,8 +118,10 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     }
 
     req.user = user;
+    logger.info(`User authenticated: ${user.email} (${user.role}, branch: ${user.branch_id || 'N/A'})`);
     next();
   } catch (error) {
+    logger.error('Authentication error:', error);
     res.status(401).json({
       success: false,
       error: {
@@ -92,4 +130,34 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       }
     });
   }
+};
+
+/**
+ * Middleware to validate branch-specific operations
+ * Ensures branch_id exists for roles that need it
+ */
+export const requireBranchId = (req: AuthRequest, res: Response, next: NextFunction): void => {
+  const branchRequiredRoles = [
+    UserRole.SCHOOL_ADMIN,
+    UserRole.VICE_PRINCIPAL,
+    UserRole.FINANCE_CLERK,
+    UserRole.TEACHER,
+    UserRole.LIBRARIAN,
+    UserRole.CLINIC_ADMIN
+  ];
+
+  if (branchRequiredRoles.includes(req.user?.role as UserRole)) {
+    if (!req.user?.branch_id) {
+      logger.error(`User ${req.user?.email} (${req.user?.role}) missing branch_id`);
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_BRANCH',
+          message: 'User must have a branch assigned'
+        }
+      });
+      return;
+    }
+  }
+  next();
 };
