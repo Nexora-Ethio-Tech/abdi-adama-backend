@@ -48,7 +48,7 @@ router.get(
 );
 
 // ── Backward-compatible endpoints ─────────────────────────────────────────────
-router.get('/current-courses',   authenticateToken, studentController.getCurrentCourses);
-router.get('/academic-history',  authenticateToken, studentController.getAcademicHistory);
+router.get('/current-courses', authenticateToken, studentController.getCurrentCourses);
+router.get('/academic-history', authenticateToken, studentController.getAcademicHistory);
 
 export default router;

@@ -40,12 +40,12 @@ const verifyParentLink = async (parentUserId: string, studentId: string): Promis
  */
 export const getOwnProfile = async (req: AuthRequest, res: Response) => {
   const identityId = req.user?.identity_id;
-  
+
   // Validate authentication
   if (!identityId) {
     return sendError(res, 'User identity not found. Please log in again.', 401);
   }
-  
+
   await performAllCleanups();
 
   try {
@@ -85,12 +85,12 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
  */
 export const getDashboard = async (req: AuthRequest, res: Response) => {
   const studentIdentityId = req.user?.identity_id;
-  
+
   // Validate authentication
   if (!studentIdentityId) {
     return sendError(res, 'User identity not found. Please log in again.', 401);
   }
-  
+
   console.log(`[Dashboard] Fetching for student: ${studentIdentityId}`);
 
   try {
@@ -209,11 +209,11 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
     );
 
     return sendSuccess(res, {
-      schedule:           scheduleResult.rows,
-      deadlines:          deadlineResult.rows,
-      teacherOfTheMonth:  teacherResult.rows,
-      announcements:      announcementsResult.rows,
-      stats:              statsResult.rows[0]
+      schedule: scheduleResult.rows,
+      deadlines: deadlineResult.rows,
+      teacherOfTheMonth: teacherResult.rows,
+      announcements: announcementsResult.rows,
+      stats: statsResult.rows[0]
     });
   } catch (err: any) {
     return sendError(res, 'Failed to fetch dashboard.', 500, err.message);
@@ -245,7 +245,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
     queryIdentityId = targetStudentId;
   }
 
-  const semester  = Number(req.query.semester)  || 2;
+  const semester = Number(req.query.semester) || 2;
   const subjectId = req.query.subject_id as string | undefined;
 
   try {
@@ -286,7 +286,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
 
     return sendSuccess(res, {
       semester,
-      courses:  coursesResult.rows,
+      courses: coursesResult.rows,
       selected: subjectId ? (coursesResult.rows[0] ?? null) : null,
     });
   } catch (err: any) {
@@ -307,7 +307,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
  */
 export const getHistory = async (req: AuthRequest, res: Response) => {
   let queryIdentityId = req.user?.identity_id;
-  
+
   // Validate authentication
   if (!queryIdentityId) {
     return sendError(res, 'User identity not found. Please log in again.', 401);
@@ -322,8 +322,8 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
     queryIdentityId = targetStudentId;
   }
 
-  const year     = (req.query.year     as string) || '';
-  const semester = req.query.semester  ? Number(req.query.semester) : null;
+  const year = (req.query.year as string) || '';
+  const semester = req.query.semester ? Number(req.query.semester) : null;
 
   if (!year) {
     return sendError(res, 'Query parameter "year" is required (e.g. 2024/2025).', 400);
@@ -355,9 +355,9 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
       const key = `${row.year}__${row.semester}`;
       if (!grouped[key]) {
         grouped[key] = {
-          year:     row.year,
+          year: row.year,
           semester: `Semester ${row.semester}`,
-          courses:  [],
+          courses: [],
           _totalScore: 0,
         };
       }
@@ -443,7 +443,7 @@ export const getCurrentCourses = async (req: AuthRequest, res: Response) => {
  */
 export const getAcademicHistory = async (req: AuthRequest, res: Response) => {
   const studentIdentityId = req.user?.identity_id;
-  
+
   // Validate authentication
   if (!studentIdentityId) {
     return sendError(res, 'User identity not found. Please log in again.', 401);

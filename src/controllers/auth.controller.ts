@@ -31,7 +31,7 @@ class AuthController {
   async refreshToken(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { refreshToken } = req.body;
-      
+
       if (!refreshToken) {
         res.status(400).json({
           success: false,
