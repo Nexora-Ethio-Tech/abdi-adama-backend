@@ -36,9 +36,9 @@ const transcriptFileFilter = (
 ) => {
   const allowedMimes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
   const allowedExts = ['.pdf', '.jpg', '.jpeg', '.png'];
-  
+
   const ext = path.extname(file.originalname).toLowerCase();
-  
+
   if (allowedMimes.includes(file.mimetype) && allowedExts.includes(ext)) {
     cb(null, true);
   } else {
@@ -80,7 +80,7 @@ export const handleUploadError = (
       });
     }
   }
-  
+
   if (err && err.message) {
     return res.status(400).json({
       error: {
@@ -89,7 +89,7 @@ export const handleUploadError = (
       },
     });
   }
-  
+
   next();
 };
 
