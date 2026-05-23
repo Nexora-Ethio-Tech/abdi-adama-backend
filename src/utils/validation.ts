@@ -48,11 +48,11 @@ export function validateAndFormatPhoneNumber(
   }
 
   // Check if starts with 9 or 7 (valid Ethiopian prefixes)
-  if (!phone.match(/^[97]\d{7}$/)) {
+  if (!phone.match(/^[97]\d{8}$/)) {
     return {
       isValid: false,
       formatted: '',
-      error: 'Phone number must start with 9 or 7 and contain 8 digits after that',
+      error: 'Phone number must start with 9 or 7 and contain 9 digits after that',
     };
   }
 
@@ -95,19 +95,12 @@ export function validateRegistrationForm(
 ): { isValid: boolean; errors: RegistrationValidationErrors } {
   const errors: RegistrationValidationErrors = {};
 
-  // Required fields
+  // ONLY these fields are actually required
   const requiredFields = {
     name: 'Full Name',
-    digital_id: 'Fayda Alias Number (Digital ID)',
-    dob: 'Date of Birth',
-    gender: 'Gender',
-    email: 'Email Address',
     parentName: 'Parent/Guardian Name',
-    address: 'Address',
-    grade: 'Grade Applying For',
-    feeStatus: 'Registration Fee Status',
-    previousSchool: 'Previous School',
     parentPhone: 'Parent Phone Number',
+    grade: 'Grade Applying For',
   };
 
   // Check required fields
@@ -118,13 +111,16 @@ export function validateRegistrationForm(
     }
   }
 
-  // Validate email if provided
-  if (formData.email && !isValidEmail(formData.email)) {
-    errors.email = 'Please enter a valid email address';
+  // Validate optional fields ONLY if they are provided
+  // Email validation (only if provided and not empty)
+  if (formData.email && formData.email.trim()) {
+    if (!isValidEmail(formData.email)) {
+      errors.email = 'Please enter a valid email address';
+    }
   }
 
-  // Validate date of birth
-  if (formData.dob) {
+  // Validate date of birth (only if provided and not empty)
+  if (formData.dob && formData.dob.trim()) {
     const dobDate = new Date(formData.dob);
     const today = new Date();
     const age = today.getFullYear() - dobDate.getFullYear();
@@ -134,7 +130,7 @@ export function validateRegistrationForm(
     }
   }
 
-  // Validate parent phone
+  // Validate parent phone (always validate if in form)
   if (formData.parentPhone) {
     const phoneValidation = validateAndFormatPhoneNumber(formData.parentPhone);
     if (!phoneValidation.isValid) {
@@ -142,9 +138,11 @@ export function validateRegistrationForm(
     }
   }
 
-  // Validate digital ID format (basic check)
-  if (formData.digital_id && !formData.digital_id.match(/^[A-Z0-9\-]+$/i)) {
-    errors.digital_id = 'Digital ID should only contain letters, numbers, and hyphens';
+  // Validate digital ID format (only if provided and not empty)
+  if (formData.digital_id && formData.digital_id.trim()) {
+    if (!formData.digital_id.match(/^[A-Z0-9\-]+$/i)) {
+      errors.digital_id = 'Digital ID should only contain letters, numbers, and hyphens';
+    }
   }
 
   return {

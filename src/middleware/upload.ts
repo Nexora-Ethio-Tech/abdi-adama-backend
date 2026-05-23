@@ -3,13 +3,13 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 
-// Create upload directories if they don't exist
-const uploadDirs = [
-  path.join(__dirname, '../../uploads/transcripts'),
-  path.join(__dirname, '../../uploads/documents'),
-];
+// Resolve upload directories relative to project root (process.cwd()) to avoid __dirname variability
+const UPLOADS_ROOT = path.resolve(process.cwd(), 'uploads');
+const TRANSCRIPTS_DIR = path.join(UPLOADS_ROOT, 'transcripts');
+const DOCUMENTS_DIR = path.join(UPLOADS_ROOT, 'documents');
 
-uploadDirs.forEach(dir => {
+// Create upload directories if they don't exist
+[TRANSCRIPTS_DIR, DOCUMENTS_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -18,7 +18,7 @@ uploadDirs.forEach(dir => {
 // Configure storage for transcripts
 const transcriptStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '../../uploads/transcripts'));
+    cb(null, TRANSCRIPTS_DIR);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = `${uuidv4()}-${Date.now()}`;

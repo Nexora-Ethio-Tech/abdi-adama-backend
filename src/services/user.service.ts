@@ -59,11 +59,14 @@ class UserService {
       const userPassword = password || (PIN_BASED_ROLES.includes(role) ? generate4DigitPIN() : generateRandomPassword());
       const passwordHash = await hashPassword(userPassword);
 
+      // Staff accounts created by School Admin should be active immediately.
+      const initialStatus = ['student', 'parent'].includes(role) ? USER_STATUS.PENDING : USER_STATUS.APPROVED;
+
       const userResult = await client.query<User>(
         `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, created_at`,
-        [digitalId, userUsername, name, email, passwordHash, role, branchId, USER_STATUS.PENDING, true]
+        [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true]
       );
 
       const user = userResult.rows[0];

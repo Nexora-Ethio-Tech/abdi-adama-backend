@@ -109,6 +109,7 @@ router.patch('/academic-years/:id/activate', schoolAdminController.activateAcade
 router.post('/applications',
   uploadTranscript.single('transcript'),
   handleUploadError,
+  validate(schemas.createPendingApplication),
   schoolAdminController.createPendingApplication
 );
 router.get('/applications', schoolAdminController.getPendingApplications);

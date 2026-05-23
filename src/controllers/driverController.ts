@@ -22,7 +22,10 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
   try {
     // 1. Find the driver's route
     const routeResult = await pool.query(
-      'SELECT id, name FROM routes WHERE driver_id = $1',
+      `SELECT r.id, r.name AS route_name, v.plate_number AS bus_number
+       FROM routes r
+       LEFT JOIN vehicles v ON v.id = r.vehicle_id
+       WHERE r.driver_id = $1`,
       [identity_id]
     );
 
@@ -35,15 +38,15 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
     // 2. Get manifest — return student_name + digital_id (school_id alias) + grade
     const manifestResult = await pool.query(
       `SELECT 
-         i.full_name  AS student_name,
-         i.school_id,
-         i.school_id  AS digital_id,
-         i.grade,
-         $1::text     AS route_name
+         u.name AS student_name,
+         u.digital_id AS digital_id,
+         s.grade,
+         $1::text AS route_name
        FROM student_routes rm
        JOIN students s ON s.id = rm.student_id
+       JOIN users u ON s.user_id = u.id
        WHERE rm.route_id = $2
-       ORDER BY i.full_name ASC`,
+       ORDER BY u.name ASC`,
       [route.route_name, route.id]
     );
 

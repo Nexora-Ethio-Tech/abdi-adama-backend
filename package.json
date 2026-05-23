@@ -8,6 +8,7 @@
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "seed:superadmin": "ts-node src/scripts/seedSuperAdmin.ts",
+    "seed:demo-students": "ts-node src/scripts/seedGradeStudentsAndRoutes.ts",
     "test": "jest --runInBand --detectOpenHandles",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

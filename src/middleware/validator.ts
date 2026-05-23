@@ -23,12 +23,34 @@ export const validate = (schema: Joi.ObjectSchema) => {
 
 export const schemas = {
   login: Joi.object({
-    email: Joi.string().required().messages({
+    email: Joi.string().trim().required().messages({
       'string.empty': 'Email or Digital ID is required',
       'any.required': 'Email or Digital ID is required'
     }),
     password: Joi.string().required()
   }),
+
+  createPendingApplication: Joi.object({
+    name: Joi.string().trim().min(2).max(150).required(),
+    digital_id: Joi.string().allow('').optional(),
+    dob: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).allow('').optional(),  // Accept ISO date strings (YYYY-MM-DD) from FormData
+    gender: Joi.string().allow('').optional(),
+    parentName: Joi.string().trim().min(2).max(150).required(),
+    parentPhone: Joi.string().required(),
+    email: Joi.alternatives().try(
+      Joi.string().email(),
+      Joi.string().allow('').length(0)
+    ).optional(),  // Accept valid email or empty string
+    address: Joi.string().trim().allow('').optional(),
+    previousSchool: Joi.string().trim().allow('').optional(),
+    grade: Joi.string().required(),
+    feeStatus: Joi.string().allow('').optional(),
+    bloodGroup: Joi.string().allow('').optional(),
+    allergies: Joi.string().allow('').optional(),
+    chronicConditions: Joi.string().allow('').optional(),
+    medications: Joi.string().allow('').optional(),
+    notes: Joi.string().allow('').optional()
+  }).unknown(true),  // Allow transcript field from multer
 
   createUser: Joi.object({
     name: Joi.string().min(2).max(150).required(),
