@@ -8,15 +8,16 @@ import { User, JWTPayload } from '../types';
 class AuthService {
   async login(emailOrDigitalId: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
     try {
-      // 1. Check standard users first - support both email and digital_id
+      // 1. Normalize input and perform case-insensitive lookup for email/username
+      const lookup = (emailOrDigitalId || '').toString().trim();
       let result = await pool.query<User>(
         `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.password_hash, 
                 u.role, u.branch_id, u.status, u.is_active,
                 b.name as branch_name
          FROM users u
          LEFT JOIN branches b ON b.id = u.branch_id
-         WHERE u.email = $1 OR u.username = $1 OR u.digital_id = $1`,
-        [emailOrDigitalId]
+         WHERE lower(u.email) = lower($1) OR lower(u.username) = lower($1) OR u.digital_id = $1`,
+        [lookup]
       );
 
       if (result.rows.length === 0) {
@@ -37,7 +38,10 @@ class AuthService {
         throw new Error('Account is pending approval');
       }
 
-      // bcrypt check
+      // bcrypt check (ensure non-empty password is provided)
+      if (!password) {
+        throw new Error('Password is required');
+      }
       const isPasswordValid = await comparePassword(password, user.password_hash!);
       if (!isPasswordValid) {
         throw new Error('Invalid credentials');

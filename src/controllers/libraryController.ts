@@ -34,14 +34,14 @@ export const getBooks = async (req: Request, res: Response) => {
 
   try {
     const searchFilter = search
-      ? `WHERE title ILIKE $3 OR author ILIKE $3`
+      ? `WHERE title ILIKE $3 OR author ILIKE $3 OR book_code ILIKE $3`
       : '';
     const params: any[] = search
       ? [limit, offset, `%${search}%`]
       : [limit, offset];
 
     const countQuery = search
-      ? `SELECT COUNT(*) FROM library_books WHERE title ILIKE $1 OR author ILIKE $1`
+      ? `SELECT COUNT(*) FROM library_books WHERE title ILIKE $1 OR author ILIKE $1 OR book_code ILIKE $1`
       : `SELECT COUNT(*) FROM library_books`;
     const countParams = search ? [`%${search}%`] : [];
 
@@ -56,6 +56,7 @@ export const getBooks = async (req: Request, res: Response) => {
            available,
            status,
            book_code,
+           isbn,
            created_at
          FROM library_books
          ${searchFilter}
@@ -75,6 +76,35 @@ export const getBooks = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     sendError(res, 'Failed to fetch books.', 500, err.message);
+  }
+};
+
+/**
+ * GET /api/library/available-books
+ * Returns only books that are currently in stock (available > 0)
+ * Used for the dropdown in Issue Book modal
+ */
+export const getAvailableBooks = async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         id,
+         title,
+         author,
+         book_code,
+         available,
+         shelf
+       FROM library_books
+       WHERE available > 0
+       ORDER BY title ASC`
+    );
+
+    res.json({
+      data: result.rows,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    sendError(res, 'Failed to fetch available books.', 500, err.message);
   }
 };
 
@@ -112,8 +142,94 @@ export const addBook = async (req: Request, res: Response) => {
 };
 
 /**
+ * GET /api/library/validate-student/:studentId
+ * Validates if a student ID exists in the system
+ * Accepts: UUID or digital_id
+ */
+export const validateStudent = async (req: Request, res: Response) => {
+  const { studentId } = req.params;
+
+  if (!studentId) {
+    return sendError(res, 'Student ID is required.');
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT s.id, u.name, u.digital_id 
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       WHERE s.id::text = $1 OR u.digital_id = $1 OR u.username = $1`,
+      [studentId.trim()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        valid: false,
+        message: 'This Student ID is not valid.',
+      });
+    }
+
+    const student = result.rows[0];
+    res.json({
+      valid: true,
+      student: {
+        id: student.id,
+        name: student.name,
+        digital_id: student.digital_id,
+      },
+      message: 'Student found.',
+    });
+  } catch (err: any) {
+    sendError(res, 'Failed to validate student.', 500, err.message);
+  }
+};
+
+/**
+ * GET /api/library/validate-teacher/:teacherId
+ * Validates if a teacher ID exists in the system
+ * Accepts: UUID or digital_id
+ */
+export const validateTeacher = async (req: Request, res: Response) => {
+  const { teacherId } = req.params;
+
+  if (!teacherId) {
+    return sendError(res, 'Teacher ID is required.');
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT t.id, u.name, u.digital_id 
+       FROM teachers t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.id::text = $1 OR u.digital_id = $1 OR u.username = $1`,
+      [teacherId.trim()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        valid: false,
+        message: 'This Teacher ID is not valid.',
+      });
+    }
+
+    const teacher = result.rows[0];
+    res.json({
+      valid: true,
+      teacher: {
+        id: teacher.id,
+        name: teacher.name,
+        digital_id: teacher.digital_id,
+      },
+      message: 'Teacher found.',
+    });
+  } catch (err: any) {
+    sendError(res, 'Failed to validate teacher.', 500, err.message);
+  }
+};
+
+/**
  * GET /api/library/loans?search=&page=&limit=
- * Returns active loans with book/student info.
+ * Returns active loans with book/borrower info.
  */
 export const getLoans = async (req: Request, res: Response) => {
   const { search } = req.query;
@@ -121,7 +237,7 @@ export const getLoans = async (req: Request, res: Response) => {
 
   try {
     const searchFilter = search
-      ? `WHERE l.student_name ILIKE $3 OR l.book_title ILIKE $3`
+      ? `WHERE l.borrower_name ILIKE $3 OR l.book_title ILIKE $3`
       : '';
     const params: any[] = search ? [limit, offset, `%${search}%`] : [limit, offset];
 
@@ -131,11 +247,13 @@ export const getLoans = async (req: Request, res: Response) => {
            l.id,
            l.book_id,
            l.student_id,
-           l.student_name,
+           l.teacher_id,
+           l.borrower_type,
+           l.borrower_name,
            l.book_title,
            l.book_code,
            l.student_school_id,
-           l.loan_date     AS borrowed_at,
+           l.borrowed_at,
            l.due_date,
            l.returned_at,
            CASE
@@ -148,11 +266,11 @@ export const getLoans = async (req: Request, res: Response) => {
              WHEN l.due_date < CURRENT_DATE THEN (CURRENT_DATE - l.due_date) * 5
              ELSE 0
            END AS fine_amount
-         FROM silo_loans l
+         FROM library_loans l
          ${searchFilter}
          ORDER BY 
            CASE WHEN l.returned_at IS NULL THEN 0 ELSE 1 END,
-           l.loan_date DESC,
+           l.borrowed_at DESC,
            l.created_at DESC
          LIMIT $1 OFFSET $2`,
         params
@@ -172,13 +290,20 @@ export const getLoans = async (req: Request, res: Response) => {
 
 /**
  * POST /api/library/issue
- * Issues a book to a student. Body: { book_id, student_id, due_date }
+ * Issues a book to a student or teacher
+ * Body: { book_id, borrower_id, borrower_type, due_date }
+ * borrower_type: 'student' or 'teacher'
  */
 export const issueBook = async (req: Request, res: Response) => {
-  const { book_id, student_id, due_date } = req.body;
+  const { book_id, borrower_id, borrower_type, due_date } = req.body;
 
-  if (!book_id || !student_id || !due_date) {
-    return sendError(res, 'book_id, student_id, and due_date are required.');
+  // Validation
+  if (!book_id || !borrower_id || !borrower_type || !due_date) {
+    return sendError(res, 'book_id, borrower_id, borrower_type, and due_date are required.');
+  }
+
+  if (!['student', 'teacher'].includes(borrower_type)) {
+    return sendError(res, 'borrower_type must be "student" or "teacher".');
   }
 
   const client = await pool.connect();
@@ -187,7 +312,7 @@ export const issueBook = async (req: Request, res: Response) => {
 
     // Check book exists and has stock
     const bookResult = await client.query(
-      'SELECT id, title, available, status FROM library_books WHERE id = $1',
+      'SELECT id, title, book_code, available, status FROM library_books WHERE id = $1',
       [book_id]
     );
     if (bookResult.rows.length === 0) {
@@ -200,29 +325,62 @@ export const issueBook = async (req: Request, res: Response) => {
       return sendError(res, 'This book is out of stock.', 409);
     }
 
-    // Resolve student (handle both UUID and digital_id)
-    const studentResult = await client.query(
-      'SELECT s.id, u.name FROM students s JOIN users u ON s.user_id = u.id WHERE s.id::text = $1 OR u.digital_id = $1',
-      [student_id]
-    );
-    if (studentResult.rows.length === 0) {
-      await client.query('ROLLBACK');
-      return sendError(res, `Student with ID "${student_id}" not found.`, 404);
-    }
-    const student = studentResult.rows[0];
+    let borrower: any = null;
+    let borrowerName = '';
+    let studentId = null;
+    let teacherId = null;
 
-    // Create loan record
+    if (borrower_type === 'student') {
+      // Resolve student (handle both UUID and digital_id)
+      const studentResult = await client.query(
+        `SELECT s.id, u.name, u.digital_id 
+         FROM students s 
+         JOIN users u ON s.user_id = u.id 
+         WHERE s.id::text = $1 OR u.digital_id = $1 OR u.username = $1`,
+        [borrower_id.trim()]
+      );
+      if (studentResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return sendError(res, 'This Student ID is not valid.', 404);
+      }
+      borrower = studentResult.rows[0];
+      studentId = borrower.id;
+      borrowerName = borrower.name;
+    } else if (borrower_type === 'teacher') {
+      // Resolve teacher (handle both UUID and digital_id)
+      const teacherResult = await client.query(
+        `SELECT t.id, u.name, u.digital_id 
+         FROM teachers t 
+         JOIN users u ON t.user_id = u.id 
+         WHERE t.id::text = $1 OR u.digital_id = $1 OR u.username = $1`,
+        [borrower_id.trim()]
+      );
+      if (teacherResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return sendError(res, 'This Teacher ID is not valid.', 404);
+      }
+      borrower = teacherResult.rows[0];
+      teacherId = borrower.id;
+      borrowerName = borrower.name;
+    }
+
+    // Create loan record with denormalized data
     const loanResult = await client.query(
-      `INSERT INTO library_loans (book_id, student_id, borrowed_at, due_date)
-       VALUES ($1, $2, CURRENT_DATE, $3)
+      `INSERT INTO library_loans 
+       (book_id, student_id, teacher_id, borrower_type, borrower_name, book_title, 
+        book_code, borrowed_at, due_date, loan_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, $8, 'Borrowed')
        RETURNING *`,
-      [book.id, student.id, due_date]
+      [book_id, studentId, teacherId, borrower_type, borrowerName, book.title, book.book_code, due_date]
     );
 
     // Decrement available and update status if needed
     const newAvailable = book.available - 1;
     await client.query(
-      `UPDATE library_books SET available = $1, status = CASE WHEN $1 = 0 THEN 'Out of Stock' ELSE 'Borrowed' END WHERE id = $2`,
+      `UPDATE library_books 
+       SET available = $1, 
+           status = CASE WHEN $1 = 0 THEN 'Out of Stock' ELSE 'Available' END 
+       WHERE id = $2`,
       [newAvailable, book.id]
     );
 
@@ -230,7 +388,7 @@ export const issueBook = async (req: Request, res: Response) => {
 
     res.status(201).json({
       status: 'success',
-      message: `Book "${book.title}" issued to ${student.full_name}.`,
+      message: `Book "${book.title}" issued to ${borrowerName}.`,
       data: loanResult.rows[0],
       timestamp: new Date().toISOString(),
     });
@@ -270,11 +428,11 @@ export const returnBook = async (req: Request, res: Response) => {
 
     // Mark returned
     await client.query(
-      'UPDATE library_loans SET returned_at = NOW() WHERE id = $1',
-      [loanId]
+      'UPDATE library_loans SET returned_at = CURRENT_DATE, loan_status = $1 WHERE id = $2',
+      ['Returned', loanId]
     );
 
-    // Increment book available and reset status
+    // Increment book available and update status
     await client.query(
       `UPDATE library_books
        SET available = available + 1,

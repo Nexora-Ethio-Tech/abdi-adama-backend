@@ -54,7 +54,8 @@ export const schemas = {
   updateUser: Joi.object({
     name: Joi.string().min(2).max(150).optional(),
     email: Joi.string().email().optional(),
-    grade: Joi.string().optional()
+    grade: Joi.string().optional(),
+    parentPhone: Joi.string().optional()
   }),
 
   assignStudentToClass: Joi.object({

@@ -101,6 +101,7 @@ export function validateRegistrationForm(
     digital_id: 'Fayda Alias Number (Digital ID)',
     dob: 'Date of Birth',
     gender: 'Gender',
+    email: 'Email Address',
     parentName: 'Parent/Guardian Name',
     address: 'Address',
     grade: 'Grade Applying For',

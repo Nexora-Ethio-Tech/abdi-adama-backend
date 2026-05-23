@@ -155,6 +155,18 @@ class SchoolAdminService {
       values.push(updateData.email);
     }
 
+    // Handle parent phone if provided for student role
+    if (updateData.parentPhone && user.role === 'student') {
+      const { validateAndFormatPhoneNumber } = require('../utils/validation');
+      const phoneValidation = validateAndFormatPhoneNumber(updateData.parentPhone);
+      if (!phoneValidation.isValid) {
+        throw new Error(phoneValidation.error || 'Invalid phone number');
+      }
+      paramCount++;
+      fields.push(`parent_phone = $${paramCount}`);
+      values.push(phoneValidation.formatted);
+    }
+
     if (fields.length === 0) {
       throw new Error('No fields to update');
     }
