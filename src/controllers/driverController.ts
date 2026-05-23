@@ -6,27 +6,26 @@ import { sendSuccess, sendError, getPagination } from '../shared/responseUtils';
 import { getNextSaturday } from '../shared/dateUtils';
 import { broadcast, addClient, removeClient } from '../shared/sseManager';
 import { performAllCleanups } from '../shared/cleanupUtils';
+import * as notificationService from '../services/notificationService';
 
 /**
  * GET /api/driver/manifest  (also aliased at /api/transport/manifest)
- * Returns the list of students assigned to the logged-in driver's route.
- * Frontend expects: student_name, digital_id, grade, route_name
+ * DRIVER MANIFEST SEPARATION - Returns ONLY the 4 students assigned to THIS driver.
+ * Driver A must absolutely NOT see Driver B's students or routing information.
+ * Returns: student_name, digital_id, grade, route_name
  */
 export const getManifest = async (req: AuthRequest, res: Response) => {
-  const identity_id = req.user?.identity_id;
+  const driver_id = req.user?.user_id;  // The actual driver's user_id
 
-  if (!identity_id) {
-    return sendError(res, 'Authentication error: identity not found in token.', 401);
+  if (!driver_id) {
+    return sendError(res, 'Authentication error: user_id not found in token.', 401);
   }
 
   try {
-    // 1. Find the driver's route
+    // 1. Find the driver's assigned route (Driver A only sees their route)
     const routeResult = await pool.query(
-      `SELECT r.id, r.name AS route_name, v.plate_number AS bus_number
-       FROM routes r
-       LEFT JOIN vehicles v ON v.id = r.vehicle_id
-       WHERE r.driver_id = $1`,
-      [identity_id]
+      'SELECT id, name FROM routes WHERE driver_id = $1',
+      [driver_id]
     );
 
     if (routeResult.rows.length === 0) {
@@ -35,24 +34,26 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
 
     const route = routeResult.rows[0];
 
-    // 2. Get manifest — return student_name + digital_id (school_id alias) + grade
+    // 2. Get students assigned to THIS driver's route ONLY
+    // JOIN: student_routes -> students -> users (to get digital_id & name)
     const manifestResult = await pool.query(
       `SELECT 
-         u.name AS student_name,
-         u.digital_id AS digital_id,
+         u.name           AS student_name,
+         u.digital_id,
+         u.digital_id     AS digital_id,
          s.grade,
-         $1::text AS route_name
-       FROM student_routes rm
-       JOIN students s ON s.id = rm.student_id
-       JOIN users u ON s.user_id = u.id
-       WHERE rm.route_id = $2
+         $1::text         AS route_name
+       FROM student_routes sr
+       JOIN students s ON s.id = sr.student_id
+       JOIN users u ON u.id = s.user_id
+       WHERE sr.route_id = $2
        ORDER BY u.name ASC`,
-      [route.route_name, route.id]
+      [route.name, route.id]
     );
 
     return sendSuccess(res, {
-      bus_number: route.bus_number,
-      route_name: route.route_name,
+      route_id: route.id,
+      route_name: route.name,
       student_count: manifestResult.rows.length,
       manifest: manifestResult.rows,
     });
@@ -188,7 +189,7 @@ export const getNotices = async (req: AuthRequest, res: Response) => {
 export const deleteNotice = async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const branchId = req.user?.branch_id;
-  const identity_id = req.user?.identity_id;
+  const user_id = req.user?.user_id;
 
   try {
     const checkResult = await pool.query(
@@ -202,14 +203,17 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
 
     const notice = checkResult.rows[0];
     const role = req.user?.role;
+    
+    // Normalize role for comparison
+    const normalizedRole = role?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
 
-    // 1. Branch Isolation (Admin/VP/Driver must be in the same branch)
+    // 1. Branch Isolation (Admin/SchoolAdmin/Driver must be in the same branch)
     if (notice.branch_id !== branchId) {
       return sendError(res, 'You do not have permission to delete notices from another branch.', 403);
     }
 
     // 2. Ownership Isolation for Drivers (strict)
-    if (role === 'Driver' && notice.sender_id !== identity_id) {
+    if (normalizedRole === 'driver' && notice.sender_id !== user_id) {
       return sendError(res, 'You can only delete your own notices.', 403);
     }
 
@@ -232,7 +236,7 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
 
     // Broadcast to all relevant roles (drivers, students, parents, admins, VP, super admin)
     const allowedRoles = ['Driver', 'Student', 'Parent', 'Admin', 'SchoolAdmin', 'VicePrincipal', 'SuperAdmin'];
-    broadcast('NOTICE_DELETED', { id, deletedBy: identity_id, deletedAt: new Date().toISOString() }, notice.branch_id, allowedRoles, assignedStudentIds);
+    broadcast('NOTICE_DELETED', { id, deletedBy: user_id, deletedAt: new Date().toISOString() }, notice.branch_id, allowedRoles, assignedStudentIds);
 
     return sendSuccess(res, null, 'Notice deleted successfully.');
   } catch (err: any) {
@@ -250,7 +254,7 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
 
   // Extract token from query parameter or Authorization header
   let token: string | undefined = req.query.token as string | undefined;
-
+  
   if (!token) {
     const authHeader = req.headers['authorization'];
     token = authHeader && authHeader.split(' ')[1];
@@ -271,10 +275,10 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
     const branchId = user?.branch_id || '1';
     const role = user?.role || 'Guest';
     const identityId = user?.identity_id || 'unknown';
-
+    
     // Get child identities for parents (for filtering logistics notices to assigned children)
     let childIdentityIds: string[] | undefined = undefined;
-
+    
     // Send SSE headers
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -285,7 +289,7 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
 
     res.write(':keep-alive\n\n');
     res.write(`data: ${JSON.stringify({ type: 'connected', branchId, role, identityId })}\n\n`);
-
+    
     // Register this client with SSE manager
     addClient(res, {
       branchId,
@@ -304,3 +308,161 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
     });
   });
 };
+
+/**
+ * POST /api/driver/alert
+ * Driver posts a new announcement/alert to their assigned students & parents + School Admin
+ * DRIVER ISOLATION: Each driver can only post alerts (they go only to their students, parents, and school admin)
+ * Body: { message, target_route (optional) }
+ * Recipients: Assigned students, their parents, and School Admin only (NOT VP or SuperAdmin)
+ */
+export const postAlert = async (req: AuthRequest, res: Response) => {
+  const { message, target_route } = req.body;
+  const driver_id = req.user?.user_id;
+  const driver_name = req.user?.name || 'Driver';
+
+  if (!driver_id) {
+    return sendError(res, 'Authentication error: driver_id not found.', 401);
+  }
+
+  if (!message || message.trim().length === 0) {
+    return sendError(res, 'Alert message is required.', 400);
+  }
+
+  try {
+    // Create the notification
+    const notification = await notificationService.createNotification(
+      driver_id,
+      driver_name,
+      message,
+      target_route || null
+    );
+
+    // Broadcast to relevant parties:
+    // 1. Students assigned to this driver's route
+    // 2. Parents of those students
+    // 3. Branch admins & vice principals
+    const routeResult = await pool.query(
+      'SELECT id FROM routes WHERE driver_id = $1',
+      [driver_id]
+    );
+
+    if (routeResult.rows.length > 0) {
+      const route_id = routeResult.rows[0].id;
+
+      // Get students on this route
+      const studentResult = await pool.query(
+        `SELECT DISTINCT s.user_id FROM student_routes sr
+         JOIN students s ON s.id = sr.student_id
+         WHERE sr.route_id = $1`,
+        [route_id]
+      );
+
+      const studentUserIds = studentResult.rows.map(r => r.user_id);
+
+      // Broadcast alert to assigned students, their parents, and school admin only
+      const broadcastPayload = {
+        type: 'DRIVER_ALERT',
+        id: notification.id,
+        driver_name: driver_name,
+        message: message,
+        created_at: notification.created_at,
+      };
+
+      const allowedRoles = ['Student', 'Parent', 'SchoolAdmin'];
+      broadcast('DRIVER_ALERT', broadcastPayload, req.user?.branch_id || '1', allowedRoles, studentUserIds);
+    }
+
+    return sendSuccess(res, notification, 'Alert posted successfully.', 201);
+  } catch (err: any) {
+    return sendError(res, 'Failed to post alert.', 500, err.message);
+  }
+};
+
+/**
+ * GET /api/driver/alerts?page=&limit=
+ * Get all alerts posted by drivers
+ * DRIVER ISOLATION: Driver can only see their own alerts
+ * SCHOOL ADMIN ACCESS: SchoolAdmin only (NOT VP or SuperAdmin)
+ */
+export const getAlerts = async (req: AuthRequest, res: Response) => {
+  const driver_id = req.user?.user_id;
+  const role = req.user?.role;
+  const branch_id = req.user?.branch_id;
+  const { limit, offset } = getPagination(req.query);
+
+  if (!driver_id) {
+    return sendError(res, 'Authentication error: driver_id not found.', 401);
+  }
+
+  try {
+    // Perform cleanup of old/deleted notifications
+    await performAllCleanups();
+
+    // Normalize role for comparison (same as authorizeRoles middleware)
+    const normalizedRole = role?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
+
+    let notifications;
+
+    if (normalizedRole === 'driver') {
+      // Driver only sees their own alerts
+      notifications = await notificationService.getNotificationsForDriver(driver_id);
+    } else if (normalizedRole === 'schooladmin') {
+      // Only SchoolAdmin sees all driver alerts for branch
+      notifications = await notificationService.getAllNotificationsForAdmin(branch_id);
+    } else {
+      return sendError(res, 'Access denied: insufficient permissions.', 403);
+    }
+
+    return sendSuccess(res, {
+      count: notifications.length,
+      alerts: notifications.slice(offset, offset + limit),
+      total: notifications.length,
+    });
+  } catch (err: any) {
+    return sendError(res, 'Failed to fetch alerts.', 500, err.message);
+  }
+};
+
+/**
+ * DELETE /api/driver/alert/:id
+ * Delete a driver's posted alert
+ * INSTANT DELETE: Removes immediately from database
+ * Only the driver who posted it can delete it
+ * Broadcasts deletion to: Assigned students, their parents, and School Admin
+ */
+export const deleteAlert = async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const driver_id = req.user?.user_id;
+
+  if (!driver_id) {
+    return sendError(res, 'Authentication error: driver_id not found.', 401);
+  }
+
+  try {
+    // Soft delete (mark as deleted)
+    const deleted = await notificationService.softDeleteNotification(id, driver_id);
+
+    if (!deleted) {
+      return sendError(res, 'Failed to delete alert.', 500);
+    }
+
+    // Broadcast deletion event to all connected clients
+    const broadcastPayload = {
+      type: 'DRIVER_ALERT_DELETED',
+      id: id,
+      deleted_at: new Date().toISOString(),
+    };
+
+    broadcast('DRIVER_ALERT_DELETED', broadcastPayload, req.user?.branch_id || '1', 
+      ['Student', 'Parent', 'SchoolAdmin']);
+
+    return sendSuccess(res, null, 'Alert deleted successfully.');
+  } catch (err: any) {
+    if (err.message.includes('Unauthorized')) {
+      return sendError(res, err.message, 403);
+    }
+    return sendError(res, 'Failed to delete alert.', 500, err.message);
+  }
+};
+

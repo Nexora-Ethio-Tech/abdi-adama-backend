@@ -39,6 +39,14 @@ router.get(
   studentController.getHistory
 );
 
+// ── Courses (current semester) ────────────────────────────────────────────────
+router.get(
+  '/courses',
+  authenticateToken,
+  authorizeRoles('Student', 'Parent'),
+  studentController.getCurrentCourses
+);
+
 // ── Backward-compatible endpoints ─────────────────────────────────────────────
 router.get('/current-courses',   authenticateToken, studentController.getCurrentCourses);
 router.get('/academic-history',  authenticateToken, studentController.getAcademicHistory);

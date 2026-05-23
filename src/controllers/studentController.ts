@@ -40,6 +40,12 @@ const verifyParentLink = async (parentUserId: string, studentId: string): Promis
  */
 export const getOwnProfile = async (req: AuthRequest, res: Response) => {
   const identityId = req.user?.identity_id;
+  
+  // Validate authentication
+  if (!identityId) {
+    return sendError(res, 'User identity not found. Please log in again.', 401);
+  }
+  
   await performAllCleanups();
 
   try {
@@ -79,6 +85,12 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
  */
 export const getDashboard = async (req: AuthRequest, res: Response) => {
   const studentIdentityId = req.user?.identity_id;
+  
+  // Validate authentication
+  if (!studentIdentityId) {
+    return sendError(res, 'User identity not found. Please log in again.', 401);
+  }
+  
   console.log(`[Dashboard] Fetching for student: ${studentIdentityId}`);
 
   try {
@@ -218,14 +230,19 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
  * Parent role is also allowed — controller verifies the parent-child link.
  */
 export const getGrades = async (req: AuthRequest, res: Response) => {
-  let studentIdentityId = req.user?.identity_id;
-  const targetStudentId = req.query.student_id as string;
+  let queryIdentityId = req.user?.identity_id;
+
+  // Validate authentication
+  if (!queryIdentityId) {
+    return sendError(res, 'User identity not found. Please log in again.', 401);
+  }
 
   // ── Support Parent Viewing Child ─────────────────────────────────────────────
-  if (req.user?.role === 'Parent' && targetStudentId) {
+  if (req.user?.role === 'Parent' && req.query.student_id) {
+    const targetStudentId = req.query.student_id as string;
     const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
     if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
-    studentIdentityId = targetStudentId;
+    queryIdentityId = targetStudentId;
   }
 
   const semester  = Number(req.query.semester)  || 2;
@@ -263,8 +280,8 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
          ${subjectId ? 'AND c.id = $3' : ''}
        ORDER BY c.name`,
       subjectId
-        ? [studentIdentityId, semester, subjectId]
-        : [studentIdentityId, semester]
+        ? [queryIdentityId, semester, subjectId]
+        : [queryIdentityId, semester]
     );
 
     return sendSuccess(res, {
@@ -273,6 +290,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
       selected: subjectId ? (coursesResult.rows[0] ?? null) : null,
     });
   } catch (err: any) {
+    console.error('[getGrades] Error:', err.message);
     return sendError(res, 'Failed to fetch grades.', 500, err.message);
   }
 };
@@ -288,13 +306,20 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
  * Parent role is also allowed — controller verifies the parent-child link.
  */
 export const getHistory = async (req: AuthRequest, res: Response) => {
-  let studentIdentityId = req.user?.identity_id;
+  let queryIdentityId = req.user?.identity_id;
+  
+  // Validate authentication
+  if (!queryIdentityId) {
+    return sendError(res, 'User identity not found. Please log in again.', 401);
+  }
+
   const targetStudentId = req.query.student_id as string;
 
+  // Support Parent Viewing Child
   if (req.user?.role === 'Parent' && targetStudentId) {
     const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
     if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
-    studentIdentityId = targetStudentId;
+    queryIdentityId = targetStudentId;
   }
 
   const year     = (req.query.year     as string) || '';
@@ -305,7 +330,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const params: any[] = [studentIdentityId, year];
+    const params: any[] = [queryIdentityId, year];
     if (semester !== null) params.push(semester);
 
     const result = await pool.query(
@@ -351,6 +376,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
 
     return sendSuccess(res, history);
   } catch (err: any) {
+    console.error('[getHistory] Error:', err.message);
     return sendError(res, 'Failed to fetch academic history.', 500, err.message);
   }
 };
@@ -362,6 +388,11 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
  */
 export const getCurrentCourses = async (req: AuthRequest, res: Response) => {
   const studentIdentityId = req.user?.identity_id;
+
+  // Validate authentication
+  if (!studentIdentityId) {
+    return sendError(res, 'User identity not found. Please log in again.', 401);
+  }
 
   try {
     const result = await pool.query(
@@ -401,6 +432,7 @@ export const getCurrentCourses = async (req: AuthRequest, res: Response) => {
 
     return sendSuccess(res, result.rows);
   } catch (err: any) {
+    console.error('[getCurrentCourses] Error:', err.message);
     return sendError(res, 'Failed to fetch current courses.', 500, err.message);
   }
 };
@@ -411,6 +443,11 @@ export const getCurrentCourses = async (req: AuthRequest, res: Response) => {
  */
 export const getAcademicHistory = async (req: AuthRequest, res: Response) => {
   const studentIdentityId = req.user?.identity_id;
+  
+  // Validate authentication
+  if (!studentIdentityId) {
+    return sendError(res, 'User identity not found. Please log in again.', 401);
+  }
 
   try {
     const result = await pool.query(

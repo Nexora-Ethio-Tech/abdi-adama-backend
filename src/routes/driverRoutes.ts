@@ -1,5 +1,14 @@
 import { Router } from 'express';
-import { getManifest, postNotice, getNotices, deleteNotice, subscribeToNotifications } from '../controllers/driverController';
+import { 
+  getManifest, 
+  postNotice, 
+  getNotices, 
+  deleteNotice, 
+  subscribeToNotifications,
+  postAlert,
+  getAlerts,
+  deleteAlert
+} from '../controllers/driverController';
 import { authenticateToken, authorizeRoles } from '../middleware/authMiddleware';
 
 const router = Router();
@@ -10,12 +19,17 @@ router.get('/stream', subscribeToNotifications);
 // All other routes require Driver JWT
 router.use(authenticateToken);
 
-// Manifest is Driver-only
+// Manifest is Driver-only (STRICT ISOLATION)
 router.get('/manifest', authorizeRoles('Driver'), getManifest);
 
-// Notices - Shared accessibility for tracking & visibility
+// Logistics Notices - Shared accessibility for tracking & visibility
 router.post('/notice', authorizeRoles('Driver'), postNotice);
 router.get('/notices', authorizeRoles('Driver', 'SchoolAdmin', 'VicePrincipal', 'SuperAdmin'), getNotices);
 router.delete('/notice/:id', authorizeRoles('Driver', 'SchoolAdmin'), deleteNotice);
+
+// Driver Alerts (NEW) - Posts to students/parents/school admin with INSTANT DELETE & 3-DAY AUTO-PURGE
+router.post('/alert', authorizeRoles('Driver'), postAlert);
+router.get('/alerts', authorizeRoles('Driver', 'SchoolAdmin'), getAlerts);
+router.delete('/alert/:id', authorizeRoles('Driver'), deleteAlert);
 
 export default router;

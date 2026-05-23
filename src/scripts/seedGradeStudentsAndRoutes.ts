@@ -8,8 +8,8 @@ dotenv.config();
 
 const BRANCH_NAME = 'Main Branch';
 const BRANCH_LOCATION = 'Main Campus';
-const STUDENT_ID_PREFIX = 'SDT';
-const STUDENT_BRANCH_CODE = 'MD';
+const STUDENT_ID_PREFIX = 'STD';
+const STUDENT_BRANCH_CODE = 'MB';
 const STUDENT_PASSWORD_LENGTH = 4;
 
 interface SeedUserConfig {

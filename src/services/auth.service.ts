@@ -24,30 +24,44 @@ class AuthService {
       );
 
       if (result.rows.length === 0) {
-        throw new Error('Invalid email or password');
+        const error: any = new Error('Invalid email or password');
+        error.statusCode = 401;
+        throw error;
       }
 
       const user: any = result.rows[0];
 
       if (!user.is_active) {
-        throw new Error('Account is inactive. Please contact administrator');
+        const error: any = new Error('Account is inactive. Please contact administrator');
+        error.statusCode = 403;
+        throw error;
       }
 
       if (user.status === 'Revoked') {
-        throw new Error('Access has been revoked. Please contact administrator');
+        const error: any = new Error('Access has been revoked. Please contact administrator');
+        error.statusCode = 403;
+        throw error;
       }
 
-      if (user.status === 'Pending') {
-        throw new Error('Account is pending approval');
+      // Allow students and parents to login with Pending status
+      // They can access their portals without waiting for approval
+      if (user.status === 'Pending' && !['student', 'parent'].includes(user.role)) {
+        const error: any = new Error('Account is pending approval');
+        error.statusCode = 403;
+        throw error;
       }
 
       // bcrypt check (ensure non-empty password is provided)
       if (!password) {
-        throw new Error('Password is required');
+        const error: any = new Error('Password is required');
+        error.statusCode = 400;
+        throw error;
       }
       const isPasswordValid = await comparePassword(password, user.password_hash!);
       if (!isPasswordValid) {
-        throw new Error('Invalid credentials');
+        const error: any = new Error('Invalid credentials');
+        error.statusCode = 401;
+        throw error;
       }
 
       const payload: any = {

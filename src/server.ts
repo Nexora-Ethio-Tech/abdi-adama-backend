@@ -34,6 +34,17 @@ async function ensureSchemaExtensions(): Promise<void> {
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL`,
     // Library book code column (used for human-friendly Book ID like BK-1234)
     `ALTER TABLE library_books ADD COLUMN IF NOT EXISTS book_code VARCHAR(50)`,
+    // Driver Notifications — tracks driver-posted alerts with 3-day auto-purge
+    `CREATE TABLE IF NOT EXISTS driver_notifications (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      driver_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      message TEXT NOT NULL,
+      target_route VARCHAR(255),
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TIMESTAMPTZ
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_driver_notifications_driver_id ON driver_notifications(driver_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_driver_notifications_created_at ON driver_notifications(created_at)`,
   ];
 
   for (const sql of migrations) {

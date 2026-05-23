@@ -15,7 +15,16 @@ class AuthController {
         message: 'Login successful'
       });
     } catch (error) {
-      next(error);
+      // If the service threw a known error with statusCode, return it explicitly
+      const err: any = error;
+      const status = err.statusCode || 500;
+      res.status(status).json({
+        success: false,
+        error: {
+          code: err.code || (status === 500 ? 'INTERNAL_ERROR' : 'AUTH_ERROR'),
+          message: err.message || 'Authentication failed'
+        }
+      });
     }
   }
 
