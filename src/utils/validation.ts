@@ -23,8 +23,8 @@ export interface PhoneValidationResult {
 export function validateAndFormatPhoneNumber(
   phoneInput: string
 ): PhoneValidationResult {
-  // Remove all whitespace and common separators
-  let phone = (phoneInput || '').trim().replace(/[\s\-().]/g, '');
+  // Remove all whitespace and common separators and coerce to string defensively
+  let phone = String(phoneInput || '').trim().replace(/[\s\-().]/g, '');
 
   // If empty, return error
   if (!phone) {
@@ -35,15 +35,15 @@ export function validateAndFormatPhoneNumber(
     };
   }
 
-  // Handle +251 prefix
-  if (phone.startsWith('+251')) {
+  // Handle +251 prefix (defensive checks)
+  if (typeof phone === 'string' && phone.startsWith('+251')) {
     phone = phone.substring(4); // Remove +251
-  } else if (phone.startsWith('251')) {
+  } else if (typeof phone === 'string' && phone.startsWith('251')) {
     phone = phone.substring(3); // Remove 251
   }
 
   // Handle 0 prefix (old format)
-  if (phone.startsWith('0')) {
+  if (typeof phone === 'string' && phone.startsWith('0')) {
     phone = phone.substring(1);
   }
 
