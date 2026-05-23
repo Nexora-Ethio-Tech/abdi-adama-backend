@@ -37,7 +37,7 @@ const normalizeRole = (role: string | null | undefined): UserRole | null => {
     'student': UserRole.STUDENT,
     'parent': UserRole.PARENT
   };
-  
+
   // Return mapped role or the normalized string if not in map
   return roleMap[r] || (r as UserRole);
 };
@@ -45,7 +45,7 @@ const normalizeRole = (role: string | null | undefined): UserRole | null => {
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       res.status(401).json({
         success: false,
@@ -78,7 +78,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     }
 
     const user: any = result.rows[0];
-    
+
     // Normalize role to standard format
     const normalizedRole = normalizeRole(user.role);
     if (!normalizedRole) {
@@ -92,7 +92,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       });
       return;
     }
-    
+
     user.role = normalizedRole;
 
     if (!user.is_active) {
