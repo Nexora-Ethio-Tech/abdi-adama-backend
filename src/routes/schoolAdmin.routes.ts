@@ -10,7 +10,8 @@ import Joi from 'joi';
 const router = Router();
 
 // Public application submission (landing page) - placed before auth middleware
-router.post('/applications',
+// Exposed at /school-admin/public/applications
+router.post('/public/applications',
   uploadTranscript.single('transcript'),
   handleUploadError,
   // Controller will handle validation and default branch assignment
