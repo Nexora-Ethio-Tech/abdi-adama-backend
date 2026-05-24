@@ -4,17 +4,39 @@ import { sendSuccess, sendError, getPagination } from '../shared/responseUtils';
 
 /**
  * GET /api/clinic/students
- * Returns a list of students for the directory. Supports search and pagination.
+ * Returns a list of students for the directory within the clinic admin's branch.
+ * Supports search and pagination.
+ * 
+ * Query params:
+ *   ?search=name_or_id - Search by student name or digital ID
+ *   ?limit=20 - Records per page
+ *   ?page=1 - Page number
  */
 export const getStudents = async (req: Request, res: Response) => {
   const { search } = req.query;
   const { limit, offset, page } = getPagination(req.query);
+  const branchId = (req as any).user?.branch_id;
+
+  if (!branchId) {
+    return sendError(res, 'Clinic admin branch not found.', 400);
+  }
 
   try {
-    const filter = search 
-      ? `AND (u.name ILIKE $1 OR u.digital_id ILIKE $1)` 
+    let paramCount = 1;
+    const params: any[] = [branchId];
+
+    // Add search parameter if provided
+    if (search) {
+      paramCount++;
+      params.push(`%${search}%`);
+    }
+
+    // Add pagination parameters
+    params.push(limit, offset);
+
+    const searchFilter = search 
+      ? `AND (u.name ILIKE $${paramCount} OR u.digital_id ILIKE $${paramCount} OR s.id::text ILIKE $${paramCount} OR COALESCE(u.username, '') ILIKE $${paramCount})` 
       : '';
-    const params = search ? [`%${search}%`, limit, offset] : [limit, offset];
 
     const query = `
       SELECT DISTINCT ON (u.name, s.id)
@@ -29,13 +51,20 @@ export const getStudents = async (req: Request, res: Response) => {
       LEFT JOIN clinic_visits v ON s.id = v.student_id
       LEFT JOIN clinic_chat_messages m ON s.id = m.student_id
       WHERE u.role = 'student'
+        AND s.branch_id = $1
         ${search ? '' : 'AND (v.id IS NOT NULL OR m.id IS NOT NULL)'}
-        ${filter}
+        ${searchFilter}
       ORDER BY u.name ASC
-      LIMIT ${search ? '$2 OFFSET $3' : '$1 OFFSET $2'}
+      LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
     `;
 
     const result = await pool.query(query, params);
+
+    // Count total records matching criteria
+    const countParams: any[] = [branchId];
+    if (search) {
+      countParams.push(`%${search}%`);
+    }
 
     const countQuery = `
       SELECT COUNT(DISTINCT s.id) 
@@ -44,17 +73,19 @@ export const getStudents = async (req: Request, res: Response) => {
       LEFT JOIN clinic_visits v ON s.id = v.student_id
       LEFT JOIN clinic_chat_messages m ON s.id = m.student_id
       WHERE u.role = 'student'
+        AND s.branch_id = $1
         ${search ? '' : 'AND (v.id IS NOT NULL OR m.id IS NOT NULL)'}
-        ${filter}
+        ${searchFilter}
     `;
 
-    const countResult = await pool.query(countQuery, search ? [`%${search}%`] : []);
+    const countResult = await pool.query(countQuery, countParams);
 
     return sendSuccess(res, {
       students: result.rows,
       total: parseInt(countResult.rows[0].count),
       page,
-      limit
+      limit,
+      branch_id: branchId
     });
   } catch (err: any) {
     return sendError(res, 'Failed to fetch students.', 500, err.message);
@@ -63,10 +94,23 @@ export const getStudents = async (req: Request, res: Response) => {
 
 /**
  * POST /api/clinic/visits
- * Logs a new medical visit.
+ * Logs a new medical visit for a student.
+ * Only allows visits for students in the clinic admin's branch.
+ * 
+ * Body:
+ *   - student_id: UUID or digital_id of the student
+ *   - reason: Reason for visit (required)
+ *   - treatment: Treatment provided (required)
+ *   - medicines: Array of { id, quantity } (optional)
  */
 export const logVisit = async (req: Request, res: Response) => {
   const { student_id, reason, treatment } = req.body;
+  const branchId = (req as any).user?.branch_id;
+  const clinicAdminId = (req as any).user?.id;
+
+  if (!branchId) {
+    return sendError(res, 'Clinic admin branch not found.', 400);
+  }
 
   if (!student_id || !reason) {
     return sendError(res, 'Student ID and reason are required.', 400);
@@ -74,23 +118,35 @@ export const logVisit = async (req: Request, res: Response) => {
 
   try {
     // 1. Lookup the student using digital_id or internal ID
+    // IMPORTANT: Verify the student is in the clinic admin's branch
     const identityResult = await pool.query(
-      'SELECT s.id, u.name FROM students s JOIN users u ON s.user_id = u.id WHERE s.id::text = $1 OR u.digital_id = $1',
-      [student_id]
+      `SELECT s.id, s.branch_id, u.name 
+       FROM students s 
+       JOIN users u ON s.user_id = u.id 
+       WHERE (s.id::text = $1 OR u.digital_id = $1)
+         AND s.branch_id = $2`,
+      [student_id, branchId]
     );
 
     if (identityResult.rows.length === 0) {
-      return sendError(res, `Student with ID ${student_id} not found.`, 404);
+      return sendError(res, `Student with ID ${student_id} not found in your branch.`, 404);
     }
 
     const { id: student_uuid, name: student_name } = identityResult.rows[0];
 
     // 2. Log the visit
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const now = new Date().toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false 
+    }); // HH:MM format
+    
     const result = await pool.query(
-      `INSERT INTO clinic_visits (student_id, student_name, reason, treatment)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO clinic_visits (student_id, student_name, date, time, reason, treatment, logged_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [student_uuid, student_name, reason, treatment]
+      [student_uuid, student_name, today, now, reason, treatment || null, clinicAdminId]
     );
 
     return sendSuccess(res, result.rows[0], 'Visit logged successfully.', 201);
@@ -101,36 +157,85 @@ export const logVisit = async (req: Request, res: Response) => {
 
 /**
  * GET /api/clinic/visits/history
- * Returns the history of clinic visits with pagination and search.
+ * Returns the history of clinic visits for the clinic admin's branch.
+ * Supports search and pagination.
+ * 
+ * Query params:
+ *   ?search=student_name_or_reason - Search by student name or reason
+ *   ?limit=20 - Records per page
+ *   ?page=1 - Page number
  */
 export const getVisitHistory = async (req: Request, res: Response) => {
   const { search } = req.query;
   const { limit, offset, page } = getPagination(req.query);
+  const branchId = (req as any).user?.branch_id;
+
+  if (!branchId) {
+    return sendError(res, 'Clinic admin branch not found.', 400);
+  }
 
   try {
-    const filter = search 
-      ? `WHERE student_name ILIKE $1 OR reason ILIKE $1` 
-      : '';
-    const params = search ? [`%${search}%`, limit, offset] : [limit, offset];
+    let paramCount = 1;
+    const params: any[] = [branchId];
 
+    // Add search parameter if provided
+    if (search) {
+      paramCount++;
+      params.push(`%${search}%`);
+    }
+
+    // Add pagination parameters
+    params.push(limit, offset);
+
+    const searchFilter = search 
+      ? `AND (cv.student_name ILIKE $${paramCount} OR cv.reason ILIKE $${paramCount})` 
+      : '';
+
+    // Query clinic visits for students in the admin's branch
+    // Includes student info joined through the students table
     const result = await pool.query(
       `SELECT 
-         id,
-         student_id,
-         student_name,
-         to_char(visit_time, 'YYYY-MM-DD') AS date,
-         to_char(visit_time, 'HH:MI AM') AS time,
-         reason,
-         treatment,
-         'Logged' AS status
-       FROM clinic_visits 
-       ${filter}
-       ORDER BY visit_time DESC
-       LIMIT ${search ? '$2 OFFSET $3' : '$1 OFFSET $2'}`,
+         cv.id,
+         cv.student_id,
+         cv.student_name,
+         cv.date,
+         cv.time,
+         cv.reason,
+         cv.treatment,
+         cv.status,
+         u.name as logged_by_name
+       FROM clinic_visits cv
+       JOIN students s ON cv.student_id = s.id
+       LEFT JOIN users u ON cv.logged_by = u.id
+       WHERE s.branch_id = $1
+         ${searchFilter}
+       ORDER BY cv.created_at DESC
+       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`,
       params
     );
 
-    return sendSuccess(res, result.rows);
+    // Count total records matching criteria
+    const countParams: any[] = [branchId];
+    if (search) {
+      countParams.push(`%${search}%`);
+    }
+
+    const countResult = await pool.query(
+      `SELECT COUNT(cv.id) as count
+       FROM clinic_visits cv
+       JOIN students s ON cv.student_id = s.id
+       WHERE s.branch_id = $1
+         ${searchFilter}`,
+      countParams
+    );
+
+    return sendSuccess(res, {
+      visits: result.rows,
+      total: parseInt(countResult.rows[0]?.count || '0'),
+      page,
+      limit,
+      branch_id: branchId
+    });
   } catch (err: any) {
     return sendError(res, 'Failed to fetch visit history.', 500, err.message);
   }
@@ -143,7 +248,7 @@ export const getVisitHistory = async (req: Request, res: Response) => {
 export const getMedicines = async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, stock, unit, description
+      `SELECT id, name, stock, unit
          FROM medicine_inventory
         ORDER BY name ASC`
     );
