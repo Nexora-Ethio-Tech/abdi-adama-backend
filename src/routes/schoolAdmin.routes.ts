@@ -9,6 +9,14 @@ import Joi from 'joi';
 
 const router = Router();
 
+// Public application submission (landing page) - placed before auth middleware
+router.post('/applications',
+  uploadTranscript.single('transcript'),
+  handleUploadError,
+  // Controller will handle validation and default branch assignment
+  schoolAdminController.createPublicPendingApplication
+);
+
 router.use(authenticate);
 router.use(requireBranchId);
 router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
@@ -107,10 +115,10 @@ router.get('/academic-years', schoolAdminController.getAcademicYears);
 router.patch('/academic-years/:id/activate', schoolAdminController.activateAcademicYear);
 
 // Student Applications
+// Note: Multer handles multipart/form-data parsing, Joi validator skipped since controller does comprehensive validation
 router.post('/applications',
   uploadTranscript.single('transcript'),
   handleUploadError,
-  validate(schemas.createPendingApplication),
   schoolAdminController.createPendingApplication
 );
 router.get('/applications', schoolAdminController.getPendingApplications);

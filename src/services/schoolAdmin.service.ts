@@ -699,6 +699,17 @@ class SchoolAdminService {
     return result.rows[0];
   }
 
+  // Return default branch id for public submissions
+  async getDefaultBranchId(): Promise<string | null> {
+    // Prefer "Main Branch" if present, otherwise return first branch id
+    const tryMain = await pool.query(`SELECT id FROM branches WHERE name = $1 LIMIT 1`, ['Main Branch']);
+    if (tryMain.rows.length > 0) return tryMain.rows[0].id;
+
+    const first = await pool.query(`SELECT id FROM branches ORDER BY name LIMIT 1`);
+    if (first.rows.length > 0) return first.rows[0].id;
+    return null;
+  }
+
   async getPendingApplications(branchId: string, status?: string) {
     let query = 'SELECT * FROM pending_applications WHERE branch_id = $1';
     const params: any[] = [branchId];
