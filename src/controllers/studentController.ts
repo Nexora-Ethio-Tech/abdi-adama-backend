@@ -27,7 +27,9 @@ const getEnrolledCourseIds = async (studentIdentityId: string): Promise<string[]
  */
 const verifyParentLink = async (parentUserId: string, studentId: string): Promise<boolean> => {
   const result = await pool.query(
-    'SELECT 1 FROM parent_student WHERE parent_id = $1 AND student_id = $2',
+    `SELECT 1 FROM parent_student ps
+     JOIN parents p ON ps.parent_id = p.id
+     WHERE p.user_id = $1 AND ps.student_id = $2`,
     [parentUserId, studentId]
   );
   return result.rows.length > 0;

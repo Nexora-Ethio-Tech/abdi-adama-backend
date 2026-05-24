@@ -2,6 +2,16 @@ import { Response } from 'express';
 import pool from '../config/db';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { sendSuccess, sendError } from '../shared/responseUtils';
+import { performAllCleanups } from '../shared/cleanupUtils';
+import { getActiveCommLogSQL } from '../shared/commBookUtils';
+
+const getParentProfileId = async (userId: string): Promise<string | null> => {
+  const result = await pool.query(
+    `SELECT id FROM parents WHERE user_id = $1 LIMIT 1`,
+    [userId]
+  );
+  return result.rows.length > 0 ? result.rows[0].id : null;
+};
 
 /**
  * GET /api/parent/dashboard
@@ -10,85 +20,96 @@ import { sendSuccess, sendError } from '../shared/responseUtils';
 export const getParentDashboard = async (req: AuthRequest, res: Response) => {
   const parentUserId = req.user?.user_id;
 
+  if (!parentUserId) {
+    return sendError(res, 'User not found. Please log in again.', 401);
+  }
+
   try {
-    // 1. Get all children linked to this parent with real stats
+    const parentId = await getParentProfileId(parentUserId);
+    if (!parentId) {
+      return sendError(res, 'Parent account not found.', 404);
+    }
+
     const childrenResult = await pool.query(
       `SELECT
-         i.id          AS identity_id,
-         i.school_id,
-         i.full_name   AS "fullName",
-         i.grade,
-         (SELECT ROUND(COUNT(*) FILTER (WHERE status = 'Present')::numeric / NULLIF(COUNT(*), 0) * 100, 1)::text || '%' 
-          FROM silo_attendance WHERE student_id = i.id) AS attendance,
-         CASE 
-           WHEN s.academic_rank IS NOT NULL THEN 'Rank: ' || s.academic_rank::text
-           ELSE 'Pending Results'
-         END AS performance,
-         (SELECT COUNT(*) FROM silo_enrollments WHERE student_id = i.id) AS course_count,
-         (SELECT json_agg(c.name) FROM silo_enrollments e JOIN silo_courses c ON e.course_id = c.id WHERE e.student_id = i.id) AS courses
-       FROM silo_family_links fl
-       JOIN silo_identities i ON fl.student_identity_id = i.id
-       LEFT JOIN silo_student_stats s ON i.id = s.student_id
-       WHERE fl.parent_user_id = $1
-       ORDER BY i.full_name ASC`,
-      [parentUserId]
+         s.id,
+         u.name AS "fullName",
+         s.grade,
+         CASE WHEN COUNT(sa.*) = 0 THEN 'N/A' ELSE ROUND(COUNT(sa.*) FILTER (WHERE sa.status = 'present')::numeric / COUNT(sa.*) * 100, 1)::text || '%' END AS attendance,
+         COALESCE('Rank: ' || ss.academic_rank::text, 'Pending Results') AS performance,
+         COALESCE(course_stats.course_count, 0) AS course_count,
+         COALESCE(course_stats.courses, '[]'::json) AS courses
+       FROM parent_student ps
+       JOIN students s ON ps.student_id = s.id
+       JOIN users u ON s.user_id = u.id
+       LEFT JOIN student_attendance sa ON sa.student_id = s.id
+       LEFT JOIN silo_student_stats ss ON s.id = ss.student_id
+       LEFT JOIN (
+         SELECT
+           e.student_id,
+           COUNT(*) AS course_count,
+           json_agg(json_build_object('name', c.name, 'code', c.code, 'teacher', COALESCE(tu.name, 'N/A'))) AS courses
+         FROM silo_enrollments e
+         JOIN silo_courses c ON c.id = e.course_id
+         LEFT JOIN silo_identities ti ON ti.id = c.teacher_id
+         LEFT JOIN users tu ON ti.user_id = tu.id
+         GROUP BY e.student_id
+       ) AS course_stats ON course_stats.student_id = s.id
+       WHERE ps.parent_id = $1
+       GROUP BY s.id, u.name, s.grade, ss.academic_rank, course_stats.course_count, course_stats.courses
+       ORDER BY u.name ASC`,
+      [parentId]
     );
 
-    // 2. Get combined announcements (General + Logistics + Recent Clinic Messages)
     const announcementsResult = await pool.query(
       `SELECT
-         id::text,
-         COALESCE(priority, 'Normal')  AS priority,
-         COALESCE(title, 'Notice')     AS title,
-         content,
-         timestamp,
-         'General'::text               AS category,
-         NULL::text                    AS "driverName"
-       FROM silo_announcements
+         n.id::text,
+         COALESCE(n.priority, 'Normal') AS priority,
+         n.title,
+         n.content,
+         n.created_at AS timestamp,
+         'School'::text AS category,
+         NULL::text AS "driverName"
+       FROM notices n
+       WHERE n.created_at > NOW() - INTERVAL '30 days'
 
        UNION ALL
 
        SELECT
          n.id::text,
-         'Normal'::text                AS priority,
-         COALESCE(n.title, 'Logistics Update') AS title,
-         n.message                     AS content,
-         n.published_at                AS timestamp,
-         'Logistics'::text             AS category,
-         i.full_name                   AS "driverName"
-       FROM silo_logistics_notices n
-       LEFT JOIN silo_identities i ON i.id = n.sender_id
+         'Normal'::text AS priority,
+         n.title,
+         n.content,
+         n.created_at AS timestamp,
+         'Logistics'::text AS category,
+         u.name AS "driverName"
+       FROM logistics_notices n
+       LEFT JOIN users u ON u.id = n.driver_id
        WHERE n.deleted_at IS NULL
-         AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
-         AND (
-           -- Only see notices from drivers assigned to at least one of this parent's children
-           n.sender_id IN (
-             SELECT r.driver_id 
-             FROM silo_routes r
-             JOIN silo_route_manifest rm ON r.id = rm.route_id
-             JOIN silo_family_links fl ON fl.student_identity_id = rm.student_id
-             WHERE fl.parent_user_id = $1
-           )
-         )
+         AND n.created_at > NOW() - INTERVAL '30 days'
 
        UNION ALL
 
        SELECT
          m.id::text,
-         'High'::text                  AS priority,
-         'Clinic: ' || i.full_name     AS title,
-         m.message                     AS content,
-         m.created_at                  AS timestamp,
-         'Clinic'::text                AS category,
-         m.child_id::text              AS "targetId"
-       FROM silo_clinic_messages m
-       JOIN silo_identities i ON i.id = m.child_id
-       WHERE m.receiver_id = $1
-         AND m.created_at > NOW() - INTERVAL '5 days'
+         'High'::text AS priority,
+         'Clinic: ' || su.name AS title,
+         m.text AS content,
+         m.created_at AS timestamp,
+         'Clinic'::text AS category,
+         NULL::text AS "driverName"
+       FROM clinic_chat_messages m
+       JOIN students s ON s.id = m.student_id
+       JOIN users su ON s.user_id = su.id
+       WHERE m.sender_role = 'clinic'
+         AND m.student_id IN (
+           SELECT student_id FROM parent_student WHERE parent_id = $1
+         )
+         AND m.created_at > NOW() - INTERVAL '7 days'
 
        ORDER BY timestamp DESC
        LIMIT 15`,
-      [parentUserId]
+      [parentId]
     );
 
     return sendSuccess(res, {
@@ -101,9 +122,6 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
   }
 };
 
-import { performAllCleanups } from '../shared/cleanupUtils';
-import { getActiveCommLogSQL } from '../shared/commBookUtils';
-
 /**
  * GET /api/parent/child/:studentId/communication
  * Returns the current week's communication book log for a specific child.
@@ -113,31 +131,51 @@ export const getChildCommunicationLogs = async (req: AuthRequest, res: Response)
   const { studentId } = req.params;
   const parentUserId = req.user?.user_id;
 
+  if (!parentUserId) {
+    return sendError(res, 'User not found. Please log in again.', 401);
+  }
+
   try {
-    // Security: Check if child is linked to parent
+    const parentId = await getParentProfileId(parentUserId);
+    if (!parentId) {
+      return sendError(res, 'Parent account not found.', 404);
+    }
+
     const checkResult = await pool.query(
-      'SELECT 1 FROM silo_family_links WHERE parent_user_id = $1 AND student_identity_id = $2',
-      [parentUserId, studentId]
+      `SELECT 1 FROM parent_student WHERE parent_id = $1 AND student_id = $2`,
+      [parentId, studentId]
     );
     if (checkResult.rows.length === 0) {
       return sendError(res, 'Access denied: student not linked to your account.', 403);
     }
 
-    // 1. Automated Cleanup (Logistics + Communication Book)
     await performAllCleanups();
 
-    // 2. Fetch the most recent active log for this child
     const result = await pool.query(
-      `SELECT l.*, i.full_name as sender_name 
-       FROM silo_communication_logs l
-       JOIN silo_identities i ON i.id = l.sender_id
-       WHERE l.student_id = $1
+      `SELECT
+         cl.id,
+         cl.week_ending,
+         cl.rating_uniform,
+         cl.rating_materials,
+         cl.rating_homework,
+         cl.rating_participation,
+         cl.rating_conduct,
+         cl.rating_social,
+         cl.rating_punctuality,
+         cl.rating_note_taking,
+         cl.teacher_note,
+         to_char(cl.week_ending, 'YYYY-MM-DD') AS week_ending_formatted,
+         u.name AS teacher_name
+       FROM communication_logs cl
+       LEFT JOIN teachers t ON cl.teacher_id = t.id
+       LEFT JOIN users u ON t.user_id = u.id
+       WHERE cl.student_id = $1
          AND ${getActiveCommLogSQL()}
-       ORDER BY l.week_ending DESC
+       ORDER BY cl.week_ending DESC
        LIMIT 1`,
       [studentId]
     );
-    
+
     return sendSuccess(res, result.rows);
   } catch (err: any) {
     console.error('[parentController] getChildCommunicationLogs error:', err.message || err);

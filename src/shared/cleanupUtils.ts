@@ -1,5 +1,6 @@
 import pool from '../config/db';
 import * as notificationService from '../services/notificationService';
+import { performCommunicationCleanup } from './commBookUtils';
 
 /**
  * Performs all scheduled background cleanups.
@@ -11,12 +12,15 @@ import * as notificationService from '../services/notificationService';
  *      than 6 hours, completing immediate manual deletion requests.
  *   3. Hard-delete driver notifications older than 3 days (AUTO-PURGE).
  *   4. Hard-delete soft-deleted driver notifications older than 6 hours.
+ *   5. Purge older weekly communication book logs every Friday morning.
  *
  * Called automatically on every relevant API request (e.g. GET /api/driver/notices,
  * GET /api/student/profile) so no separate cron job is needed.
  */
 export const performAllCleanups = async (): Promise<void> => {
   try {
+    // 5. Purge old weekly communication book logs
+    await performCommunicationCleanup();
     // 1. Hard-delete expired logistics notices (auto-expired after 5 days)
     const expiredDelete = await pool.query(`
       DELETE FROM logistics_notices

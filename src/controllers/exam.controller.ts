@@ -36,7 +36,8 @@ class ExamController {
       const userId = req.user?.id;
       if (!userId) { sendError(res, 'User identity not found. Please log in again.', 401); return; }
       if (!questionId || typeof answer !== 'string') {
-        return sendError(res, 'questionId and answer are required.', 400);
+        sendError(res, 'questionId and answer are required.', 400);
+        return;
       }
 
       await examService.saveExamAnswer(examId, userId, questionId, answer);
@@ -63,7 +64,10 @@ class ExamController {
   async createExam(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = req.user?.id;
-      if (!userId) return sendError(res, 'User identity not found. Please log in again.', 401);
+      if (!userId) {
+        sendError(res, 'User identity not found. Please log in again.', 401);
+        return;
+      }
 
       const { title, courseId, courseName, category, durationMinutes, questions } = req.body;
       const exam = await examService.createExam(userId, {

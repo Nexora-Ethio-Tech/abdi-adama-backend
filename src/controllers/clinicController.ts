@@ -297,119 +297,128 @@ export const deductMedicine = async (req: Request, res: Response) => {
  *   Returns the inbox — one row per parent conversation, sorted by
  *   MOST RECENT MESSAGE FIRST (WhatsApp-style). Each row includes
  *   unread_count so the frontend can display a badge.
- *
- * For ClinicAdmin (with ?otherUserId or ?childId):
- *   Returns the full message thread for that specific conversation.
- *
- * For Parent:
- *   Returns all messages between this parent and the clinic (their thread only).
+ */
+const verifyParentChildLink = async (parentUserId: string, studentId: string): Promise<boolean> => {
+  const result = await pool.query(
+    `SELECT 1 FROM parent_student ps
+     JOIN parents p ON ps.parent_id = p.id
+     WHERE p.user_id = $1
+       AND ps.student_id = $2`,
+    [parentUserId, studentId]
+  );
+  return result.rows.length > 0;
+};
+
+/**
+ * GET /api/clinic/chat
+ * Returns the chat thread for the current parent or clinic admin context.
  */
 export const getChatMessages = async (req: Request, res: Response) => {
   const { user_id: userId, role } = (req as any).user;
-  const { otherUserId, childId } = req.query;
+  const { childId } = req.query;
 
   try {
     let queryText = '';
     let params: any[] = [];
 
     if (role === 'Parent') {
-      // Parents see their own messages with the clinic, filtered by childId if provided
-      const filter = childId ? 'AND m.child_id = $2' : '';
-      queryText = `
-        SELECT 
-          m.id, 
-          m.sender_id, 
-          m.receiver_id, 
-          m.message AS text, 
-          m.child_id,
-          m.is_read,
-          to_char(m.created_at, 'HH:MI AM') AS timestamp,
-          CASE WHEN m.sender_id = $1 THEN 'parent' ELSE 'clinic' END as role
-        FROM silo_clinic_messages m
-        WHERE (m.sender_id = $1 OR m.receiver_id = $1)
-        ${filter}
-        ORDER BY m.created_at ASC
-      `;
-      params = childId ? [userId, childId] : [userId];
-
-    } else if (role === 'ClinicAdmin') {
-      if (!otherUserId && !childId) {
-        // ── INBOX VIEW ────────────────────────────────────────────────────────
-        // WhatsApp-style: newest conversation at top.
-        //
-        // We use a CTE to get the latest message per sender (DISTINCT ON),
-        // then wrap it in an outer query to allow sorting by last_message_at.
-        // We also compute unread_count per conversation.
+      const selectedChildId = childId as string | undefined;
+      if (selectedChildId) {
+        const isLinked = await verifyParentChildLink(userId, selectedChildId);
+        if (!isLinked) {
+          return sendError(res, 'Access denied: student not linked to your account.', 403);
+        }
         queryText = `
-          WITH latest_per_sender AS (
-            SELECT DISTINCT ON (m.sender_id)
-              m.sender_id,
-              m.message        AS last_message,
-              m.child_id       AS student_id,
-              m.created_at     AS last_message_at
-            FROM silo_clinic_messages m
-            WHERE m.receiver_id IS NULL
-               OR m.receiver_id IN (
-                 SELECT id FROM silo_users WHERE role = 'ClinicAdmin'
-               )
-            ORDER BY m.sender_id, m.created_at DESC
+          SELECT
+            m.id,
+            m.sender_id,
+            m.sender_role AS role,
+            m.student_id AS child_id,
+            m.student_name,
+            m.text,
+            m.read AS is_read,
+            to_char(m.created_at, 'HH12:MI AM') AS timestamp
+          FROM clinic_chat_messages m
+          WHERE m.student_id = $1
+          ORDER BY m.created_at ASC
+        `;
+        params = [selectedChildId];
+      } else {
+        const childrenResult = await pool.query(
+          `SELECT ps.student_id
+           FROM parent_student ps
+           JOIN parents p ON ps.parent_id = p.id
+           WHERE p.user_id = $1`,
+          [userId]
+        );
+        const childIds = childrenResult.rows.map((row) => row.student_id);
+        if (childIds.length === 0) {
+          return sendSuccess(res, []);
+        }
+        queryText = `
+          SELECT
+            m.id,
+            m.sender_id,
+            m.sender_role AS role,
+            m.student_id AS child_id,
+            m.student_name,
+            m.text,
+            m.read AS is_read,
+            to_char(m.created_at, 'HH12:MI AM') AS timestamp
+          FROM clinic_chat_messages m
+          WHERE m.student_id = ANY($1::uuid[])
+          ORDER BY m.created_at ASC
+        `;
+        params = [childIds];
+      }
+    } else if (role === 'ClinicAdmin') {
+      if (!childId) {
+        queryText = `
+          WITH latest_per_student AS (
+            SELECT DISTINCT ON (m.student_id)
+              m.student_id,
+              m.text AS last_message,
+              m.created_at AS last_message_at
+            FROM clinic_chat_messages m
+            ORDER BY m.student_id, m.created_at DESC
           ),
           unread_counts AS (
             SELECT
-              m.sender_id,
-              COUNT(*) FILTER (WHERE m.is_read = FALSE) AS unread_count
-            FROM silo_clinic_messages m
-            WHERE (m.receiver_id IS NULL
-                   OR m.receiver_id IN (
-                 SELECT id FROM users WHERE role = 'clinic-admin'
-                   ))
-              AND m.sender_id IN (SELECT sender_id FROM latest_per_sender)
-            GROUP BY m.sender_id
+              m.student_id,
+              COUNT(*) FILTER (WHERE m.read = FALSE AND m.sender_role = 'parent') AS unread_count
+            FROM clinic_chat_messages m
+            GROUP BY m.student_id
           )
           SELECT
-            lps.sender_id,
-            i.full_name                                   AS sender_name,
-            lps.last_message,
-            to_char(lps.last_message_at, 'YYYY-MM-DD HH:MI AM') AS last_time,
-            lps.last_message_at,
-            st.full_name                                  AS student_name,
             lps.student_id,
-            COALESCE(uc.unread_count, 0)::int             AS unread_count
-          FROM latest_per_sender lps
-          JOIN users u ON lps.sender_id = u.id
-          LEFT JOIN students st ON lps.student_id = st.id
-          LEFT JOIN users su ON st.user_id = su.id
-          LEFT JOIN unread_counts uc ON uc.sender_id = lps.sender_id
+            su.name AS student_name,
+            lps.last_message,
+            to_char(lps.last_message_at, 'YYYY-MM-DD HH12:MI AM') AS last_time,
+            lps.last_message_at,
+            COALESCE(uc.unread_count, 0)::int AS unread_count
+          FROM latest_per_student lps
+          LEFT JOIN students s ON s.id = lps.student_id
+          LEFT JOIN users su ON s.user_id = su.id
+          LEFT JOIN unread_counts uc ON uc.student_id = lps.student_id
           ORDER BY lps.last_message_at DESC
         `;
         params = [];
-
       } else {
-        // ── SPECIFIC CONVERSATION ─────────────────────────────────────────────
-        const filter = childId
-          ? 'WHERE m.child_id = $1'
-          : 'WHERE (m.sender_id = $1 OR m.receiver_id = $1)';
         queryText = `
-          SELECT 
-            m.id, 
-            m.sender_id, 
-            m.receiver_id, 
-            m.message AS text, 
-            m.child_id,
-            m.is_read,
-            st.full_name AS student_name,
-            to_char(m.created_at, 'HH:MI AM') AS timestamp,
-            CASE 
-              WHEN m.sender_id IN (SELECT id FROM users WHERE role = 'clinic-admin')
-              THEN 'clinic' 
-              ELSE 'parent' 
-            END AS role
+          SELECT
+            m.id,
+            m.sender_id,
+            m.sender_role AS role,
+            m.student_id AS child_id,
+            m.student_name,
+            m.text,
+            m.read AS is_read,
+            to_char(m.created_at, 'HH12:MI AM') AS timestamp
           FROM clinic_chat_messages m
-          LEFT JOIN students st ON m.student_id = st.id
-          ${filter}
+          WHERE m.student_id = $1
           ORDER BY m.created_at ASC
         `;
-        params = [childId || otherUserId];
+        params = [childId];
       }
     }
 
@@ -426,44 +435,41 @@ export const getChatMessages = async (req: Request, res: Response) => {
  */
 export const sendChatMessage = async (req: Request, res: Response) => {
   const { user_id: senderId, role: senderRole } = (req as any).user;
-  const { receiverId, message, childId } = req.body;
+  const { message, childId } = req.body;
 
   if (!message) {
     return sendError(res, 'Message content is required.', 400);
   }
 
+  if (!childId) {
+    return sendError(res, 'Child ID is required to send a message.', 400);
+  }
+
   try {
-    let finalReceiverId = receiverId;
-
-    // Only ClinicAdmins should trigger the automated parent resolution logic
-    if (senderRole === 'ClinicAdmin' && !finalReceiverId && childId) {
-      // 1. Try to find the last parent who messaged about this child
-      const lastParentMsg = await pool.query(
-        `SELECT sender_id FROM clinic_chat_messages 
-         WHERE student_id = $1 AND sender_id IN (SELECT id FROM users WHERE role = 'parent')
-         ORDER BY created_at DESC LIMIT 1`,
-        [childId]
-      );
-
-      if (lastParentMsg.rows.length > 0) {
-        finalReceiverId = lastParentMsg.rows[0].sender_id;
-      } else {
-        // 2. Fallback: Find the first parent linked in silo_family_links
-        const linkedParent = await pool.query(
-          `SELECT parent_user_id FROM silo_family_links WHERE student_identity_id = $1 LIMIT 1`,
-          [childId]
-        );
-        if (linkedParent.rows.length > 0) {
-          finalReceiverId = linkedParent.rows[0].parent_user_id;
-        }
+    if (senderRole === 'Parent') {
+      const isLinked = await verifyParentChildLink(senderId, childId);
+      if (!isLinked) {
+        return sendError(res, 'Access denied: student not linked to your account.', 403);
       }
     }
 
+    const studentResult = await pool.query(
+      `SELECT u.name AS student_name FROM students s JOIN users u ON s.user_id = u.id WHERE s.id = $1 LIMIT 1`,
+      [childId]
+    );
+
+    if (studentResult.rows.length === 0) {
+      return sendError(res, 'Student not found.', 404);
+    }
+
+    const studentName = studentResult.rows[0].student_name;
+    const senderRoleValue = senderRole === 'ClinicAdmin' ? 'clinic' : 'parent';
+
     const result = await pool.query(
-      `INSERT INTO clinic_chat_messages (sender_id, receiver_id, message, student_id, is_read)
-       VALUES ($1, $2, $3, $4, FALSE)
-       RETURNING *, to_char(created_at, 'HH:MI AM') AS timestamp`,
-      [senderId, finalReceiverId || null, message, childId || null]
+      `INSERT INTO clinic_chat_messages (sender_id, sender_role, student_id, student_name, text, read)
+       VALUES ($1, $2, $3, $4, $5, FALSE)
+       RETURNING id, sender_id, sender_role AS role, student_id AS child_id, student_name, text, read AS is_read, to_char(created_at, 'HH12:MI AM') AS timestamp`,
+      [senderId, senderRoleValue, childId, studentName, message]
     );
 
     return sendSuccess(res, result.rows[0], 'Message sent.', 201);
@@ -474,38 +480,29 @@ export const sendChatMessage = async (req: Request, res: Response) => {
 
 /**
  * PATCH /api/clinic/chat/read
- * Marks all messages from a given sender as read (per-conversation, WhatsApp-style).
- *
- * Body: { sender_id: string }
- *
- * Called when ClinicAdmin opens a chat conversation. All unread messages from
- * that parent in that conversation are immediately marked as is_read = TRUE,
- * causing the unread badge to disappear on the next inbox fetch.
+ * Marks all parent messages for a child as read.
  */
 export const markMessagesRead = async (req: Request, res: Response) => {
   const { role } = (req as any).user;
-  const { sender_id } = req.body;
+  const { student_id } = req.body;
 
   if (role !== 'ClinicAdmin') {
     return sendError(res, 'Only ClinicAdmin can mark messages as read.', 403);
   }
 
-  if (!sender_id) {
-    return sendError(res, 'sender_id is required.', 400);
+  if (!student_id) {
+    return sendError(res, 'student_id is required.', 400);
   }
 
   try {
     const result = await pool.query(
       `UPDATE clinic_chat_messages
-          SET is_read = TRUE
-        WHERE sender_id = $1
-          AND is_read = FALSE
-          AND (
-            receiver_id IS NULL
-            OR receiver_id IN (SELECT id FROM users WHERE role = 'clinic-admin')
-          )
-        RETURNING id`,
-      [sender_id]
+         SET read = TRUE
+       WHERE student_id = $1
+         AND sender_role = 'parent'
+         AND read = FALSE
+       RETURNING id`,
+      [student_id]
     );
 
     return sendSuccess(res, {

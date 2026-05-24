@@ -190,7 +190,7 @@ export const softDeleteNotification = async (
     [notification_id]
   );
 
-  return result.rowCount > 0;
+  return (result.rowCount ?? 0) > 0;
 };
 
 /**
