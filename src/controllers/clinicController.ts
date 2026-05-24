@@ -34,8 +34,8 @@ export const getStudents = async (req: Request, res: Response) => {
     // Add pagination parameters
     params.push(limit, offset);
 
-    const searchFilter = search 
-      ? `AND (u.name ILIKE $${paramCount} OR u.digital_id ILIKE $${paramCount} OR s.id::text ILIKE $${paramCount} OR COALESCE(u.username, '') ILIKE $${paramCount})` 
+    const searchFilter = search
+      ? `AND (u.name ILIKE $${paramCount} OR u.digital_id ILIKE $${paramCount} OR s.id::text ILIKE $${paramCount} OR COALESCE(u.username, '') ILIKE $${paramCount})`
       : '';
 
     const query = `
@@ -136,12 +136,12 @@ export const logVisit = async (req: Request, res: Response) => {
 
     // 2. Log the visit
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    const now = new Date().toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
+    const now = new Date().toLocaleTimeString('en-US', {
+      hour: '2-digit',
       minute: '2-digit',
-      hour12: false 
+      hour12: false
     }); // HH:MM format
-    
+
     const result = await pool.query(
       `INSERT INTO clinic_visits (student_id, student_name, date, time, reason, treatment, logged_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -187,8 +187,8 @@ export const getVisitHistory = async (req: Request, res: Response) => {
     // Add pagination parameters
     params.push(limit, offset);
 
-    const searchFilter = search 
-      ? `AND (cv.student_name ILIKE $${paramCount} OR cv.reason ILIKE $${paramCount})` 
+    const searchFilter = search
+      ? `AND (cv.student_name ILIKE $${paramCount} OR cv.reason ILIKE $${paramCount})`
       : '';
 
     // Query clinic visits for students in the admin's branch

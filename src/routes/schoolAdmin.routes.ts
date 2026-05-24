@@ -77,6 +77,11 @@ const updateEventSchema = Joi.object({
   description: Joi.string().max(1000).allow('', null)
 }).min(1);
 
+const finalizeRegistrationSchema = Joi.object({
+  classId: Joi.string().uuid().required(),
+  sectionId: Joi.string().uuid().required()
+});
+
 // User Management (existing)
 router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
 router.get('/users', schoolAdminController.getBranchUsers);
@@ -124,6 +129,8 @@ router.post('/applications',
 );
 router.get('/applications', schoolAdminController.getPendingApplications);
 router.patch('/applications/:id/status', schoolAdminController.updateApplicationStatus);
+// Finalize registration after finance approval (assign class and section)
+router.post('/applications/:applicationId/finalize', validate(finalizeRegistrationSchema), schoolAdminController.finalizeRegistration);
 
 // Financial Policies
 router.post('/financial-policies', validate(financialPolicySchema), schoolAdminController.setFinancialPolicy);

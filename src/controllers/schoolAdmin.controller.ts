@@ -472,38 +472,41 @@ class SchoolAdminController {
       const validation = validateRegistrationForm(formData);
       if (!validation.isValid) {
         logger.warn('Validation failed:', { errors: validation.errors, formData });
-        return res.status(400).json({
+        res.status(400).json({
           success: false,
           message: 'Validation failed',
           errors: validation.errors,
         });
+        return;
       }
 
       // Validate and format phone number
       const phoneValidation = validateAndFormatPhoneNumber(parentPhone);
       if (!phoneValidation.isValid) {
         logger.warn('Phone validation failed:', phoneValidation);
-        return res.status(400).json({
+        res.status(400).json({
           success: false,
           message: 'Invalid phone number',
           errors: {
             parentPhone: phoneValidation.error,
           },
         });
+        return;
       }
 
       // Ensure branchId exists
       if (!branchId) {
         logger.error('User missing branch_id:', { userId });
-        return res.status(400).json({
+        res.status(400).json({
           success: false,
           message: 'User branch not found',
           errors: { branchId: 'Branch ID is required' },
         });
+        return;
       }
 
       // Prepare application data with formatted phone
-      const applicationData = {
+      let applicationData: any = {
         branchId,
         applicantName: name,
         applicantEmail: email || null,
@@ -540,13 +543,14 @@ class SchoolAdminController {
         if (!fileSizeValidation.isValid) {
           deleteUploadedFile(req.file.path);
           logger.warn('File size validation failed:', fileSizeValidation.error);
-          return res.status(400).json({
+          res.status(400).json({
             success: false,
             message: 'File upload failed',
             errors: {
               transcriptFile: fileSizeValidation.error,
             },
           });
+          return;
         }
 
         // Store relative path in DB for portability
@@ -616,7 +620,8 @@ class SchoolAdminController {
       const defaultBranchId = await schoolAdminService.getDefaultBranchId();
       if (!defaultBranchId) {
         logger.error('No default branch found for public application');
-        return res.status(500).json({ success: false, message: 'Server misconfiguration: no branch available' });
+        res.status(500).json({ success: false, message: 'Server misconfiguration: no branch available' });
+        return;
       }
 
       // Compose a fake AuthRequest-like object for reuse of validation utilities
@@ -663,12 +668,14 @@ class SchoolAdminController {
       const validation = validateRegistrationForm(formData);
       if (!validation.isValid) {
         logger.warn('Public submission validation failed:', validation.errors);
-        return res.status(400).json({ success: false, message: 'Validation failed', errors: validation.errors });
+        res.status(400).json({ success: false, message: 'Validation failed', errors: validation.errors });
+        return;
       }
 
       const phoneValidation = validateAndFormatPhoneNumber(parentPhone);
       if (!phoneValidation.isValid) {
-        return res.status(400).json({ success: false, message: 'Invalid phone number', errors: { parentPhone: phoneValidation.error } });
+        res.status(400).json({ success: false, message: 'Invalid phone number', errors: { parentPhone: phoneValidation.error } });
+        return;
       }
 
       const applicationData: any = {
@@ -699,7 +706,8 @@ class SchoolAdminController {
         const fileSizeValidation = validateFileSize(file.size);
         if (!fileSizeValidation.isValid) {
           deleteUploadedFile(file.path);
-          return res.status(400).json({ success: false, message: 'File upload failed', errors: { transcriptFile: fileSizeValidation.error } });
+          res.status(400).json({ success: false, message: 'File upload failed', errors: { transcriptFile: fileSizeValidation.error } });
+          return;
         }
         try {
           applicationData.transcriptFilePath = path.relative(process.cwd(), file.path);
@@ -712,7 +720,8 @@ class SchoolAdminController {
       }
 
       const application = await schoolAdminService.createPendingApplication(applicationData);
-      return res.status(201).json({ success: true, data: application, message: 'Application submitted successfully' });
+      res.status(201).json({ success: true, data: application, message: 'Application submitted successfully' });
+      return;
     } catch (error) {
       logger.error('Error in createPublicPendingApplication:', error instanceof Error ? error.message : error);
       if ((req as any).file) deleteUploadedFile((req as any).file.path);
@@ -744,7 +753,8 @@ class SchoolAdminController {
       const { id } = req.params;
       const { status } = req.body;
 
-      const application = await schoolAdminService.updateApplicationStatus(id, status);
+      const reviewerId = req.user?.id;
+      const application = await schoolAdminService.updateApplicationStatus(id, status, reviewerId);
 
       res.json({
         success: true,
@@ -949,6 +959,43 @@ class SchoolAdminController {
       res.json({
         success: true,
         message: `Event "${event.title}" deleted successfully`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Finalize student registration after finance approval
+  async finalizeRegistration(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { applicationId } = req.params;
+      const { classId, sectionId } = req.body;
+      const branchId = req.user!.branch_id;
+      const schoolAdminId = req.user!.id;
+
+      if (!classId || !sectionId) {
+        res.status(400).json({
+          success: false,
+          message: 'Class and section are required',
+          errors: {
+            classId: classId ? undefined : 'Class is required',
+            sectionId: sectionId ? undefined : 'Section is required'
+          }
+        });
+        return;
+      }
+
+      const result = await schoolAdminService.finalizeRegistration(
+        applicationId,
+        classId,
+        sectionId,
+        schoolAdminId
+      );
+
+      res.status(200).json({
+        success: true,
+        data: result,
+        message: 'Student registration finalized successfully'
       });
     } catch (error) {
       next(error);

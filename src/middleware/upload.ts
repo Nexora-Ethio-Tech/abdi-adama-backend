@@ -1,7 +1,8 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
+import { Request, Response, NextFunction } from 'express';
 
 // Resolve upload directories relative to project root (process.cwd()) to avoid __dirname variability
 const UPLOADS_ROOT = path.resolve(process.cwd(), 'uploads');
@@ -21,7 +22,7 @@ const transcriptStorage = multer.diskStorage({
     cb(null, TRANSCRIPTS_DIR);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = `${uuidv4()}-${Date.now()}`;
+    const uniqueSuffix = `${randomUUID()}-${Date.now()}`;
     const ext = path.extname(file.originalname);
     const name = path.basename(file.originalname, ext);
     cb(null, `${name}-${uniqueSuffix}${ext}`);
@@ -58,9 +59,9 @@ export const uploadTranscript = multer({
 // Error handling middleware for multer
 export const handleUploadError = (
   err: any,
-  req: Express.Request,
-  res: Express.Response,
-  next: Express.NextFunction
+  req: Request,
+  res: Response,
+  next: NextFunction
 ) => {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {

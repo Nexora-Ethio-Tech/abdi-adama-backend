@@ -43,7 +43,8 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
 
   // Validate authentication
   if (!identityId) {
-    return sendError(res, 'User identity not found. Please log in again.', 401);
+    sendError(res, 'User identity not found. Please log in again.', 401);
+    return;
   }
 
   await performAllCleanups();
@@ -62,12 +63,15 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
     );
 
     if (result.rows.length === 0) {
-      return sendError(res, 'Profile not found.', 404);
+      sendError(res, 'Profile not found.', 404);
+      return;
     }
 
-    return sendSuccess(res, result.rows[0]);
+    sendSuccess(res, result.rows[0]);
+    return;
   } catch (err: any) {
-    return sendError(res, 'Internal server error.', 500, err.message);
+    sendError(res, 'Internal server error.', 500, err.message);
+    return;
   }
 };
 
@@ -88,7 +92,8 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
 
   // Validate authentication
   if (!studentIdentityId) {
-    return sendError(res, 'User identity not found. Please log in again.', 401);
+    sendError(res, 'User identity not found. Please log in again.', 401);
+    return;
   }
 
   console.log(`[Dashboard] Fetching for student: ${studentIdentityId}`);
@@ -239,7 +244,8 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
       student: studentInfo
     });
   } catch (err: any) {
-    return sendError(res, 'Failed to fetch dashboard.', 500, err.message);
+    sendError(res, 'Failed to fetch dashboard.', 500, err.message);
+    return;
   }
 };
 

@@ -1,5 +1,5 @@
 import pool from '../config/db';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 
 /**
  * Driver Notification Service
@@ -27,7 +27,7 @@ export const createNotification = async (
   message: string,
   target_route: string | null = null
 ): Promise<DriverNotification> => {
-  const id = uuidv4();
+  const id = randomUUID();
   const now = new Date().toISOString();
 
   const result = await pool.query(
@@ -223,7 +223,7 @@ export const hardDeleteOldNotifications = async (): Promise<number> => {
      WHERE created_at < NOW() - INTERVAL '3 days'`
   );
 
-  return result.rowCount || 0;
+  return result.rowCount ?? 0;
 };
 
 /**
@@ -237,5 +237,5 @@ export const hardDeleteSoftDeletedNotifications = async (): Promise<number> => {
        AND deleted_at < NOW() - INTERVAL '6 hours'`
   );
 
-  return result.rowCount || 0;
+  return result.rowCount ?? 0;
 };

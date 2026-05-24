@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import teacherController from '../controllers/teacher.controller';
+import examController from '../controllers/exam.controller';
 import { authenticate } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
 import { validate } from '../middleware/validator';
@@ -98,5 +99,6 @@ router.get('/communication-logs/:studentId', teacherController.getCommunicationL
 router.get('/students/:studentId/grades', teacherController.getStudentGrades);
 router.get('/schedule', teacherController.getSchedule);
 router.get('/dashboard', teacherController.getDashboard);
+router.post('/exams', examController.createExam);
 
 export default router;

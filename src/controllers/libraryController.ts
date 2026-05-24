@@ -115,7 +115,8 @@ export const addBook = async (req: Request, res: Response) => {
   const { title, author, shelf_location, stock } = req.body;
 
   if (!title || !author) {
-    return sendError(res, 'Title and author are required.');
+    sendError(res, 'Title and author are required.');
+    return;
   }
 
   try {
@@ -150,7 +151,8 @@ export const validateStudent = async (req: Request, res: Response) => {
   const { studentId } = req.params;
 
   if (!studentId) {
-    return sendError(res, 'Student ID is required.');
+    sendError(res, 'Student ID is required.');
+    return;
   }
 
   try {
@@ -193,7 +195,8 @@ export const validateTeacher = async (req: Request, res: Response) => {
   const { teacherId } = req.params;
 
   if (!teacherId) {
-    return sendError(res, 'Teacher ID is required.');
+    sendError(res, 'Teacher ID is required.');
+    return;
   }
 
   try {
@@ -299,11 +302,13 @@ export const issueBook = async (req: Request, res: Response) => {
 
   // Validation
   if (!book_id || !borrower_id || !borrower_type || !due_date) {
-    return sendError(res, 'book_id, borrower_id, borrower_type, and due_date are required.');
+    sendError(res, 'book_id, borrower_id, borrower_type, and due_date are required.');
+    return;
   }
 
   if (!['student', 'teacher'].includes(borrower_type)) {
-    return sendError(res, 'borrower_type must be "student" or "teacher".');
+    sendError(res, 'borrower_type must be "student" or "teacher".');
+    return;
   }
 
   const client = await pool.connect();
@@ -317,12 +322,14 @@ export const issueBook = async (req: Request, res: Response) => {
     );
     if (bookResult.rows.length === 0) {
       await client.query('ROLLBACK');
-      return sendError(res, 'Book not found.', 404);
+      sendError(res, 'Book not found.', 404);
+      return;
     }
     const book = bookResult.rows[0];
     if (book.available < 1) {
       await client.query('ROLLBACK');
-      return sendError(res, 'This book is out of stock.', 409);
+      sendError(res, 'This book is out of stock.', 409);
+      return;
     }
 
     let borrower: any = null;
@@ -341,7 +348,8 @@ export const issueBook = async (req: Request, res: Response) => {
       );
       if (studentResult.rows.length === 0) {
         await client.query('ROLLBACK');
-        return sendError(res, 'This Student ID is not valid.', 404);
+        sendError(res, 'This Student ID is not valid.', 404);
+        return;
       }
       borrower = studentResult.rows[0];
       studentId = borrower.id;
@@ -357,7 +365,8 @@ export const issueBook = async (req: Request, res: Response) => {
       );
       if (teacherResult.rows.length === 0) {
         await client.query('ROLLBACK');
-        return sendError(res, 'This Teacher ID is not valid.', 404);
+        sendError(res, 'This Teacher ID is not valid.', 404);
+        return;
       }
       borrower = teacherResult.rows[0];
       teacherId = borrower.id;
@@ -396,6 +405,7 @@ export const issueBook = async (req: Request, res: Response) => {
     await client.query('ROLLBACK');
     console.error('[Library] IssueBook error:', err);
     sendError(res, `Failed to issue book: ${err.message}`, 500);
+    return;
   } finally {
     client.release();
   }
@@ -418,12 +428,14 @@ export const returnBook = async (req: Request, res: Response) => {
     );
     if (loanResult.rows.length === 0) {
       await client.query('ROLLBACK');
-      return sendError(res, 'Loan not found.', 404);
+      sendError(res, 'Loan not found.', 404);
+      return;
     }
     const loan = loanResult.rows[0];
     if (loan.returned_at) {
       await client.query('ROLLBACK');
-      return sendError(res, 'This book has already been returned.', 409);
+      sendError(res, 'This book has already been returned.', 409);
+      return;
     }
 
     // Mark returned
@@ -451,6 +463,7 @@ export const returnBook = async (req: Request, res: Response) => {
   } catch (err: any) {
     await client.query('ROLLBACK');
     sendError(res, 'Failed to return book.', 500, err.message);
+    return;
   } finally {
     client.release();
   }

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as studentController from '../controllers/studentController';
+import examController from '../controllers/exam.controller';
 import { authenticateToken, authorizeRoles } from '../middleware/authMiddleware';
 
 const router = Router();
@@ -37,6 +38,34 @@ router.get(
   authenticateToken,
   authorizeRoles('Student', 'Parent'),
   studentController.getHistory
+);
+
+router.get(
+  '/exams',
+  authenticateToken,
+  authorizeRoles('Student', 'Parent'),
+  examController.listAvailableExams
+);
+
+router.get(
+  '/exams/:examId',
+  authenticateToken,
+  authorizeRoles('Student', 'Parent'),
+  examController.getExamDetails
+);
+
+router.post(
+  '/exams/:examId/answer',
+  authenticateToken,
+  authorizeRoles('Student', 'Parent'),
+  examController.saveExamAnswer
+);
+
+router.post(
+  '/exams/:examId/submit',
+  authenticateToken,
+  authorizeRoles('Student', 'Parent'),
+  examController.submitExam
 );
 
 // ── Courses (current semester) ────────────────────────────────────────────────
