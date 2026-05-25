@@ -48,12 +48,6 @@ const createScheduleSchema = Joi.object({
   subject: Joi.string().required()
 });
 
-const academicYearSchema = Joi.object({
-  yearName: Joi.string().required(),
-  startDate: Joi.date().iso().required(),
-  endDate: Joi.date().iso().required()
-});
-
 const financialPolicySchema = Joi.object({
   gradeLevel: Joi.string().allow(''),
   monthlyTuition: Joi.number().min(0).required(),
@@ -76,11 +70,6 @@ const updateEventSchema = Joi.object({
   type: Joi.string().min(2).max(50),
   description: Joi.string().max(1000).allow('', null)
 }).min(1);
-
-const finalizeRegistrationSchema = Joi.object({
-  classId: Joi.string().uuid().required(),
-  sectionId: Joi.string().uuid().required()
-});
 
 // User Management (existing)
 router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
@@ -115,22 +104,8 @@ router.get('/courses', schoolAdminController.getCourses);
 router.post('/schedules', validate(createScheduleSchema), schoolAdminController.createSchedule);
 router.get('/schedules', schoolAdminController.getSchedules);
 
-// Academic Year Management
-router.post('/academic-years', validate(academicYearSchema), schoolAdminController.createAcademicYear);
-router.get('/academic-years', schoolAdminController.getAcademicYears);
-router.patch('/academic-years/:id/activate', schoolAdminController.activateAcademicYear);
-
 // Student Applications
-// Note: Multer handles multipart/form-data parsing, Joi validator skipped since controller does comprehensive validation
-router.post('/applications',
-  uploadTranscript.single('transcript'),
-  handleUploadError,
-  schoolAdminController.createPendingApplication
-);
-router.get('/applications', schoolAdminController.getPendingApplications);
 router.patch('/applications/:id/status', schoolAdminController.updateApplicationStatus);
-// Finalize registration after finance approval (assign class and section)
-router.post('/applications/:applicationId/finalize', validate(finalizeRegistrationSchema), schoolAdminController.finalizeRegistration);
 
 // Financial Policies
 router.post('/financial-policies', validate(financialPolicySchema), schoolAdminController.setFinancialPolicy);

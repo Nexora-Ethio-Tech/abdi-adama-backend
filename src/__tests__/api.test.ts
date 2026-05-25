@@ -250,31 +250,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
   });
 
-  describe('7. School Admin - Academic Year', () => {
-    it('should create academic year', async () => {
-      const res = await request(app)
-        .post('/api/school-admin/academic-years')
-        .set('Authorization', `Bearer ${schoolAdminToken}`)
-        .send({
-          yearName: '2025/2026',
-          startDate: '2025-09-01',
-          endDate: '2026-06-30'
-        });
-      
-      expect(res.status).toBe(201);
-      expect(res.body.success).toBe(true);
-    });
-
-    it('should get academic years', async () => {
-      const res = await request(app)
-        .get('/api/school-admin/academic-years')
-        .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
-      expect(res.status).toBe(200);
-      expect(Array.isArray(res.body.data)).toBe(true);
-    });
-  });
-
   describe('8. School Admin - Dashboard', () => {
     it('should get dashboard', async () => {
       const res = await request(app)

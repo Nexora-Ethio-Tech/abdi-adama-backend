@@ -575,68 +575,6 @@ class SchoolAdminService {
     return result.rows;
   }
 
-  // Academic Year Management
-  async createAcademicYear(data: {
-    yearName: string;
-    startDate: string;
-    endDate: string;
-    branchId: string;
-  }) {
-    const result = await pool.query(
-      `INSERT INTO academic_years (year_name, start_date, end_date, branch_id, is_active)
-       VALUES ($1, $2, $3, $4, false)
-       RETURNING *`,
-      [data.yearName, data.startDate, data.endDate, data.branchId]
-    );
-
-    return result.rows[0];
-  }
-
-  async getAcademicYears(branchId: string) {
-    const result = await pool.query(
-      `SELECT * FROM academic_years
-       WHERE branch_id = $1
-       ORDER BY start_date DESC`,
-      [branchId]
-    );
-
-    return result.rows;
-  }
-
-  async activateAcademicYear(yearId: string, branchId: string) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Deactivate all other years for this branch
-      await client.query(
-        'UPDATE academic_years SET is_active = false WHERE branch_id = $1',
-        [branchId]
-      );
-
-      // Activate the selected year
-      const result = await client.query(
-        `UPDATE academic_years 
-         SET is_active = true, updated_at = NOW()
-         WHERE id = $1 AND branch_id = $2
-         RETURNING *`,
-        [yearId, branchId]
-      );
-
-      if (result.rows.length === 0) {
-        throw new Error('Academic year not found or access denied');
-      }
-
-      await client.query('COMMIT');
-      return result.rows[0];
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
   // Student Application Management
   async createPendingApplication(data: any) {
     const result = await pool.query(
@@ -708,21 +646,6 @@ class SchoolAdminService {
     const first = await pool.query(`SELECT id FROM branches ORDER BY name LIMIT 1`);
     if (first.rows.length > 0) return first.rows[0].id;
     return null;
-  }
-
-  async getPendingApplications(branchId: string, status?: string) {
-    let query = 'SELECT * FROM pending_applications WHERE branch_id = $1';
-    const params: any[] = [branchId];
-
-    if (status) {
-      query += ' AND status = $2';
-      params.push(status);
-    }
-
-    query += ' ORDER BY created_at DESC';
-
-    const result = await pool.query(query, params);
-    return result.rows;
   }
 
   async updateApplicationStatus(applicationId: string, status: string, reviewerId?: string) {

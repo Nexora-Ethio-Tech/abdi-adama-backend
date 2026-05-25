@@ -17,7 +17,6 @@ import parentRoutes from './routes/parentRoutes';
 import driverRoutes from './routes/driverRoutes';
 import clinicRoutes from './routes/clinicRoutes';
 import libraryRoutes from './routes/libraryRoutes';
-import academicRoutes from './routes/academic.routes';
 import loanRoutes from './routes/loan.routes';
 import payrollRoutes from './routes/payroll.routes';
 
@@ -92,7 +91,6 @@ app.use('/api/driver', driverRoutes);
 app.use('/api/transport', driverRoutes);
 app.use('/api/clinic', clinicRoutes);
 app.use('/api/library', libraryRoutes);
-app.use('/api/academic', academicRoutes);
 app.use('/api/loans', loanRoutes);
 app.use('/api/payroll', payrollRoutes);
 
