@@ -11,7 +11,7 @@ class SchoolAdminService {
 
   async getBranchUsers(branchId: string, role?: string, status?: string) {
     let query = `
-      SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role, 
+      SELECT u.id, u. u.username, u.name, u.email, u.role, 
              u.branch_id, u.status, u.is_active, u.created_at, u.updated_at,
              b.name as branch_name
       FROM users u
@@ -42,7 +42,7 @@ class SchoolAdminService {
 
   async getUserById(userId: string, branchId: string) {
     const result = await pool.query(
-      `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role,
+      `SELECT u.id, u. u.username, u.name, u.email, u.role,
               u.branch_id, u.status, u.is_active, u.created_at, u.updated_at,
               b.name as branch_name
        FROM users u
@@ -84,7 +84,7 @@ class SchoolAdminService {
       `UPDATE users 
        SET status = $1, updated_at = NOW()
        WHERE id = $2
-       RETURNING id, digital_id, name, email, role, status, branch_id`,
+       RETURNING id,  name, email, role, status, branch_id`,
       [status, userId]
     );
 
@@ -178,7 +178,7 @@ class SchoolAdminService {
     const result = await pool.query(
       `UPDATE users SET ${fields.join(', ')}
        WHERE id = $${paramCount}
-       RETURNING id, digital_id, name, email, role, status, branch_id`,
+       RETURNING id,  name, email, role, status, branch_id`,
       values
     );
 
@@ -645,6 +645,7 @@ class SchoolAdminService {
         applicant_name,
         applicant_email,
         applicant_phone,
+        
         dob,
         gender,
         parent_name,
@@ -652,6 +653,7 @@ class SchoolAdminService {
         address,
         previous_school,
         grade_applying,
+        last_grade_completed,
         registration_fee_status,
         blood_group,
         allergies,
@@ -664,13 +666,14 @@ class SchoolAdminService {
         status,
         notes,
         created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
       RETURNING *`,
       [
         data.branchId,
         data.applicantName,
         data.applicantEmail || null,
         data.applicantPhone || null,
+        data.digitalId || null,
         data.dob || null,
         data.gender || null,
         data.parentName || null,
@@ -678,6 +681,7 @@ class SchoolAdminService {
         data.address || null,
         data.previousSchool || null,
         data.gradeApplying,
+        data.lastGradeCompleted || null,
         data.registrationFeeStatus || 'Pending',
         data.bloodGroup || null,
         data.allergies || null,
@@ -689,7 +693,7 @@ class SchoolAdminService {
         data.transcriptUploadedAt || null,
         'pending',
         data.notes || null,
-        data.createdBy || null
+        data.createdBy
       ]
     );
     return result.rows[0];
@@ -986,7 +990,7 @@ class SchoolAdminService {
     const result = await pool.query(
       `SELECT 
         t.*,
-        u.name, u.email, u.digital_id, u.status
+        u.name, u.email, u. u.status
       FROM teachers t
       JOIN users u ON t.user_id = u.id
       WHERE t.branch_id = $1
@@ -1009,7 +1013,7 @@ class SchoolAdminService {
         s.penalty_fee,
         s.fee_status,
         s.fee_approval_status,
-        u.digital_id,
+        u.
         u.name,
         u.email,
         u.status,
@@ -1059,7 +1063,7 @@ class SchoolAdminService {
         s.penalty_fee,
         s.fee_status,
         s.fee_approval_status,
-        u.digital_id,
+        u.
         u.name,
         u.email,
         u.status,
@@ -1106,7 +1110,7 @@ class SchoolAdminService {
         s.bus_fee,
         s.penalty_fee,
         s.fee_status,
-        u.digital_id,
+        u.
         u.name,
         u.email,
         u.created_at,
