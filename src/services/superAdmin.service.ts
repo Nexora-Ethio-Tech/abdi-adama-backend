@@ -224,6 +224,47 @@ class SuperAdminService {
       pendingUsers: parseInt(pendingUsersResult.rows[0].count)
     };
   }
+
+  // Finance Settings Management
+  async getFinanceSettings() {
+    const result = await pool.query(`SELECT * FROM finance_settings ORDER BY key`);
+    return result.rows;
+  }
+
+  async updateFinanceSetting(key: string, value: number, userId: string, userName: string) {
+    // 1. Get old value
+    const currentResult = await pool.query(`SELECT value FROM finance_settings WHERE key = $1`, [key]);
+    const oldValue = currentResult.rows.length > 0 ? Number(currentResult.rows[0].value) : null;
+
+    // 2. Upsert the setting
+    const result = await pool.query(
+      `INSERT INTO finance_settings (key, value, updated_by, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (key) DO UPDATE
+       SET value = $2, updated_by = $3, updated_at = NOW()
+       RETURNING *`,
+      [key, value, userId]
+    );
+
+    // 3. Create audit log entry
+    await pool.query(
+      `INSERT INTO finance_settings_audit (setting_key, old_value, new_value, changed_by, changed_by_name)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [key, oldValue, value, userId, userName]
+    );
+
+    return result.rows[0];
+  }
+
+  async getFinanceSettingsAuditLog() {
+    const result = await pool.query(
+      `SELECT a.*, u.name as changed_by_username
+       FROM finance_settings_audit a
+       LEFT JOIN users u ON a.changed_by = u.id
+       ORDER BY a.changed_at DESC`
+    );
+    return result.rows;
+  }
 }
 
 export default new SuperAdminService();

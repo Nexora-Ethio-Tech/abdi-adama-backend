@@ -64,6 +64,23 @@ async function ensureSchemaExtensions(): Promise<void> {
       logger.warn(`Schema migration skipped: ${sql.slice(0, 60)}... — ${err.message}`);
     }
   }
+
+  // Run payroll schema migration dynamically from database/payroll_schema.sql
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const schemaPath = path.join(__dirname, '../database/payroll_schema.sql');
+    if (fs.existsSync(schemaPath)) {
+      const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+      await pool.query(schemaSql);
+      logger.info('✅ Payroll database schema verified and updated');
+    } else {
+      logger.warn('⚠️ Payroll schema file not found at: ' + schemaPath);
+    }
+  } catch (err: any) {
+    logger.error('❌ Failed to run payroll schema migration:', err);
+  }
+
   logger.info('✅ Schema extensions verified');
 }
 

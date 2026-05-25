@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import financeClerkController from '../controllers/financeClerk.controller';
+import employeeProfileController from '../controllers/employeeProfile.controller';
 import { authenticate } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
 import { validate } from '../middleware/validator';
@@ -8,9 +9,8 @@ import Joi from 'joi';
 
 const router = Router();
 
-// All routes require authentication and finance-clerk role
+// All routes require authentication
 router.use(authenticate);
-router.use(roleGuard([UserRole.FINANCE_CLERK]));
 
 // Validation schemas
 const recordPaymentSchema = Joi.object({
@@ -28,16 +28,27 @@ const updateFeeStatusSchema = Joi.object({
   feeNotes: Joi.string().allow('')
 });
 
-// Routes
-router.post('/payments', validate(recordPaymentSchema), financeClerkController.recordPayment);
-router.get('/payments/:studentId', financeClerkController.getPaymentHistory);
-router.get('/students/fees', financeClerkController.getStudentsWithFees);
-router.patch('/students/:id/fee-status', validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
-router.get('/dashboard', financeClerkController.getDashboard);
-router.get('/overdue-payments', financeClerkController.getOverduePayments);
-router.get('/reports/daily', financeClerkController.getDailyReport);
-// Applications for finance review
-router.get('/applications', financeClerkController.getPendingApplications);
-router.patch('/applications/:id/approve', financeClerkController.approveApplication);
+// Role Guard segments
+const clerkOnly = roleGuard([UserRole.FINANCE_CLERK]);
+const readWriteFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]);
+const readOnlyFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]);
+
+// Clerk-only Student Payment & Fee Routes
+router.post('/payments', clerkOnly, validate(recordPaymentSchema), financeClerkController.recordPayment);
+router.get('/payments/:studentId', clerkOnly, financeClerkController.getPaymentHistory);
+router.get('/students/fees', clerkOnly, financeClerkController.getStudentsWithFees);
+router.patch('/students/:id/fee-status', clerkOnly, validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
+router.get('/dashboard', clerkOnly, financeClerkController.getDashboard);
+router.get('/overdue-payments', clerkOnly, financeClerkController.getOverduePayments);
+router.get('/reports/daily', clerkOnly, financeClerkController.getDailyReport);
+router.get('/applications', clerkOnly, financeClerkController.getPendingApplications);
+router.patch('/applications/:id/approve', clerkOnly, financeClerkController.approveApplication);
+
+// Shared Employee Payroll Profiles & Attendance Management
+router.post('/employee-profiles', readWriteFinance, employeeProfileController.createOrUpdateProfile);
+router.get('/employee-profiles', readOnlyFinance, employeeProfileController.getAllProfiles);
+router.get('/employee-profiles/:userId', readOnlyFinance, employeeProfileController.getProfile);
+router.post('/employee-attendance', readWriteFinance, employeeProfileController.recordAttendance);
+router.get('/employee-attendance/:userId', readOnlyFinance, employeeProfileController.getAttendance);
 
 export default router;

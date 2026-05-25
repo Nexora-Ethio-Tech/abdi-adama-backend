@@ -300,6 +300,60 @@ class SuperAdminController {
       next(error);
     }
   }
+
+  // Finance Settings Management
+  async getFinanceSettings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const settings = await superAdminService.getFinanceSettings();
+      res.json({
+        success: true,
+        data: settings
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateFinanceSetting(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { key } = req.params;
+      const { value } = req.body;
+      const userId = req.user!.id;
+      const userName = req.user!.name;
+
+      if (value === undefined || isNaN(Number(value))) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_INPUT',
+            message: 'A valid numeric setting value is required.'
+          }
+        });
+        return;
+      }
+
+      const setting = await superAdminService.updateFinanceSetting(key, Number(value), userId, userName);
+      res.json({
+        success: true,
+        data: setting,
+        message: `Finance setting ${key} updated successfully.`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getFinanceSettingsAuditLog(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const auditLog = await superAdminService.getFinanceSettingsAuditLog();
+      res.json({
+        success: true,
+        data: auditLog
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new SuperAdminController();

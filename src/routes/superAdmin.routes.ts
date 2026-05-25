@@ -62,4 +62,9 @@ router.patch('/classes/:id/capacity', validate(capacitySchema), superAdminContro
 // Dashboard
 router.get('/dashboard', superAdminController.getDashboard);
 
+// Finance Settings Management
+router.get('/finance-settings', superAdminController.getFinanceSettings);
+router.patch('/finance-settings/:key', superAdminController.updateFinanceSetting);
+router.get('/finance-settings/audit-log', superAdminController.getFinanceSettingsAuditLog);
+
 export default router;
