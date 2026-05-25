@@ -11,7 +11,7 @@ export const generateDigitalId = async (role: UserRole, branchName: string | nul
 
   if (role === UserRole.SUPER_ADMIN) {
     const result = await pool.query(
-      `SELECT digital_id FROM users WHERE role = $1 ORDER BY created_at DESC LIMIT 1`,
+      `SELECT digital_id FROM users WHERE role = $1 ORDER BY created_at DESC, digital_id DESC LIMIT 1`,
       [role]
     );
     
@@ -30,7 +30,7 @@ export const generateDigitalId = async (role: UserRole, branchName: string | nul
   const result = await pool.query(
     `SELECT digital_id FROM users WHERE role = $1 AND branch_id = (
       SELECT id FROM branches WHERE name = $2
-    ) ORDER BY created_at DESC LIMIT 1`,
+    ) ORDER BY created_at DESC, digital_id DESC LIMIT 1`,
     [role, branchName]
   );
   
