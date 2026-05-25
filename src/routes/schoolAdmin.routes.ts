@@ -128,6 +128,7 @@ router.post('/applications',
   schoolAdminController.createPendingApplication
 );
 router.get('/applications', schoolAdminController.getPendingApplications);
+router.get('/applications/:id/transcript', schoolAdminController.getApplicationTranscript);
 router.patch('/applications/:id/status', schoolAdminController.updateApplicationStatus);
 // Finalize registration after finance approval (assign class and section)
 router.post('/applications/:applicationId/finalize', validate(finalizeRegistrationSchema), schoolAdminController.finalizeRegistration);

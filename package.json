@@ -11,6 +11,7 @@
     "seed:superadmin": "ts-node src/scripts/seedSuperAdmin.ts",
     "seed:demo-students": "ts-node src/scripts/seedGradeStudentsAndRoutes.ts",
     "seed:payroll": "ts-node src/scripts/seedPayrollData.ts",
+    "seed:schedule": "ts-node src/scripts/seedScheduleData.ts",
     "test": "jest --runInBand --detectOpenHandles",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

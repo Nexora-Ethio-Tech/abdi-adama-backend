@@ -7,7 +7,6 @@ import {
   validateAndFormatPhoneNumber,
   validateFileSize,
 } from '../utils/validation';
-import { deleteUploadedFile } from '../middleware/upload';
 import logger from '../utils/logger';
 
 class SchoolAdminController {
@@ -433,7 +432,6 @@ class SchoolAdminController {
       const address = extractField('address');
       const previousSchool = extractField('previousSchool');
       const grade = extractField('grade');
-      const feeStatus = extractField('feeStatus');
       const bloodGroup = extractField('bloodGroup');
       const allergies = extractField('allergies');
       const chronicConditions = extractField('chronicConditions');
@@ -461,7 +459,6 @@ class SchoolAdminController {
         address,
         previousSchool,
         grade,
-        feeStatus,
         bloodGroup,
         allergies,
         chronicConditions,
@@ -520,7 +517,6 @@ class SchoolAdminController {
         previousSchool: previousSchool || null,
         gradeApplying: grade,
         lastGradeCompleted: grade || null,
-        registrationFeeStatus: feeStatus || 'Pending',
         bloodGroup: bloodGroup || null,
         allergies: allergies || null,
         chronicConditions: chronicConditions || null,
@@ -532,16 +528,14 @@ class SchoolAdminController {
       // Handle file upload if provided
       if (req.file) {
         logger.info('Processing file upload:', {
-          filename: req.file.filename,
+          originalname: req.file.originalname,
           size: req.file.size,
           mimetype: req.file.mimetype,
-          path: req.file.path,
         });
 
         // Validate file size
         const fileSizeValidation = validateFileSize(req.file.size);
         if (!fileSizeValidation.isValid) {
-          deleteUploadedFile(req.file.path);
           logger.warn('File size validation failed:', fileSizeValidation.error);
           res.status(400).json({
             success: false,
@@ -553,23 +547,17 @@ class SchoolAdminController {
           return;
         }
 
-        // Store relative path in DB for portability
-        try {
-          const relativePath = path.relative(process.cwd(), req.file.path);
-          applicationData.transcriptFilePath = relativePath;
-          logger.debug('Calculated relative path:', relativePath);
-        } catch (err: any) {
-          logger.warn('Failed to calculate relative path, using absolute:', err.message);
-          applicationData.transcriptFilePath = req.file.path;
-        }
-        applicationData.transcriptFileName = req.file.filename;
+        // Store memory buffer and mime type for database blob storage
+        applicationData.transcriptData = req.file.buffer;
+        applicationData.transcriptMimeType = req.file.mimetype;
+        applicationData.transcriptFileName = req.file.originalname;
         applicationData.transcriptFileSize = req.file.size;
         applicationData.transcriptUploadedAt = new Date();
 
         logger.info('File metadata prepared for database:', {
-          transcriptFilePath: applicationData.transcriptFilePath,
           transcriptFileName: applicationData.transcriptFileName,
           transcriptFileSize: applicationData.transcriptFileSize,
+          transcriptMimeType: applicationData.transcriptMimeType
         });
       } else {
         logger.debug('No file in request - submission without transcript');
@@ -603,12 +591,6 @@ class SchoolAdminController {
         stack: error instanceof Error ? error.stack : null,
       });
 
-      // Clean up uploaded file if error occurs
-      if (req.file) {
-        logger.warn('Cleaning up uploaded file due to error:', req.file.path);
-        deleteUploadedFile(req.file.path);
-      }
-
       next(error);
     }
   }
@@ -639,7 +621,6 @@ class SchoolAdminController {
         address,
         previousSchool,
         grade,
-        feeStatus,
         bloodGroup,
         allergies,
         chronicConditions,
@@ -658,7 +639,6 @@ class SchoolAdminController {
         address,
         previousSchool,
         grade,
-        feeStatus,
         bloodGroup,
         allergies,
         chronicConditions,
@@ -692,7 +672,6 @@ class SchoolAdminController {
         previousSchool: previousSchool || null,
         gradeApplying: grade,
         lastGradeCompleted: grade || null,
-        registrationFeeStatus: feeStatus || 'Pending',
         bloodGroup: bloodGroup || null,
         allergies: allergies || null,
         chronicConditions: chronicConditions || null,
@@ -705,16 +684,13 @@ class SchoolAdminController {
         const file = (req as any).file;
         const fileSizeValidation = validateFileSize(file.size);
         if (!fileSizeValidation.isValid) {
-          deleteUploadedFile(file.path);
           res.status(400).json({ success: false, message: 'File upload failed', errors: { transcriptFile: fileSizeValidation.error } });
           return;
         }
-        try {
-          applicationData.transcriptFilePath = path.relative(process.cwd(), file.path);
-        } catch (err) {
-          applicationData.transcriptFilePath = file.path;
-        }
-        applicationData.transcriptFileName = file.filename;
+        // Store memory buffer and mime type for database blob storage
+        applicationData.transcriptData = file.buffer;
+        applicationData.transcriptMimeType = file.mimetype;
+        applicationData.transcriptFileName = file.originalname;
         applicationData.transcriptFileSize = file.size;
         applicationData.transcriptUploadedAt = new Date();
       }
@@ -724,7 +700,6 @@ class SchoolAdminController {
       return;
     } catch (error) {
       logger.error('Error in createPublicPendingApplication:', error instanceof Error ? error.message : error);
-      if ((req as any).file) deleteUploadedFile((req as any).file.path);
       next(error);
     }
   }
@@ -762,6 +737,27 @@ class SchoolAdminController {
         message: 'Application status updated successfully'
       });
     } catch (error) {
+      next(error);
+    }
+  }
+
+  // Download/View Application Transcript
+  async getApplicationTranscript(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { id } = req.params;
+
+      const transcript = await schoolAdminService.getApplicationTranscript(id, branchId!);
+      if (!transcript || !transcript.transcript_data) {
+        res.status(404).json({ success: false, message: 'Transcript not found' });
+        return;
+      }
+
+      res.setHeader('Content-Type', transcript.transcript_mime_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${transcript.transcript_file_name}"`);
+      res.send(transcript.transcript_data);
+    } catch (error) {
+      logger.error('Error fetching application transcript:', error instanceof Error ? error.message : error);
       next(error);
     }
   }
