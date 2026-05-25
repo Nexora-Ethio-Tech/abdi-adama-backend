@@ -44,6 +44,35 @@ class FinanceClerkController {
     }
   }
 
+  // Get pending applications assigned to finance
+  async getPendingApplications(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { status } = req.query;
+
+      const apps = await financeClerkService.getPendingApplications(branchId!, status as string);
+
+      res.json({ success: true, data: apps });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Approve application and finalize registration after payment
+  async approveApplication(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const { amount, reference } = req.body;
+      const financeUserId = req.user!.id;
+
+      const result = await financeClerkService.approveApplication(id, { amount, reference }, financeUserId);
+
+      res.status(201).json({ success: true, data: result, message: 'Application approved and student registered' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Get all students with fee information
   async getStudentsWithFees(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

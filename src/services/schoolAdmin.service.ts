@@ -699,6 +699,17 @@ class SchoolAdminService {
     return result.rows[0];
   }
 
+  // Return default branch id for public submissions
+  async getDefaultBranchId(): Promise<string | null> {
+    // Prefer "Main Branch" if present, otherwise return first branch id
+    const tryMain = await pool.query(`SELECT id FROM branches WHERE name = $1 LIMIT 1`, ['Main Branch']);
+    if (tryMain.rows.length > 0) return tryMain.rows[0].id;
+
+    const first = await pool.query(`SELECT id FROM branches ORDER BY name LIMIT 1`);
+    if (first.rows.length > 0) return first.rows[0].id;
+    return null;
+  }
+
   async getPendingApplications(branchId: string, status?: string) {
     let query = 'SELECT * FROM pending_applications WHERE branch_id = $1';
     const params: any[] = [branchId];
@@ -714,7 +725,20 @@ class SchoolAdminService {
     return result.rows;
   }
 
-  async updateApplicationStatus(applicationId: string, status: string) {
+  async updateApplicationStatus(applicationId: string, status: string, reviewerId?: string) {
+    // If being passed to finance, record reviewer
+    if ((status === 'finance_pending' || status === 'awaiting-payment') && reviewerId) {
+      const result = await pool.query(
+        `UPDATE pending_applications 
+         SET status = $1, reviewed_by = $2, updated_at = NOW()
+         WHERE id = $3
+         RETURNING *`,
+        [status, reviewerId, applicationId]
+      );
+      if (result.rows.length === 0) throw new Error('Application not found');
+      return result.rows[0];
+    }
+
     const result = await pool.query(
       `UPDATE pending_applications 
        SET status = $1, updated_at = NOW()
@@ -728,6 +752,119 @@ class SchoolAdminService {
     }
 
     return result.rows[0];
+  }
+
+  // Finance: get applications assigned for finance review
+  async getApplicationsForFinance(branchId: string, status?: string) {
+    let query = 'SELECT * FROM pending_applications WHERE branch_id = $1';
+    const params: any[] = [branchId];
+
+    if (status) {
+      query += ' AND status = $2';
+      params.push(status);
+    } else {
+      // default to common awaiting-payment/finance_pending statuses
+      query += " AND status IN ('finance_pending','awaiting-payment')";
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  // Finance: Approve application (record payment, create user accounts, finalize registration)
+  async financeApproveApplication(applicationId: string, payment: { amount: number; reference?: string }, financeUserId: string) {
+    const client = await pool.connect();
+    try {
+      const { generateCredentials } = require('../utils/credentialGenerator');
+      
+      await client.query('BEGIN');
+
+      const appRes = await client.query('SELECT * FROM pending_applications WHERE id = $1 FOR UPDATE', [applicationId]);
+      if (appRes.rows.length === 0) throw new Error('Application not found');
+      const app = appRes.rows[0];
+
+      // Create student and parent user accounts using userService
+      const userService = require('./user.service').default;
+
+      // Helper to generate a throwaway email if none provided
+      const genEmail = (rolePrefix: string) => `${rolePrefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}@no-reply.local`;
+
+      const studentData = {
+        name: app.applicant_name,
+        email: app.applicant_email || genEmail('student'),
+        role: 'student',
+        branchId: app.branch_id,
+        grade: app.grade_applying
+      };
+
+      const parentData = {
+        name: app.parent_name || `${app.applicant_name} Parent`,
+        email: genEmail('parent'),
+        role: 'parent',
+        branchId: app.branch_id
+      };
+
+      const studentCreate = await userService.createUser(studentData, financeUserId);
+      const parentCreate = await userService.createUser(parentData, financeUserId);
+
+      // Generate credentials for student and parent
+      const credentials = generateCredentials();
+
+      // Record payment and update application status to payment-confirmed
+      // School Admin will complete final registration by assigning class/section
+      const updateResult = await client.query(
+        `UPDATE pending_applications 
+         SET status = $1, 
+             finance_status = $2, 
+             finance_user_id = $3, 
+             finance_approved_at = NOW(), 
+             payment_amount = $4, 
+             payment_reference = $5, 
+             student_user_id = $6, 
+             parent_user_id = $7, 
+             student_id_generated = $8,
+             student_password_temp = $9,
+             parent_id_generated = $10,
+             parent_password_temp = $11,
+             credentials_generated_at = NOW(),
+             updated_at = NOW() 
+         WHERE id = $12 
+         RETURNING *`,
+        [
+          'payment-confirmed', 
+          'approved', 
+          financeUserId, 
+          payment.amount, 
+          payment.reference || null, 
+          studentCreate.user.id, 
+          parentCreate.user.id,
+          credentials.studentId,
+          credentials.studentPassword,
+          credentials.parentId,
+          credentials.parentPassword,
+          applicationId
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        application: updateResult.rows[0],
+        student: studentCreate,
+        parent: parentCreate,
+        credentials: {
+          studentId: credentials.studentId,
+          parentId: credentials.parentId
+        }
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Financial Policy Management
@@ -1136,6 +1273,80 @@ class SchoolAdminService {
     }
 
     return result.rows[0];
+  }
+
+  // Finalize student registration after Finance Clerk approval
+  // Assigns class and section, marks as fully registered
+  async finalizeRegistration(applicationId: string, classId: string, sectionId: string, schoolAdminId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get the application with finance approval
+      const appRes = await client.query(
+        'SELECT * FROM pending_applications WHERE id = $1 AND status = $2 FOR UPDATE',
+        [applicationId, 'payment-confirmed']
+      );
+      if (appRes.rows.length === 0) {
+        throw new Error('Application not found or payment not confirmed. Only payment-confirmed applications can be finalized.');
+      }
+      const app = appRes.rows[0];
+
+      // Verify class and section exist and belong to the branch
+      const classRes = await client.query(
+        'SELECT id FROM classes WHERE id = $1 AND branch_id = $2',
+        [classId, app.branch_id]
+      );
+      if (classRes.rows.length === 0) {
+        throw new Error('Class not found in this branch');
+      }
+
+      const sectionRes = await client.query(
+        'SELECT id FROM silo_sections WHERE id = $1',
+        [sectionId]
+      );
+      if (sectionRes.rows.length === 0) {
+        throw new Error('Section not found');
+      }
+
+      // Update application as registered with class/section assignment
+      const updateResult = await client.query(
+        `UPDATE pending_applications 
+         SET status = $1,
+             class_id = $2,
+             section_id = $3,
+             registration_finalized_at = NOW(),
+             registered_by = $4,
+             updated_at = NOW()
+         WHERE id = $5
+         RETURNING *`,
+        ['registered', classId, sectionId, schoolAdminId, applicationId]
+      );
+
+      // Optionally: Create student enrollment record if needed
+      // This depends on the specific enrollment tracking system you're using
+
+      await client.query('COMMIT');
+
+      return {
+        success: true,
+        application: updateResult.rows[0],
+        message: 'Student registration finalized successfully',
+        registrationDetails: {
+          studentId: updateResult.rows[0].student_id_generated,
+          parentId: updateResult.rows[0].parent_id_generated,
+          classId,
+          sectionId,
+          applicantName: updateResult.rows[0].applicant_name,
+          gradeApplying: updateResult.rows[0].grade_applying
+        }
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

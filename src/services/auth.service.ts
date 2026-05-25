@@ -31,6 +31,12 @@ class AuthService {
 
       const user: any = result.rows[0];
 
+      if (!user.password_hash) {
+        const error: any = new Error('Password is not set for this account. Please reset your password or contact support.');
+        error.statusCode = 401;
+        throw error;
+      }
+
       if (!user.is_active) {
         const error: any = new Error('Account is inactive. Please contact administrator');
         error.statusCode = 403;

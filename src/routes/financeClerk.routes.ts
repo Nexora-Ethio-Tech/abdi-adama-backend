@@ -36,5 +36,8 @@ router.patch('/students/:id/fee-status', validate(updateFeeStatusSchema), financ
 router.get('/dashboard', financeClerkController.getDashboard);
 router.get('/overdue-payments', financeClerkController.getOverduePayments);
 router.get('/reports/daily', financeClerkController.getDailyReport);
+// Applications for finance review
+router.get('/applications', financeClerkController.getPendingApplications);
+router.patch('/applications/:id/approve', financeClerkController.approveApplication);
 
 export default router;

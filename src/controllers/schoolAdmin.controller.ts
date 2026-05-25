@@ -1,4 +1,4 @@
-import { Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { AuthRequest } from '../types';
 import schoolAdminService from '../services/schoolAdmin.service';
@@ -8,6 +8,7 @@ import {
   validateFileSize,
 } from '../utils/validation';
 import { deleteUploadedFile } from '../middleware/upload';
+import logger from '../utils/logger';
 
 class SchoolAdminController {
   // User Management (existing methods)
@@ -412,25 +413,41 @@ class SchoolAdminController {
       const branchId = req.user!.branch_id;
       const userId = req.user!.id;
 
-      // Extract form data
-      const {
+      // Extract form data - handle both string and FormData inputs
+      const extractField = (field: string): string => {
+        const value = req.body[field];
+        // Handle various input types (string, null, undefined)
+        if (value === null || value === undefined || value === '') {
+          return '';
+        }
+        return String(value).trim();
+      };
+
+      const name = extractField('name');
+      const digital_id = extractField('digital_id');
+      const dob = extractField('dob');
+      const gender = extractField('gender');
+      const email = extractField('email');
+      const parentName = extractField('parentName');
+      const parentPhone = extractField('parentPhone');
+      const address = extractField('address');
+      const previousSchool = extractField('previousSchool');
+      const grade = extractField('grade');
+      const feeStatus = extractField('feeStatus');
+      const bloodGroup = extractField('bloodGroup');
+      const allergies = extractField('allergies');
+      const chronicConditions = extractField('chronicConditions');
+      const medications = extractField('medications');
+      const notes = extractField('notes');
+
+      logger.debug('Received application data:', {
         name,
-        digital_id,
-        dob,
-        gender,
-        email,
         parentName,
         parentPhone,
-        address,
-        previousSchool,
         grade,
-        feeStatus,
-        bloodGroup,
-        allergies,
-        chronicConditions,
-        medications,
-        notes,
-      } = req.body;
+        hasFile: !!req.file,
+        fileName: req.file?.filename,
+      });
 
       // Prepare form data for validation
       const formData = {
@@ -454,38 +471,42 @@ class SchoolAdminController {
       // Validate all required fields
       const validation = validateRegistrationForm(formData);
       if (!validation.isValid) {
-        logger.debug('Validation failed - errors:', validation.errors);
-        logger.debug('Validation failed - formData:', formData);
-        return res.status(400).json({
+        logger.warn('Validation failed:', { errors: validation.errors, formData });
+        res.status(400).json({
           success: false,
           message: 'Validation failed',
           errors: validation.errors,
         });
+        return;
       }
 
       // Validate and format phone number
       const phoneValidation = validateAndFormatPhoneNumber(parentPhone);
       if (!phoneValidation.isValid) {
-        return res.status(400).json({
+        logger.warn('Phone validation failed:', phoneValidation);
+        res.status(400).json({
           success: false,
           message: 'Invalid phone number',
           errors: {
             parentPhone: phoneValidation.error,
           },
         });
+        return;
       }
 
       // Ensure branchId exists
       if (!branchId) {
-        return res.status(400).json({
+        logger.error('User missing branch_id:', { userId });
+        res.status(400).json({
           success: false,
           message: 'User branch not found',
           errors: { branchId: 'Branch ID is required' },
         });
+        return;
       }
 
       // Prepare application data with formatted phone
-      const applicationData = {
+      let applicationData: any = {
         branchId,
         applicantName: name,
         applicantEmail: email || null,
@@ -495,8 +516,8 @@ class SchoolAdminController {
         gender: gender || null,
         parentName,
         parentPhone: phoneValidation.formatted,
-        address,
-        previousSchool,
+        address: address || null,
+        previousSchool: previousSchool || null,
         gradeApplying: grade,
         lastGradeCompleted: grade || null,
         registrationFeeStatus: feeStatus || 'Pending',
@@ -510,40 +531,66 @@ class SchoolAdminController {
 
       // Handle file upload if provided
       if (req.file) {
-        logger.debug('File received:', { filename: req.file.filename, size: req.file.size, path: req.file.path });
-        
+        logger.info('Processing file upload:', {
+          filename: req.file.filename,
+          size: req.file.size,
+          mimetype: req.file.mimetype,
+          path: req.file.path,
+        });
+
         // Validate file size
         const fileSizeValidation = validateFileSize(req.file.size);
         if (!fileSizeValidation.isValid) {
           deleteUploadedFile(req.file.path);
           logger.warn('File size validation failed:', fileSizeValidation.error);
-          return res.status(400).json({
+          res.status(400).json({
             success: false,
             message: 'File upload failed',
             errors: {
               transcriptFile: fileSizeValidation.error,
             },
           });
+          return;
         }
 
         // Store relative path in DB for portability
         try {
-          applicationData.transcriptFilePath = path.relative(process.cwd(), req.file.path);
-        } catch (err) {
+          const relativePath = path.relative(process.cwd(), req.file.path);
+          applicationData.transcriptFilePath = relativePath;
+          logger.debug('Calculated relative path:', relativePath);
+        } catch (err: any) {
+          logger.warn('Failed to calculate relative path, using absolute:', err.message);
           applicationData.transcriptFilePath = req.file.path;
         }
         applicationData.transcriptFileName = req.file.filename;
         applicationData.transcriptFileSize = req.file.size;
         applicationData.transcriptUploadedAt = new Date();
+
+        logger.info('File metadata prepared for database:', {
+          transcriptFilePath: applicationData.transcriptFilePath,
+          transcriptFileName: applicationData.transcriptFileName,
+          transcriptFileSize: applicationData.transcriptFileSize,
+        });
       } else {
-        logger.debug('No file in request');
+        logger.debug('No file in request - submission without transcript');
       }
 
       // Create the application
-      logger.debug('Creating pending application with data:', { ...applicationData, createdBy: '***' });
+      logger.info('Creating pending application:', {
+        applicantName: applicationData.applicantName,
+        grade: applicationData.gradeApplying,
+        branchId: applicationData.branchId,
+        hasFile: !!req.file,
+      });
+
       const application = await schoolAdminService.createPendingApplication(applicationData);
 
-      logger.info(`Application created: ${application.id} for ${applicationData.applicantName}`);
+      logger.info(`✅ Application created successfully:`, {
+        id: application.id,
+        applicantName: application.applicant_name,
+        status: application.status,
+        transcriptFile: application.transcript_file_name || 'No file',
+      });
 
       res.status(201).json({
         success: true,
@@ -551,11 +598,133 @@ class SchoolAdminController {
         message: 'Application submitted successfully',
       });
     } catch (error) {
-      logger.error('Error creating pending application:', error);
+      logger.error('Error creating pending application:', {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : null,
+      });
+
       // Clean up uploaded file if error occurs
       if (req.file) {
+        logger.warn('Cleaning up uploaded file due to error:', req.file.path);
         deleteUploadedFile(req.file.path);
       }
+
+      next(error);
+    }
+  }
+
+  // Public endpoint for landing page submissions (no auth)
+  async createPublicPendingApplication(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      // Use same validation and file handling as authenticated route but determine branchId automatically
+      const defaultBranchId = await schoolAdminService.getDefaultBranchId();
+      if (!defaultBranchId) {
+        logger.error('No default branch found for public application');
+        res.status(500).json({ success: false, message: 'Server misconfiguration: no branch available' });
+        return;
+      }
+
+      // Compose a fake AuthRequest-like object for reuse of validation utilities
+      const fakeReq: any = { body: req.body, file: (req as any).file, user: { id: null, branch_id: defaultBranchId } };
+
+      // Delegate to same logic by calling internal helper pattern (copying key parts to avoid duplication)
+      const {
+        name,
+        digital_id,
+        dob,
+        gender,
+        email,
+        parentName,
+        parentPhone,
+        address,
+        previousSchool,
+        grade,
+        feeStatus,
+        bloodGroup,
+        allergies,
+        chronicConditions,
+        medications,
+        notes
+      } = fakeReq.body;
+
+      const formData = {
+        name,
+        digital_id,
+        dob,
+        gender,
+        email,
+        parentName,
+        parentPhone,
+        address,
+        previousSchool,
+        grade,
+        feeStatus,
+        bloodGroup,
+        allergies,
+        chronicConditions,
+        medications
+      };
+
+      const validation = validateRegistrationForm(formData);
+      if (!validation.isValid) {
+        logger.warn('Public submission validation failed:', validation.errors);
+        res.status(400).json({ success: false, message: 'Validation failed', errors: validation.errors });
+        return;
+      }
+
+      const phoneValidation = validateAndFormatPhoneNumber(parentPhone);
+      if (!phoneValidation.isValid) {
+        res.status(400).json({ success: false, message: 'Invalid phone number', errors: { parentPhone: phoneValidation.error } });
+        return;
+      }
+
+      const applicationData: any = {
+        branchId: defaultBranchId,
+        applicantName: name,
+        applicantEmail: email || null,
+        applicantPhone: phoneValidation.formatted,
+        digitalId: digital_id || null,
+        dob: dob || null,
+        gender: gender || null,
+        parentName,
+        parentPhone: phoneValidation.formatted,
+        address: address || null,
+        previousSchool: previousSchool || null,
+        gradeApplying: grade,
+        lastGradeCompleted: grade || null,
+        registrationFeeStatus: feeStatus || 'Pending',
+        bloodGroup: bloodGroup || null,
+        allergies: allergies || null,
+        chronicConditions: chronicConditions || null,
+        currentMedications: medications || null,
+        notes: notes || null,
+        createdBy: null // public submissions have no creator
+      };
+
+      if ((req as any).file) {
+        const file = (req as any).file;
+        const fileSizeValidation = validateFileSize(file.size);
+        if (!fileSizeValidation.isValid) {
+          deleteUploadedFile(file.path);
+          res.status(400).json({ success: false, message: 'File upload failed', errors: { transcriptFile: fileSizeValidation.error } });
+          return;
+        }
+        try {
+          applicationData.transcriptFilePath = path.relative(process.cwd(), file.path);
+        } catch (err) {
+          applicationData.transcriptFilePath = file.path;
+        }
+        applicationData.transcriptFileName = file.filename;
+        applicationData.transcriptFileSize = file.size;
+        applicationData.transcriptUploadedAt = new Date();
+      }
+
+      const application = await schoolAdminService.createPendingApplication(applicationData);
+      res.status(201).json({ success: true, data: application, message: 'Application submitted successfully' });
+      return;
+    } catch (error) {
+      logger.error('Error in createPublicPendingApplication:', error instanceof Error ? error.message : error);
+      if ((req as any).file) deleteUploadedFile((req as any).file.path);
       next(error);
     }
   }
@@ -584,7 +753,8 @@ class SchoolAdminController {
       const { id } = req.params;
       const { status } = req.body;
 
-      const application = await schoolAdminService.updateApplicationStatus(id, status);
+      const reviewerId = req.user?.id;
+      const application = await schoolAdminService.updateApplicationStatus(id, status, reviewerId);
 
       res.json({
         success: true,
@@ -789,6 +959,43 @@ class SchoolAdminController {
       res.json({
         success: true,
         message: `Event "${event.title}" deleted successfully`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Finalize student registration after finance approval
+  async finalizeRegistration(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { applicationId } = req.params;
+      const { classId, sectionId } = req.body;
+      const branchId = req.user!.branch_id;
+      const schoolAdminId = req.user!.id;
+
+      if (!classId || !sectionId) {
+        res.status(400).json({
+          success: false,
+          message: 'Class and section are required',
+          errors: {
+            classId: classId ? undefined : 'Class is required',
+            sectionId: sectionId ? undefined : 'Section is required'
+          }
+        });
+        return;
+      }
+
+      const result = await schoolAdminService.finalizeRegistration(
+        applicationId,
+        classId,
+        sectionId,
+        schoolAdminId
+      );
+
+      res.status(200).json({
+        success: true,
+        data: result,
+        message: 'Student registration finalized successfully'
       });
     } catch (error) {
       next(error);

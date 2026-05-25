@@ -4,17 +4,39 @@ import { sendSuccess, sendError, getPagination } from '../shared/responseUtils';
 
 /**
  * GET /api/clinic/students
- * Returns a list of students for the directory. Supports search and pagination.
+ * Returns a list of students for the directory within the clinic admin's branch.
+ * Supports search and pagination.
+ * 
+ * Query params:
+ *   ?search=name_or_id - Search by student name or digital ID
+ *   ?limit=20 - Records per page
+ *   ?page=1 - Page number
  */
 export const getStudents = async (req: Request, res: Response) => {
   const { search } = req.query;
   const { limit, offset, page } = getPagination(req.query);
+  const branchId = (req as any).user?.branch_id;
+
+  if (!branchId) {
+    return sendError(res, 'Clinic admin branch not found.', 400);
+  }
 
   try {
-    const filter = search 
-      ? `AND (u.name ILIKE $1 OR u.digital_id ILIKE $1)` 
+    let paramCount = 1;
+    const params: any[] = [branchId];
+
+    // Add search parameter if provided
+    if (search) {
+      paramCount++;
+      params.push(`%${search}%`);
+    }
+
+    // Add pagination parameters
+    params.push(limit, offset);
+
+    const searchFilter = search
+      ? `AND (u.name ILIKE $${paramCount} OR u.digital_id ILIKE $${paramCount} OR s.id::text ILIKE $${paramCount} OR COALESCE(u.username, '') ILIKE $${paramCount})`
       : '';
-    const params = search ? [`%${search}%`, limit, offset] : [limit, offset];
 
     const query = `
       SELECT DISTINCT ON (u.name, s.id)
@@ -29,13 +51,20 @@ export const getStudents = async (req: Request, res: Response) => {
       LEFT JOIN clinic_visits v ON s.id = v.student_id
       LEFT JOIN clinic_chat_messages m ON s.id = m.student_id
       WHERE u.role = 'student'
+        AND s.branch_id = $1
         ${search ? '' : 'AND (v.id IS NOT NULL OR m.id IS NOT NULL)'}
-        ${filter}
+        ${searchFilter}
       ORDER BY u.name ASC
-      LIMIT ${search ? '$2 OFFSET $3' : '$1 OFFSET $2'}
+      LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
     `;
 
     const result = await pool.query(query, params);
+
+    // Count total records matching criteria
+    const countParams: any[] = [branchId];
+    if (search) {
+      countParams.push(`%${search}%`);
+    }
 
     const countQuery = `
       SELECT COUNT(DISTINCT s.id) 
@@ -44,17 +73,19 @@ export const getStudents = async (req: Request, res: Response) => {
       LEFT JOIN clinic_visits v ON s.id = v.student_id
       LEFT JOIN clinic_chat_messages m ON s.id = m.student_id
       WHERE u.role = 'student'
+        AND s.branch_id = $1
         ${search ? '' : 'AND (v.id IS NOT NULL OR m.id IS NOT NULL)'}
-        ${filter}
+        ${searchFilter}
     `;
 
-    const countResult = await pool.query(countQuery, search ? [`%${search}%`] : []);
+    const countResult = await pool.query(countQuery, countParams);
 
     return sendSuccess(res, {
       students: result.rows,
       total: parseInt(countResult.rows[0].count),
       page,
-      limit
+      limit,
+      branch_id: branchId
     });
   } catch (err: any) {
     return sendError(res, 'Failed to fetch students.', 500, err.message);
@@ -63,10 +94,23 @@ export const getStudents = async (req: Request, res: Response) => {
 
 /**
  * POST /api/clinic/visits
- * Logs a new medical visit.
+ * Logs a new medical visit for a student.
+ * Only allows visits for students in the clinic admin's branch.
+ * 
+ * Body:
+ *   - student_id: UUID or digital_id of the student
+ *   - reason: Reason for visit (required)
+ *   - treatment: Treatment provided (required)
+ *   - medicines: Array of { id, quantity } (optional)
  */
 export const logVisit = async (req: Request, res: Response) => {
   const { student_id, reason, treatment } = req.body;
+  const branchId = (req as any).user?.branch_id;
+  const clinicAdminId = (req as any).user?.id;
+
+  if (!branchId) {
+    return sendError(res, 'Clinic admin branch not found.', 400);
+  }
 
   if (!student_id || !reason) {
     return sendError(res, 'Student ID and reason are required.', 400);
@@ -74,23 +118,35 @@ export const logVisit = async (req: Request, res: Response) => {
 
   try {
     // 1. Lookup the student using digital_id or internal ID
+    // IMPORTANT: Verify the student is in the clinic admin's branch
     const identityResult = await pool.query(
-      'SELECT s.id, u.name FROM students s JOIN users u ON s.user_id = u.id WHERE s.id::text = $1 OR u.digital_id = $1',
-      [student_id]
+      `SELECT s.id, s.branch_id, u.name 
+       FROM students s 
+       JOIN users u ON s.user_id = u.id 
+       WHERE (s.id::text = $1 OR u.digital_id = $1)
+         AND s.branch_id = $2`,
+      [student_id, branchId]
     );
 
     if (identityResult.rows.length === 0) {
-      return sendError(res, `Student with ID ${student_id} not found.`, 404);
+      return sendError(res, `Student with ID ${student_id} not found in your branch.`, 404);
     }
 
     const { id: student_uuid, name: student_name } = identityResult.rows[0];
 
     // 2. Log the visit
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const now = new Date().toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }); // HH:MM format
+
     const result = await pool.query(
-      `INSERT INTO clinic_visits (student_id, student_name, reason, treatment)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO clinic_visits (student_id, student_name, date, time, reason, treatment, logged_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [student_uuid, student_name, reason, treatment]
+      [student_uuid, student_name, today, now, reason, treatment || null, clinicAdminId]
     );
 
     return sendSuccess(res, result.rows[0], 'Visit logged successfully.', 201);
@@ -101,36 +157,85 @@ export const logVisit = async (req: Request, res: Response) => {
 
 /**
  * GET /api/clinic/visits/history
- * Returns the history of clinic visits with pagination and search.
+ * Returns the history of clinic visits for the clinic admin's branch.
+ * Supports search and pagination.
+ * 
+ * Query params:
+ *   ?search=student_name_or_reason - Search by student name or reason
+ *   ?limit=20 - Records per page
+ *   ?page=1 - Page number
  */
 export const getVisitHistory = async (req: Request, res: Response) => {
   const { search } = req.query;
   const { limit, offset, page } = getPagination(req.query);
+  const branchId = (req as any).user?.branch_id;
+
+  if (!branchId) {
+    return sendError(res, 'Clinic admin branch not found.', 400);
+  }
 
   try {
-    const filter = search 
-      ? `WHERE student_name ILIKE $1 OR reason ILIKE $1` 
-      : '';
-    const params = search ? [`%${search}%`, limit, offset] : [limit, offset];
+    let paramCount = 1;
+    const params: any[] = [branchId];
 
+    // Add search parameter if provided
+    if (search) {
+      paramCount++;
+      params.push(`%${search}%`);
+    }
+
+    // Add pagination parameters
+    params.push(limit, offset);
+
+    const searchFilter = search
+      ? `AND (cv.student_name ILIKE $${paramCount} OR cv.reason ILIKE $${paramCount})`
+      : '';
+
+    // Query clinic visits for students in the admin's branch
+    // Includes student info joined through the students table
     const result = await pool.query(
       `SELECT 
-         id,
-         student_id,
-         student_name,
-         to_char(visit_time, 'YYYY-MM-DD') AS date,
-         to_char(visit_time, 'HH:MI AM') AS time,
-         reason,
-         treatment,
-         'Logged' AS status
-       FROM clinic_visits 
-       ${filter}
-       ORDER BY visit_time DESC
-       LIMIT ${search ? '$2 OFFSET $3' : '$1 OFFSET $2'}`,
+         cv.id,
+         cv.student_id,
+         cv.student_name,
+         cv.date,
+         cv.time,
+         cv.reason,
+         cv.treatment,
+         cv.status,
+         u.name as logged_by_name
+       FROM clinic_visits cv
+       JOIN students s ON cv.student_id = s.id
+       LEFT JOIN users u ON cv.logged_by = u.id
+       WHERE s.branch_id = $1
+         ${searchFilter}
+       ORDER BY cv.created_at DESC
+       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`,
       params
     );
 
-    return sendSuccess(res, result.rows);
+    // Count total records matching criteria
+    const countParams: any[] = [branchId];
+    if (search) {
+      countParams.push(`%${search}%`);
+    }
+
+    const countResult = await pool.query(
+      `SELECT COUNT(cv.id) as count
+       FROM clinic_visits cv
+       JOIN students s ON cv.student_id = s.id
+       WHERE s.branch_id = $1
+         ${searchFilter}`,
+      countParams
+    );
+
+    return sendSuccess(res, {
+      visits: result.rows,
+      total: parseInt(countResult.rows[0]?.count || '0'),
+      page,
+      limit,
+      branch_id: branchId
+    });
   } catch (err: any) {
     return sendError(res, 'Failed to fetch visit history.', 500, err.message);
   }
@@ -143,7 +248,7 @@ export const getVisitHistory = async (req: Request, res: Response) => {
 export const getMedicines = async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, stock, unit, description
+      `SELECT id, name, stock, unit
          FROM medicine_inventory
         ORDER BY name ASC`
     );
@@ -192,119 +297,128 @@ export const deductMedicine = async (req: Request, res: Response) => {
  *   Returns the inbox — one row per parent conversation, sorted by
  *   MOST RECENT MESSAGE FIRST (WhatsApp-style). Each row includes
  *   unread_count so the frontend can display a badge.
- *
- * For ClinicAdmin (with ?otherUserId or ?childId):
- *   Returns the full message thread for that specific conversation.
- *
- * For Parent:
- *   Returns all messages between this parent and the clinic (their thread only).
+ */
+const verifyParentChildLink = async (parentUserId: string, studentId: string): Promise<boolean> => {
+  const result = await pool.query(
+    `SELECT 1 FROM parent_student ps
+     JOIN parents p ON ps.parent_id = p.id
+     WHERE p.user_id = $1
+       AND ps.student_id = $2`,
+    [parentUserId, studentId]
+  );
+  return result.rows.length > 0;
+};
+
+/**
+ * GET /api/clinic/chat
+ * Returns the chat thread for the current parent or clinic admin context.
  */
 export const getChatMessages = async (req: Request, res: Response) => {
   const { user_id: userId, role } = (req as any).user;
-  const { otherUserId, childId } = req.query;
+  const { childId } = req.query;
 
   try {
     let queryText = '';
     let params: any[] = [];
 
     if (role === 'Parent') {
-      // Parents see their own messages with the clinic, filtered by childId if provided
-      const filter = childId ? 'AND m.child_id = $2' : '';
-      queryText = `
-        SELECT 
-          m.id, 
-          m.sender_id, 
-          m.receiver_id, 
-          m.message AS text, 
-          m.child_id,
-          m.is_read,
-          to_char(m.created_at, 'HH:MI AM') AS timestamp,
-          CASE WHEN m.sender_id = $1 THEN 'parent' ELSE 'clinic' END as role
-        FROM silo_clinic_messages m
-        WHERE (m.sender_id = $1 OR m.receiver_id = $1)
-        ${filter}
-        ORDER BY m.created_at ASC
-      `;
-      params = childId ? [userId, childId] : [userId];
-
-    } else if (role === 'ClinicAdmin') {
-      if (!otherUserId && !childId) {
-        // ── INBOX VIEW ────────────────────────────────────────────────────────
-        // WhatsApp-style: newest conversation at top.
-        //
-        // We use a CTE to get the latest message per sender (DISTINCT ON),
-        // then wrap it in an outer query to allow sorting by last_message_at.
-        // We also compute unread_count per conversation.
+      const selectedChildId = childId as string | undefined;
+      if (selectedChildId) {
+        const isLinked = await verifyParentChildLink(userId, selectedChildId);
+        if (!isLinked) {
+          return sendError(res, 'Access denied: student not linked to your account.', 403);
+        }
         queryText = `
-          WITH latest_per_sender AS (
-            SELECT DISTINCT ON (m.sender_id)
-              m.sender_id,
-              m.message        AS last_message,
-              m.child_id       AS student_id,
-              m.created_at     AS last_message_at
-            FROM silo_clinic_messages m
-            WHERE m.receiver_id IS NULL
-               OR m.receiver_id IN (
-                 SELECT id FROM silo_users WHERE role = 'ClinicAdmin'
-               )
-            ORDER BY m.sender_id, m.created_at DESC
+          SELECT
+            m.id,
+            m.sender_id,
+            m.sender_role AS role,
+            m.student_id AS child_id,
+            m.student_name,
+            m.text,
+            m.read AS is_read,
+            to_char(m.created_at, 'HH12:MI AM') AS timestamp
+          FROM clinic_chat_messages m
+          WHERE m.student_id = $1
+          ORDER BY m.created_at ASC
+        `;
+        params = [selectedChildId];
+      } else {
+        const childrenResult = await pool.query(
+          `SELECT ps.student_id
+           FROM parent_student ps
+           JOIN parents p ON ps.parent_id = p.id
+           WHERE p.user_id = $1`,
+          [userId]
+        );
+        const childIds = childrenResult.rows.map((row) => row.student_id);
+        if (childIds.length === 0) {
+          return sendSuccess(res, []);
+        }
+        queryText = `
+          SELECT
+            m.id,
+            m.sender_id,
+            m.sender_role AS role,
+            m.student_id AS child_id,
+            m.student_name,
+            m.text,
+            m.read AS is_read,
+            to_char(m.created_at, 'HH12:MI AM') AS timestamp
+          FROM clinic_chat_messages m
+          WHERE m.student_id = ANY($1::uuid[])
+          ORDER BY m.created_at ASC
+        `;
+        params = [childIds];
+      }
+    } else if (role === 'ClinicAdmin') {
+      if (!childId) {
+        queryText = `
+          WITH latest_per_student AS (
+            SELECT DISTINCT ON (m.student_id)
+              m.student_id,
+              m.text AS last_message,
+              m.created_at AS last_message_at
+            FROM clinic_chat_messages m
+            ORDER BY m.student_id, m.created_at DESC
           ),
           unread_counts AS (
             SELECT
-              m.sender_id,
-              COUNT(*) FILTER (WHERE m.is_read = FALSE) AS unread_count
-            FROM silo_clinic_messages m
-            WHERE (m.receiver_id IS NULL
-                   OR m.receiver_id IN (
-                 SELECT id FROM users WHERE role = 'clinic-admin'
-                   ))
-              AND m.sender_id IN (SELECT sender_id FROM latest_per_sender)
-            GROUP BY m.sender_id
+              m.student_id,
+              COUNT(*) FILTER (WHERE m.read = FALSE AND m.sender_role = 'parent') AS unread_count
+            FROM clinic_chat_messages m
+            GROUP BY m.student_id
           )
           SELECT
-            lps.sender_id,
-            i.full_name                                   AS sender_name,
-            lps.last_message,
-            to_char(lps.last_message_at, 'YYYY-MM-DD HH:MI AM') AS last_time,
-            lps.last_message_at,
-            st.full_name                                  AS student_name,
             lps.student_id,
-            COALESCE(uc.unread_count, 0)::int             AS unread_count
-          FROM latest_per_sender lps
-          JOIN users u ON lps.sender_id = u.id
-          LEFT JOIN students st ON lps.student_id = st.id
-          LEFT JOIN users su ON st.user_id = su.id
-          LEFT JOIN unread_counts uc ON uc.sender_id = lps.sender_id
+            su.name AS student_name,
+            lps.last_message,
+            to_char(lps.last_message_at, 'YYYY-MM-DD HH12:MI AM') AS last_time,
+            lps.last_message_at,
+            COALESCE(uc.unread_count, 0)::int AS unread_count
+          FROM latest_per_student lps
+          LEFT JOIN students s ON s.id = lps.student_id
+          LEFT JOIN users su ON s.user_id = su.id
+          LEFT JOIN unread_counts uc ON uc.student_id = lps.student_id
           ORDER BY lps.last_message_at DESC
         `;
         params = [];
-
       } else {
-        // ── SPECIFIC CONVERSATION ─────────────────────────────────────────────
-        const filter = childId
-          ? 'WHERE m.child_id = $1'
-          : 'WHERE (m.sender_id = $1 OR m.receiver_id = $1)';
         queryText = `
-          SELECT 
-            m.id, 
-            m.sender_id, 
-            m.receiver_id, 
-            m.message AS text, 
-            m.child_id,
-            m.is_read,
-            st.full_name AS student_name,
-            to_char(m.created_at, 'HH:MI AM') AS timestamp,
-            CASE 
-              WHEN m.sender_id IN (SELECT id FROM users WHERE role = 'clinic-admin')
-              THEN 'clinic' 
-              ELSE 'parent' 
-            END AS role
+          SELECT
+            m.id,
+            m.sender_id,
+            m.sender_role AS role,
+            m.student_id AS child_id,
+            m.student_name,
+            m.text,
+            m.read AS is_read,
+            to_char(m.created_at, 'HH12:MI AM') AS timestamp
           FROM clinic_chat_messages m
-          LEFT JOIN students st ON m.student_id = st.id
-          ${filter}
+          WHERE m.student_id = $1
           ORDER BY m.created_at ASC
         `;
-        params = [childId || otherUserId];
+        params = [childId];
       }
     }
 
@@ -321,44 +435,41 @@ export const getChatMessages = async (req: Request, res: Response) => {
  */
 export const sendChatMessage = async (req: Request, res: Response) => {
   const { user_id: senderId, role: senderRole } = (req as any).user;
-  const { receiverId, message, childId } = req.body;
+  const { message, childId } = req.body;
 
   if (!message) {
     return sendError(res, 'Message content is required.', 400);
   }
 
+  if (!childId) {
+    return sendError(res, 'Child ID is required to send a message.', 400);
+  }
+
   try {
-    let finalReceiverId = receiverId;
-
-    // Only ClinicAdmins should trigger the automated parent resolution logic
-    if (senderRole === 'ClinicAdmin' && !finalReceiverId && childId) {
-      // 1. Try to find the last parent who messaged about this child
-      const lastParentMsg = await pool.query(
-        `SELECT sender_id FROM clinic_chat_messages 
-         WHERE student_id = $1 AND sender_id IN (SELECT id FROM users WHERE role = 'parent')
-         ORDER BY created_at DESC LIMIT 1`,
-        [childId]
-      );
-
-      if (lastParentMsg.rows.length > 0) {
-        finalReceiverId = lastParentMsg.rows[0].sender_id;
-      } else {
-        // 2. Fallback: Find the first parent linked in silo_family_links
-        const linkedParent = await pool.query(
-          `SELECT parent_user_id FROM silo_family_links WHERE student_identity_id = $1 LIMIT 1`,
-          [childId]
-        );
-        if (linkedParent.rows.length > 0) {
-          finalReceiverId = linkedParent.rows[0].parent_user_id;
-        }
+    if (senderRole === 'Parent') {
+      const isLinked = await verifyParentChildLink(senderId, childId);
+      if (!isLinked) {
+        return sendError(res, 'Access denied: student not linked to your account.', 403);
       }
     }
 
+    const studentResult = await pool.query(
+      `SELECT u.name AS student_name FROM students s JOIN users u ON s.user_id = u.id WHERE s.id = $1 LIMIT 1`,
+      [childId]
+    );
+
+    if (studentResult.rows.length === 0) {
+      return sendError(res, 'Student not found.', 404);
+    }
+
+    const studentName = studentResult.rows[0].student_name;
+    const senderRoleValue = senderRole === 'ClinicAdmin' ? 'clinic' : 'parent';
+
     const result = await pool.query(
-      `INSERT INTO clinic_chat_messages (sender_id, receiver_id, message, student_id, is_read)
-       VALUES ($1, $2, $3, $4, FALSE)
-       RETURNING *, to_char(created_at, 'HH:MI AM') AS timestamp`,
-      [senderId, finalReceiverId || null, message, childId || null]
+      `INSERT INTO clinic_chat_messages (sender_id, sender_role, student_id, student_name, text, read)
+       VALUES ($1, $2, $3, $4, $5, FALSE)
+       RETURNING id, sender_id, sender_role AS role, student_id AS child_id, student_name, text, read AS is_read, to_char(created_at, 'HH12:MI AM') AS timestamp`,
+      [senderId, senderRoleValue, childId, studentName, message]
     );
 
     return sendSuccess(res, result.rows[0], 'Message sent.', 201);
@@ -369,38 +480,29 @@ export const sendChatMessage = async (req: Request, res: Response) => {
 
 /**
  * PATCH /api/clinic/chat/read
- * Marks all messages from a given sender as read (per-conversation, WhatsApp-style).
- *
- * Body: { sender_id: string }
- *
- * Called when ClinicAdmin opens a chat conversation. All unread messages from
- * that parent in that conversation are immediately marked as is_read = TRUE,
- * causing the unread badge to disappear on the next inbox fetch.
+ * Marks all parent messages for a child as read.
  */
 export const markMessagesRead = async (req: Request, res: Response) => {
   const { role } = (req as any).user;
-  const { sender_id } = req.body;
+  const { student_id } = req.body;
 
   if (role !== 'ClinicAdmin') {
     return sendError(res, 'Only ClinicAdmin can mark messages as read.', 403);
   }
 
-  if (!sender_id) {
-    return sendError(res, 'sender_id is required.', 400);
+  if (!student_id) {
+    return sendError(res, 'student_id is required.', 400);
   }
 
   try {
     const result = await pool.query(
       `UPDATE clinic_chat_messages
-          SET is_read = TRUE
-        WHERE sender_id = $1
-          AND is_read = FALSE
-          AND (
-            receiver_id IS NULL
-            OR receiver_id IN (SELECT id FROM users WHERE role = 'clinic-admin')
-          )
-        RETURNING id`,
-      [sender_id]
+         SET read = TRUE
+       WHERE student_id = $1
+         AND sender_role = 'parent'
+         AND read = FALSE
+       RETURNING id`,
+      [student_id]
     );
 
     return sendSuccess(res, {

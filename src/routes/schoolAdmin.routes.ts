@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import schoolAdminController from '../controllers/schoolAdmin.controller';
-import { authenticate } from '../middleware/auth';
+import { authenticate, requireBranchId } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
 import { validate, schemas } from '../middleware/validator';
 import { UserRole } from '../types';
@@ -9,7 +9,17 @@ import Joi from 'joi';
 
 const router = Router();
 
+// Public application submission (landing page) - placed before auth middleware
+// Exposed at /school-admin/public/applications
+router.post('/public/applications',
+  uploadTranscript.single('transcript'),
+  handleUploadError,
+  // Controller will handle validation and default branch assignment
+  schoolAdminController.createPublicPendingApplication
+);
+
 router.use(authenticate);
+router.use(requireBranchId);
 router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
 
 // Validation schemas
@@ -67,6 +77,11 @@ const updateEventSchema = Joi.object({
   description: Joi.string().max(1000).allow('', null)
 }).min(1);
 
+const finalizeRegistrationSchema = Joi.object({
+  classId: Joi.string().uuid().required(),
+  sectionId: Joi.string().uuid().required()
+});
+
 // User Management (existing)
 router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
 router.get('/users', schoolAdminController.getBranchUsers);
@@ -106,14 +121,16 @@ router.get('/academic-years', schoolAdminController.getAcademicYears);
 router.patch('/academic-years/:id/activate', schoolAdminController.activateAcademicYear);
 
 // Student Applications
+// Note: Multer handles multipart/form-data parsing, Joi validator skipped since controller does comprehensive validation
 router.post('/applications',
   uploadTranscript.single('transcript'),
   handleUploadError,
-  validate(schemas.createPendingApplication),
   schoolAdminController.createPendingApplication
 );
 router.get('/applications', schoolAdminController.getPendingApplications);
 router.patch('/applications/:id/status', schoolAdminController.updateApplicationStatus);
+// Finalize registration after finance approval (assign class and section)
+router.post('/applications/:applicationId/finalize', validate(finalizeRegistrationSchema), schoolAdminController.finalizeRegistration);
 
 // Financial Policies
 router.post('/financial-policies', validate(financialPolicySchema), schoolAdminController.setFinancialPolicy);

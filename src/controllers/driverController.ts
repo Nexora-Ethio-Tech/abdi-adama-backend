@@ -18,7 +18,8 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
   const driver_id = req.user?.user_id;  // The actual driver's user_id
 
   if (!driver_id) {
-    return sendError(res, 'Authentication error: user_id not found in token.', 401);
+    sendError(res, 'Authentication error: user_id not found in token.', 401);
+    return;
   }
 
   try {
@@ -29,7 +30,8 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
     );
 
     if (routeResult.rows.length === 0) {
-      return sendError(res, 'No route assigned to this driver yet.', 404);
+      sendError(res, 'No route assigned to this driver yet.', 404);
+      return;
     }
 
     const route = routeResult.rows[0];
@@ -51,14 +53,16 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
       [route.name, route.id]
     );
 
-    return sendSuccess(res, {
+    sendSuccess(res, {
       route_id: route.id,
       route_name: route.name,
       student_count: manifestResult.rows.length,
       manifest: manifestResult.rows,
     });
+    return;
   } catch (err: any) {
-    return sendError(res, 'Failed to fetch manifest.', 500, err.message);
+    sendError(res, 'Failed to fetch manifest.', 500, err.message);
+    return;
   }
 };
 
@@ -72,7 +76,8 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
   const identity_id = req.user?.identity_id;
 
   if (!content) {
-    return sendError(res, 'Notice content is required.', 400);
+    sendError(res, 'Notice content is required.', 400);
+    return;
   }
 
   try {
@@ -123,12 +128,14 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
     const allowedRoles = ['Student', 'Parent', 'Admin', 'SchoolAdmin', 'VicePrincipal', 'SuperAdmin'];
     broadcast('LOGISTICS_NOTICE', broadcastPayload, branchId, allowedRoles, assignedStudentIds);
 
-    return sendSuccess(res, {
+    sendSuccess(res, {
       ...notice,
       driverName,
     }, 'Notice posted successfully.', 201);
+    return;
   } catch (err: any) {
-    return sendError(res, 'Failed to post notice.', 500, err.message);
+    sendError(res, 'Failed to post notice.', 500, err.message);
+    return;
   }
 };
 
@@ -203,7 +210,7 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
 
     const notice = checkResult.rows[0];
     const role = req.user?.role;
-    
+
     // Normalize role for comparison
     const normalizedRole = role?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
 
@@ -254,7 +261,7 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
 
   // Extract token from query parameter or Authorization header
   let token: string | undefined = req.query.token as string | undefined;
-  
+
   if (!token) {
     const authHeader = req.headers['authorization'];
     token = authHeader && authHeader.split(' ')[1];
@@ -275,10 +282,10 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
     const branchId = user?.branch_id || '1';
     const role = user?.role || 'Guest';
     const identityId = user?.identity_id || 'unknown';
-    
+
     // Get child identities for parents (for filtering logistics notices to assigned children)
     let childIdentityIds: string[] | undefined = undefined;
-    
+
     // Send SSE headers
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -289,7 +296,7 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
 
     res.write(':keep-alive\n\n');
     res.write(`data: ${JSON.stringify({ type: 'connected', branchId, role, identityId })}\n\n`);
-    
+
     // Register this client with SSE manager
     addClient(res, {
       branchId,
@@ -319,10 +326,11 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
 export const postAlert = async (req: AuthRequest, res: Response) => {
   const { message, target_route } = req.body;
   const driver_id = req.user?.user_id;
-  const driver_name = req.user?.name || 'Driver';
+  const driver_name = (req.user as any)?.name || 'Driver';
 
   if (!driver_id) {
-    return sendError(res, 'Authentication error: driver_id not found.', 401);
+    sendError(res, 'Authentication error: driver_id not found.', 401);
+    return;
   }
 
   if (!message || message.trim().length === 0) {
@@ -414,13 +422,15 @@ export const getAlerts = async (req: AuthRequest, res: Response) => {
       return sendError(res, 'Access denied: insufficient permissions.', 403);
     }
 
-    return sendSuccess(res, {
+    sendSuccess(res, {
       count: notifications.length,
       alerts: notifications.slice(offset, offset + limit),
       total: notifications.length,
     });
+    return;
   } catch (err: any) {
-    return sendError(res, 'Failed to fetch alerts.', 500, err.message);
+    sendError(res, 'Failed to fetch alerts.', 500, err.message);
+    return;
   }
 };
 
@@ -436,7 +446,8 @@ export const deleteAlert = async (req: AuthRequest, res: Response) => {
   const driver_id = req.user?.user_id;
 
   if (!driver_id) {
-    return sendError(res, 'Authentication error: driver_id not found.', 401);
+    sendError(res, 'Authentication error: driver_id not found.', 401);
+    return;
   }
 
   try {
@@ -444,7 +455,8 @@ export const deleteAlert = async (req: AuthRequest, res: Response) => {
     const deleted = await notificationService.softDeleteNotification(id, driver_id);
 
     if (!deleted) {
-      return sendError(res, 'Failed to delete alert.', 500);
+      sendError(res, 'Failed to delete alert.', 500);
+      return;
     }
 
     // Broadcast deletion event to all connected clients
@@ -454,15 +466,18 @@ export const deleteAlert = async (req: AuthRequest, res: Response) => {
       deleted_at: new Date().toISOString(),
     };
 
-    broadcast('DRIVER_ALERT_DELETED', broadcastPayload, req.user?.branch_id || '1', 
+    broadcast('DRIVER_ALERT_DELETED', broadcastPayload, req.user?.branch_id || '1',
       ['Student', 'Parent', 'SchoolAdmin']);
 
-    return sendSuccess(res, null, 'Alert deleted successfully.');
+    sendSuccess(res, null, 'Alert deleted successfully.');
+    return;
   } catch (err: any) {
     if (err.message.includes('Unauthorized')) {
-      return sendError(res, err.message, 403);
+      sendError(res, err.message, 403);
+      return;
     }
-    return sendError(res, 'Failed to delete alert.', 500, err.message);
+    sendError(res, 'Failed to delete alert.', 500, err.message);
+    return;
   }
 };
 

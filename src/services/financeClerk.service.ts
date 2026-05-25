@@ -1,4 +1,6 @@
 import pool from '../config/database';
+import schoolAdminService from './schoolAdmin.service';
+import { generateCredentials } from '../utils/credentialGenerator';
 
 class FinanceClerkService {
   // Record payment
@@ -243,6 +245,16 @@ class FinanceClerkService {
         totalAmount: result.rows.length > 0 ? parseFloat(result.rows[0].total_amount) : 0
       }
     };
+  }
+
+  // Applications for finance
+  async getPendingApplications(branchId: string, status?: string) {
+    return await schoolAdminService.getApplicationsForFinance(branchId, status);
+  }
+
+  // Approve an application (delegate to schoolAdminService)
+  async approveApplication(applicationId: string, payment: { amount: number; reference?: string }, financeUserId: string) {
+    return await schoolAdminService.financeApproveApplication(applicationId, payment, financeUserId);
   }
 }
 

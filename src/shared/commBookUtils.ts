@@ -21,10 +21,10 @@ export const performCommunicationCleanup = async () => {
     // If today is Friday, Sunday's record is the new one.
     // If today is Thursday, Sunday's record is the one to be deleted tonight.
     
-    // Logic: Delete records where week_ending is more than 6 days old.
-    // This ensures that a record posted for Sunday stays through the following Thursday.
+    // Logic: Delete records where week_ending is 5 or more days old.
+    // This ensures that a record posted for Sunday stays through the following Thursday and is deleted on Friday morning.
     await pool.query(
-      "DELETE FROM communication_logs WHERE week_ending < CURRENT_DATE - INTERVAL '6 days'"
+      "DELETE FROM communication_logs WHERE week_ending <= CURRENT_DATE - INTERVAL '5 days'"
     );
   } catch (err) {
     console.error('[commBookUtils] Cleanup failed:', err);
@@ -35,5 +35,5 @@ export const performCommunicationCleanup = async () => {
  * Returns a filter for the active communication log window.
  */
 export const getActiveCommLogSQL = () => {
-  return "week_ending >= CURRENT_DATE - INTERVAL '6 days'";
+  return "week_ending > CURRENT_DATE - INTERVAL '5 days'";
 };
