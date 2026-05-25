@@ -19,6 +19,7 @@ import clinicRoutes from './routes/clinicRoutes';
 import libraryRoutes from './routes/libraryRoutes';
 import loanRoutes from './routes/loan.routes';
 import payrollRoutes from './routes/payroll.routes';
+import scheduleRoutes from './routes/schedule.routes';
 
 const app = express();
 
@@ -93,6 +94,7 @@ app.use('/api/clinic', clinicRoutes);
 app.use('/api/library', libraryRoutes);
 app.use('/api/loans', loanRoutes);
 app.use('/api/payroll', payrollRoutes);
+app.use('/api/schedule', scheduleRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({

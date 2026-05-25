@@ -7,7 +7,6 @@ import {
   validateAndFormatPhoneNumber,
   validateFileSize,
 } from '../utils/validation';
-import { deleteUploadedFile } from '../middleware/upload';
 import logger from '../utils/logger';
 
 class SchoolAdminController {
@@ -354,7 +353,208 @@ class SchoolAdminController {
   }
 
   // Student Application Management
+  // Student Application Management
+  async createPendingApplication(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const userId = req.user!.id;
+
+      // Extract form data - handle both string and FormData inputs
+      const extractField = (field: string): string => {
+        const value = req.body[field];
+        // Handle various input types (string, null, undefined)
+        if (value === null || value === undefined || value === '') {
+          return '';
+        }
+        return String(value).trim();
+      };
+
+      const name = extractField('name');
+      const digital_id = extractField('digital_id');
+      const dob = extractField('dob');
+      const gender = extractField('gender');
+      const email = extractField('email');
+      const parentName = extractField('parentName');
+      const parentPhone = extractField('parentPhone');
+      const address = extractField('address');
+      const previousSchool = extractField('previousSchool');
+      const grade = extractField('grade');
+      const bloodGroup = extractField('bloodGroup');
+      const allergies = extractField('allergies');
+      const chronicConditions = extractField('chronicConditions');
+      const medications = extractField('medications');
+      const notes = extractField('notes');
+
+      logger.debug('Received application data:', {
+        name,
+        parentName,
+        parentPhone,
+        grade,
+        hasFile: !!req.file,
+        fileName: req.file?.filename,
+      });
+
+      // Prepare form data for validation
+      const formData = {
+        name,
+        digital_id,
+        dob,
+        gender,
+        email,
+        parentName,
+        parentPhone,
+        address,
+        previousSchool,
+        grade,
+        bloodGroup,
+        allergies,
+        chronicConditions,
+        medications,
+      };
+
+      // Validate all required fields
+      const validation = validateRegistrationForm(formData);
+      if (!validation.isValid) {
+        logger.warn('Validation failed:', { errors: validation.errors, formData });
+        res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: validation.errors,
+        });
+        return;
+      }
+
+      // Validate and format phone number
+      const phoneValidation = validateAndFormatPhoneNumber(parentPhone);
+      if (!phoneValidation.isValid) {
+        logger.warn('Phone validation failed:', phoneValidation);
+        res.status(400).json({
+          success: false,
+          message: 'Invalid phone number',
+          errors: {
+            parentPhone: phoneValidation.error,
+          },
+        });
+        return;
+      }
+
+      // Ensure branchId exists
+      if (!branchId) {
+        logger.error('User missing branch_id:', { userId });
+        res.status(400).json({
+          success: false,
+          message: 'User branch not found',
+          errors: { branchId: 'Branch ID is required' },
+        });
+        return;
+      }
+
+      // Prepare application data with formatted phone
+      let applicationData: any = {
+        branchId,
+        applicantName: name,
+        applicantEmail: email || null,
+        applicantPhone: phoneValidation.formatted,
+        digitalId: digital_id || null,
+        dob: dob || null,
+        gender: gender || null,
+        parentName,
+        parentPhone: phoneValidation.formatted,
+        address: address || null,
+        previousSchool: previousSchool || null,
+        gradeApplying: grade,
+        lastGradeCompleted: grade || null,
+        bloodGroup: bloodGroup || null,
+        allergies: allergies || null,
+        chronicConditions: chronicConditions || null,
+        currentMedications: medications || null,
+        notes: notes || null,
+        createdBy: userId,
+      };
+
+      // Handle file upload if provided
+      if (req.file) {
+        logger.info('Processing file upload:', {
+          originalname: req.file.originalname,
+          size: req.file.size,
+          mimetype: req.file.mimetype,
+        });
+
+        // Validate file size
+        const fileSizeValidation = validateFileSize(req.file.size);
+        if (!fileSizeValidation.isValid) {
+          logger.warn('File size validation failed:', fileSizeValidation.error);
+          res.status(400).json({
+            success: false,
+            message: 'File upload failed',
+            errors: {
+              transcriptFile: fileSizeValidation.error,
+            },
+          });
+          return;
+        }
+
+        // Store memory buffer and mime type for database blob storage
+        applicationData.transcriptData = req.file.buffer;
+        applicationData.transcriptMimeType = req.file.mimetype;
+        applicationData.transcriptFileName = req.file.originalname;
+        applicationData.transcriptFileSize = req.file.size;
+        applicationData.transcriptUploadedAt = new Date();
+
+        logger.info('File metadata prepared for database:', {
+          transcriptFileName: applicationData.transcriptFileName,
+          transcriptFileSize: applicationData.transcriptFileSize,
+          transcriptMimeType: applicationData.transcriptMimeType
+        });
+      } else {
+        logger.debug('No file in request - submission without transcript');
+      }
+
+      // Create the application
+      logger.info('Creating pending application:', {
+        applicantName: applicationData.applicantName,
+        grade: applicationData.gradeApplying,
+        branchId: applicationData.branchId,
+        hasFile: !!req.file,
+      });
+
+      const application = await schoolAdminService.createPendingApplication(applicationData);
+
+      logger.info(`✅ Application created successfully:`, {
+        id: application.id,
+        applicantName: application.applicant_name,
+        status: application.status,
+        transcriptFile: application.transcript_file_name || 'No file',
+      });
+
+      res.status(201).json({
+        success: true,
+        data: application,
+        message: 'Application submitted successfully',
+      });
+    } catch (error) {
+      logger.error('Error creating pending application:', {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : null,
+      });
+
+      next(error);
+    }
+  }
+
+  async getPendingApplications(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { status } = req.query as { status?: string };
+      const applications = await schoolAdminService.getPendingApplications(branchId!, status);
+      res.json({ success: true, data: applications });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Public endpoint for landing page submissions (no auth)
+
   async createPublicPendingApplication(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       // Use same validation and file handling as authenticated route but determine branchId automatically
@@ -380,7 +580,6 @@ class SchoolAdminController {
         address,
         previousSchool,
         grade,
-        feeStatus,
         bloodGroup,
         allergies,
         chronicConditions,
@@ -399,7 +598,6 @@ class SchoolAdminController {
         address,
         previousSchool,
         grade,
-        feeStatus,
         bloodGroup,
         allergies,
         chronicConditions,
@@ -433,7 +631,6 @@ class SchoolAdminController {
         previousSchool: previousSchool || null,
         gradeApplying: grade,
         lastGradeCompleted: grade || null,
-        registrationFeeStatus: feeStatus || 'Pending',
         bloodGroup: bloodGroup || null,
         allergies: allergies || null,
         chronicConditions: chronicConditions || null,
@@ -446,16 +643,13 @@ class SchoolAdminController {
         const file = (req as any).file;
         const fileSizeValidation = validateFileSize(file.size);
         if (!fileSizeValidation.isValid) {
-          deleteUploadedFile(file.path);
           res.status(400).json({ success: false, message: 'File upload failed', errors: { transcriptFile: fileSizeValidation.error } });
           return;
         }
-        try {
-          applicationData.transcriptFilePath = path.relative(process.cwd(), file.path);
-        } catch (err) {
-          applicationData.transcriptFilePath = file.path;
-        }
-        applicationData.transcriptFileName = file.filename;
+        // Store memory buffer and mime type for database blob storage
+        applicationData.transcriptData = file.buffer;
+        applicationData.transcriptMimeType = file.mimetype;
+        applicationData.transcriptFileName = file.originalname;
         applicationData.transcriptFileSize = file.size;
         applicationData.transcriptUploadedAt = new Date();
       }
@@ -465,7 +659,6 @@ class SchoolAdminController {
       return;
     } catch (error) {
       logger.error('Error in createPublicPendingApplication:', error instanceof Error ? error.message : error);
-      if ((req as any).file) deleteUploadedFile((req as any).file.path);
       next(error);
     }
   }
@@ -484,6 +677,27 @@ class SchoolAdminController {
         message: 'Application status updated successfully'
       });
     } catch (error) {
+      next(error);
+    }
+  }
+
+  // Download/View Application Transcript
+  async getApplicationTranscript(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { id } = req.params;
+
+      const transcript = await schoolAdminService.getApplicationTranscript(id, branchId!);
+      if (!transcript || !transcript.transcript_data) {
+        res.status(404).json({ success: false, message: 'Transcript not found' });
+        return;
+      }
+
+      res.setHeader('Content-Type', transcript.transcript_mime_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${transcript.transcript_file_name}"`);
+      res.send(transcript.transcript_data);
+    } catch (error) {
+      logger.error('Error fetching application transcript:', error instanceof Error ? error.message : error);
       next(error);
     }
   }

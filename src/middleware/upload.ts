@@ -16,18 +16,8 @@ const DOCUMENTS_DIR = path.join(UPLOADS_ROOT, 'documents');
   }
 });
 
-// Configure storage for transcripts
-const transcriptStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, TRANSCRIPTS_DIR);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = `${randomUUID()}-${Date.now()}`;
-    const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext);
-    cb(null, `${name}-${uniqueSuffix}${ext}`);
-  },
-});
+// Configure storage for transcripts (Use memory storage for database `BYTEA` storage)
+const transcriptStorage = multer.memoryStorage();
 
 // File filter for transcripts (accept PDF, images)
 const transcriptFileFilter = (

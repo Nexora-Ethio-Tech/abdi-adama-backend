@@ -581,9 +581,11 @@ class SchoolAdminService {
       `INSERT INTO pending_applications (
         branch_id,
         applicant_name,
+        name,
         applicant_email,
+        email,
         applicant_phone,
-        digital_id,
+        phone,
         dob,
         gender,
         parent_name,
@@ -591,47 +593,43 @@ class SchoolAdminService {
         address,
         previous_school,
         grade_applying,
-        last_grade_completed,
-        registration_fee_status,
         blood_group,
         allergies,
         chronic_conditions,
         current_medications,
-        transcript_file_path,
+        transcript_data,
+        transcript_mime_type,
         transcript_file_name,
         transcript_file_size,
-        transcript_uploaded_at,
         status,
         notes,
-        created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+        created_by,
+        date
+      ) VALUES ($1, $2, $2, $3, $3, $4, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, CURRENT_DATE)
       RETURNING *`,
       [
         data.branchId,
-        data.applicantName,
+        data.applicantName || 'Unknown Applicant',
         data.applicantEmail || null,
-        data.applicantPhone || null,
-        data.digitalId || null,
-        data.dob || null,
+        data.applicantPhone || '0000000000',
+        data.dob || '2000-01-01',
         data.gender || null,
-        data.parentName || null,
+        data.parentName || 'Unknown Parent',
         data.parentPhone || null,
         data.address || null,
         data.previousSchool || null,
         data.gradeApplying,
-        data.lastGradeCompleted || null,
-        data.registrationFeeStatus || 'Pending',
         data.bloodGroup || null,
         data.allergies || null,
         data.chronicConditions || null,
         data.currentMedications || null,
-        data.transcriptFilePath || null,
+        data.transcriptData || null,
+        data.transcriptMimeType || null,
         data.transcriptFileName || null,
         data.transcriptFileSize || null,
-        data.transcriptUploadedAt || null,
         'pending',
         data.notes || null,
-        data.createdBy
+        data.createdBy || null
       ]
     );
     return result.rows[0];
@@ -647,6 +645,42 @@ class SchoolAdminService {
     if (first.rows.length > 0) return first.rows[0].id;
     return null;
   }
+
+  // Get application transcript file binary data
+  async getApplicationTranscript(applicationId: string, branchId: string) {
+    const result = await pool.query(
+      `SELECT transcript_data, transcript_mime_type, transcript_file_name 
+       FROM pending_applications 
+       WHERE id = $1 AND branch_id = $2`,
+      [applicationId, branchId]
+    );
+    if (result.rows.length === 0) return null;
+    return result.rows[0];
+  }
+
+  async getPendingApplications(branchId: string, status?: string) {
+    let query = `
+      SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, dob, gender,
+             parent_name, parent_phone, address, previous_school, grade_applying,
+             blood_group, allergies, chronic_conditions, current_medications, 
+             transcript_mime_type, transcript_file_name, transcript_file_size, 
+             status, notes, created_at, updated_at, created_by, finance_status, finance_user_id, 
+             finance_approved_at, payment_amount, payment_reference, student_user_id, parent_user_id, 
+             registration_completed_at
+      FROM pending_applications WHERE branch_id = $1`;
+    const params: any[] = [branchId];
+
+    if (status) {
+      query += ' AND status = $2';
+      params.push(status);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
 
   async updateApplicationStatus(applicationId: string, status: string, reviewerId?: string) {
     // If being passed to finance, record reviewer
@@ -679,7 +713,15 @@ class SchoolAdminService {
 
   // Finance: get applications assigned for finance review
   async getApplicationsForFinance(branchId: string, status?: string) {
-    let query = 'SELECT * FROM pending_applications WHERE branch_id = $1';
+    let query = `
+      SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, dob, gender,
+             parent_name, parent_phone, address, previous_school, grade_applying,
+             blood_group, allergies, chronic_conditions, current_medications, 
+             transcript_mime_type, transcript_file_name, transcript_file_size, 
+             status, notes, created_at, updated_at, created_by, finance_status, finance_user_id, 
+             finance_approved_at, payment_amount, payment_reference, student_user_id, parent_user_id, 
+             registration_completed_at
+      FROM pending_applications WHERE branch_id = $1`;
     const params: any[] = [branchId];
 
     if (status) {
