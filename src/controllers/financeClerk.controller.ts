@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import financeClerkService from '../services/financeClerk.service';
+import schoolAdminService from '../services/schoolAdmin.service';
 
 class FinanceClerkController {
   // Record payment
@@ -127,17 +128,43 @@ class FinanceClerkController {
     }
   }
 
+  // Get all drivers in the branch
+  async getTransportDrivers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+
+      const drivers = await schoolAdminService.getBranchUsers(branchId!, 'driver');
+
+      res.json({ success: true, data: drivers });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get financial policies for transport fee lookup
+  async getTransportPolicies(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+
+      const policies = await financeClerkService.getTransportPolicies(branchId!);
+
+      res.json({ success: true, data: policies });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Assign or change a student's driver/route
   async assignTransportStudent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
       const verifiedBy = req.user!.name;
-      const { studentId, routeId, transportFee } = req.body;
+      const { studentId, driverId, transportFee } = req.body;
 
       const result = await financeClerkService.assignTransportStudent({
         branchId: branchId!,
         studentId,
-        routeId,
+        driverId,
         transportFee: Number(transportFee),
         verifiedBy
       });

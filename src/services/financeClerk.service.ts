@@ -182,11 +182,24 @@ class FinanceClerkService {
     return result.rows;
   }
 
+  // Get financial policies for transport fee lookup
+  async getTransportPolicies(branchId: string) {
+    const result = await pool.query(
+      `SELECT grade_level, monthly_tuition, registration_fee, bus_fee, penalty_rate, academic_year, branch_id
+       FROM financial_policies
+       WHERE branch_id = $1
+       ORDER BY academic_year DESC, grade_level`,
+      [branchId]
+    );
+
+    return result.rows;
+  }
+
   // Assign or change a student's transport route and fee
   async assignTransportStudent(data: {
     branchId: string;
     studentId: string;
-    routeId: string;
+    driverId: string;
     transportFee: number;
     verifiedBy: string;
   }) {
@@ -207,22 +220,38 @@ class FinanceClerkService {
         throw new Error('Student not found');
       }
 
-      const routeResult = await client.query(
-        `SELECT r.id, r.name, drv.name AS driver_name
-         FROM routes r
-         JOIN users drv ON drv.id = r.driver_id
-         WHERE r.id = $1 AND r.branch_id = $2`,
-        [data.routeId, data.branchId]
+      const driverResult = await client.query(
+        `SELECT id, name, digital_id
+         FROM users
+         WHERE id = $1 AND branch_id = $2 AND role = 'driver'`,
+        [data.driverId, data.branchId]
+      );
+
+      if (driverResult.rows.length === 0) {
+        throw new Error('Driver not found');
+      }
+
+      let routeResult = await client.query(
+        `SELECT id, name
+         FROM routes
+         WHERE driver_id = $1 AND branch_id = $2
+         LIMIT 1`,
+        [data.driverId, data.branchId]
       );
 
       if (routeResult.rows.length === 0) {
-        throw new Error('Driver route not found');
+        routeResult = await client.query(
+          `INSERT INTO routes (name, driver_id, branch_id)
+           VALUES ($1, $2, $3)
+           RETURNING id, name`,
+          [`Transport - ${driverResult.rows[0].name}`, data.driverId, data.branchId]
+        );
       }
 
       await client.query('DELETE FROM student_routes WHERE student_id = $1', [data.studentId]);
       await client.query(
         'INSERT INTO student_routes (student_id, route_id) VALUES ($1, $2)',
-        [data.studentId, data.routeId]
+        [data.studentId, routeResult.rows[0].id]
       );
 
       await client.query(
@@ -241,7 +270,7 @@ class FinanceClerkService {
         studentName: studentResult.rows[0].name,
         routeId: routeResult.rows[0].id,
         routeName: routeResult.rows[0].name,
-        driverName: routeResult.rows[0].driver_name,
+        driverName: driverResult.rows[0].name,
         transportFee: Number(data.transportFee),
       };
     } catch (error) {
