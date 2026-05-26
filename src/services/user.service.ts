@@ -13,7 +13,7 @@ const PIN_BASED_ROLES = ['teacher', 'student', 'parent', 'finance-clerk', 'libra
 class UserService {
   async createUser(userData: CreateUserDTO, createdBy: string): Promise<CreateUserResult> {
     const client: PoolClient = await pool.connect();
-    
+
     try {
       await client.query('BEGIN');
 
@@ -54,7 +54,7 @@ class UserService {
       }
 
       const digitalId = await generateDigitalId(role, branchName);
-      
+
       // Use 4-digit PIN for students, teachers, parents, and staff
       // Use complex password for admin roles
       const userPassword = password || (PIN_BASED_ROLES.includes(role) ? generate4DigitPIN() : generateRandomPassword());
@@ -159,7 +159,7 @@ class UserService {
 
   async deleteUser(userId: string, deletedBy: string): Promise<{ message: string }> {
     const client: PoolClient = await pool.connect();
-    
+
     try {
       await client.query('BEGIN');
 

@@ -338,63 +338,63 @@ export const postAlert = async (req: AuthRequest, res: Response) => {
   const driver_id = req.user?.user_id;
   const driver_name = (req.user as any)?.name || 'Driver';
 
-if (!driver_id) {
-  sendError(res, 'Authentication error: driver_id not found.', 401);
-  return;
-}
-
-if (!message || message.trim().length === 0) {
-  return sendError(res, 'Alert message is required.', 400);
-}
-
-try {
-  // Create the notification
-  const notification = await notificationService.createNotification(
-    driver_id,
-    driver_name,
-    message,
-    target_route || null
-  );
-
-  // Broadcast to relevant parties:
-  // 1. Students assigned to this driver's route
-  // 2. Parents of those students
-  // 3. Branch admins & vice principals
-  const routeResult = await pool.query(
-    'SELECT id FROM routes WHERE driver_id = $1',
-    [driver_id]
-  );
-
-  if (routeResult.rows.length > 0) {
-    const route_id = routeResult.rows[0].id;
-
-    // Get students on this route
-    const studentResult = await pool.query(
-      `SELECT DISTINCT s.user_id FROM student_routes sr
-         JOIN students s ON s.id = sr.student_id
-         WHERE sr.route_id = $1`,
-      [route_id]
-    );
-
-    const studentUserIds = studentResult.rows.map(r => r.user_id);
-
-    // Broadcast alert to assigned students, their parents, and school admin only
-    const broadcastPayload = {
-      type: 'DRIVER_ALERT',
-      id: notification.id,
-      driver_name: driver_name,
-      message: message,
-      created_at: notification.created_at,
-    };
-
-    const allowedRoles = ['Student', 'Parent', 'SchoolAdmin'];
-    broadcast('DRIVER_ALERT', broadcastPayload, req.user?.branch_id || '1', allowedRoles, studentUserIds);
+  if (!driver_id) {
+    sendError(res, 'Authentication error: driver_id not found.', 401);
+    return;
   }
 
-  return sendSuccess(res, notification, 'Alert posted successfully.', 201);
-} catch (err: any) {
-  return sendError(res, 'Failed to post alert.', 500, err.message);
-}
+  if (!message || message.trim().length === 0) {
+    return sendError(res, 'Alert message is required.', 400);
+  }
+
+  try {
+    // Create the notification
+    const notification = await notificationService.createNotification(
+      driver_id,
+      driver_name,
+      message,
+      target_route || null
+    );
+
+    // Broadcast to relevant parties:
+    // 1. Students assigned to this driver's route
+    // 2. Parents of those students
+    // 3. Branch admins & vice principals
+    const routeResult = await pool.query(
+      'SELECT id FROM routes WHERE driver_id = $1',
+      [driver_id]
+    );
+
+    if (routeResult.rows.length > 0) {
+      const route_id = routeResult.rows[0].id;
+
+      // Get students on this route
+      const studentResult = await pool.query(
+        `SELECT DISTINCT s.user_id FROM student_routes sr
+         JOIN students s ON s.id = sr.student_id
+         WHERE sr.route_id = $1`,
+        [route_id]
+      );
+
+      const studentUserIds = studentResult.rows.map(r => r.user_id);
+
+      // Broadcast alert to assigned students, their parents, and school admin only
+      const broadcastPayload = {
+        type: 'DRIVER_ALERT',
+        id: notification.id,
+        driver_name: driver_name,
+        message: message,
+        created_at: notification.created_at,
+      };
+
+      const allowedRoles = ['Student', 'Parent', 'SchoolAdmin'];
+      broadcast('DRIVER_ALERT', broadcastPayload, req.user?.branch_id || '1', allowedRoles, studentUserIds);
+    }
+
+    return sendSuccess(res, notification, 'Alert posted successfully.', 201);
+  } catch (err: any) {
+    return sendError(res, 'Failed to post alert.', 500, err.message);
+  }
 };
 
 /**

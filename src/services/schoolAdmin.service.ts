@@ -740,7 +740,7 @@ class SchoolAdminService {
     const client = await pool.connect();
     try {
       const { generateCredentials } = require('../utils/credentialGenerator');
-      
+
       await client.query('BEGIN');
 
       const appRes = await client.query('SELECT * FROM pending_applications WHERE id = $1 FOR UPDATE', [applicationId]);
@@ -795,12 +795,12 @@ class SchoolAdminService {
          WHERE id = $12 
          RETURNING *`,
         [
-          'payment-confirmed', 
-          'approved', 
-          financeUserId, 
-          payment.amount, 
-          payment.reference || null, 
-          studentCreate.user.id, 
+          'payment-confirmed',
+          'approved',
+          financeUserId,
+          payment.amount,
+          payment.reference || null,
+          studentCreate.user.id,
           parentCreate.user.id,
           credentials.studentId,
           credentials.studentPassword,
