@@ -17,7 +17,7 @@ class UserService {
     try {
       await client.query('BEGIN');
 
-      const { name, email, role, branchId, password, username, grade } = userData;
+      const { name, email, role, branchId, password, username, grade, staffProfile } = userData;
 
       // Proactively check for duplicate email
       const emailCheck = await client.query(
@@ -66,10 +66,10 @@ class UserService {
       const initialStatus = autoApproveRoles.includes(role) ? USER_STATUS.APPROVED : USER_STATUS.PENDING;
 
       const userResult = await client.query<User>(
-        `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, created_at`,
-        [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true]
+        `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active, staff_profile)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, staff_profile, created_at`,
+        [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true, staffProfile ? JSON.stringify(staffProfile) : null]
       );
 
       const user = userResult.rows[0];
@@ -188,10 +188,9 @@ class UserService {
 
   async getUsers(filters: UserFilters = {}): Promise<User[]> {
     try {
-      let query = `
-        SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role, 
-               u.branch_id, u.status, u.is_active, u.created_at,
-               b.name as branch_name
+      let query = `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role,
+           u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at,
+           b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON b.id = u.branch_id
         WHERE 1=1
@@ -232,7 +231,7 @@ class UserService {
     try {
       const result = await pool.query<User>(
         `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role, 
-                u.branch_id, u.status, u.is_active, u.created_at, u.updated_at,
+          u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.updated_at,
                 b.name as branch_name
          FROM users u
          LEFT JOIN branches b ON b.id = u.branch_id

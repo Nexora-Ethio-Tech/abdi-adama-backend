@@ -32,6 +32,7 @@ export interface User {
   status: UserStatus;
   is_active: boolean;
   is_branch_auditor: boolean;
+  staff_profile?: Record<string, any> | null;
   created_at: Date;
   updated_at: Date;
   branch_name?: string;
@@ -56,6 +57,7 @@ export interface CreateUserDTO {
   password?: string;
   username?: string;
   grade?: string;
+  staffProfile?: Record<string, any>;
 }
 
 export interface LoginDTO {

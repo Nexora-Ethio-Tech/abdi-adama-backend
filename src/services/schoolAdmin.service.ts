@@ -12,7 +12,7 @@ class SchoolAdminService {
   async getBranchUsers(branchId: string, role?: string, status?: string) {
     let query = `
       SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role, 
-             u.branch_id, u.status, u.is_active, u.created_at, u.updated_at,
+            u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.updated_at,
              b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
@@ -43,7 +43,7 @@ class SchoolAdminService {
   async getUserById(userId: string, branchId: string) {
     const result = await pool.query(
       `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role,
-              u.branch_id, u.status, u.is_active, u.created_at, u.updated_at,
+              u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.updated_at,
               b.name as branch_name
        FROM users u
        LEFT JOIN branches b ON u.branch_id = b.id
