@@ -16,7 +16,7 @@ router.use(authenticate);
 const recordPaymentSchema = Joi.object({
   studentId: Joi.string().uuid().required(),
   amount: Joi.number().positive().required(),
-  type: Joi.string().required(),
+  type: Joi.alternatives().try(Joi.string(), Joi.array().items(Joi.string().required())).required(),
   date: Joi.date().iso().required()
 });
 
@@ -29,7 +29,7 @@ const updateFeeStatusSchema = Joi.object({
 });
 
 // Role Guard segments
-const clerkOnly = roleGuard([UserRole.FINANCE_CLERK]);
+const clerkOnly = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]);
 const readWriteFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]);
 const readOnlyFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]);
 

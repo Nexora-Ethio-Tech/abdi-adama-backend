@@ -9,11 +9,12 @@ class FinanceClerkController {
       const { studentId, amount, type, date } = req.body;
       const verifiedBy = req.user!.name;
       const branchId = req.user!.branch_id;
+      const normalizedType = Array.isArray(type) ? type.join(', ') : type;
 
       const payment = await financeClerkService.recordPayment({
         studentId,
         amount,
-        type,
+        type: normalizedType,
         date,
         verifiedBy,
         branchId: branchId!

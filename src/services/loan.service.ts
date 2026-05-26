@@ -25,13 +25,14 @@ class LoanService {
     }
     const basicSalary = Number(profileCheck.rows[0].basic_salary);
 
-    // 2. Validate no existing active loan
+    // 2. Validate no existing pending/approved/active loan
     const activeCheck = await pool.query(
-      `SELECT id, amount, remaining_balance FROM loans WHERE employee_id = $1 AND status = 'active'`,
+      `SELECT id, amount, remaining_balance, status FROM loans WHERE employee_id = $1 AND status IN ('pending', 'approved', 'active')`,
       [employeeId]
     );
     if (activeCheck.rows.length > 0) {
-      throw new Error(`Employee already has an active loan of ${activeCheck.rows[0].amount} ETB (Remaining balance: ${activeCheck.rows[0].remaining_balance} ETB). Repay it first.`);
+      const existing = activeCheck.rows[0];
+      throw new Error(`Employee already has a loan request in progress (${existing.status}). Existing amount: ${existing.amount} ETB.`);
     }
 
     // 3. Fetch global settings for max duration and deduction percentage
@@ -41,10 +42,10 @@ class LoanService {
     // 4. Calculate monthly deduction = basic_salary * deductionPercentage / 100
     const monthlyDeduction = parseFloat(((basicSalary * deductionPercentage) / 100).toFixed(2));
 
-    // 5. Create loan record
+    // 5. Create loan record in pending status for auditor review
     const result = await pool.query(
       `INSERT INTO loans (employee_id, amount, remaining_balance, monthly_deduction, max_months, status, issued_by, issued_at, notes)
-       VALUES ($1, $2, $2, $3, $4, 'active', $5, NOW(), $6)
+       VALUES ($1, $2, $2, $3, $4, 'pending', $5, NOW(), $6)
        RETURNING *`,
       [employeeId, amount, monthlyDeduction, maxMonths, issuedBy, notes || null]
     );
@@ -56,8 +57,8 @@ class LoanService {
        VALUES ($1, $2, $3, 'loan', FALSE, NOW())`,
       [
         employeeId,
-        'Loan Issued Successfully',
-        `A loan of ${amount} ETB has been issued to you. Monthly deductions of ${monthlyDeduction} ETB will be applied to your salary slips until fully repaid.`
+        'Loan Request Submitted',
+        `A loan request of ${amount} ETB has been submitted and is pending auditor approval. You will be notified when the request is approved or rejected.`
       ]
     );
 
@@ -73,6 +74,99 @@ class LoanService {
         }
       }
     }
+
+    return loan;
+  }
+
+  async approveLoan(loanId: string, auditorId: string) {
+    const loanCheck = await pool.query(`SELECT status, employee_id, amount FROM loans WHERE id = $1`, [loanId]);
+    if (loanCheck.rows.length === 0) {
+      throw new Error('Loan not found.');
+    }
+    if (loanCheck.rows[0].status !== 'pending') {
+      throw new Error('Only pending loans can be approved.');
+    }
+
+    const result = await pool.query(
+      `UPDATE loans
+       SET status = 'approved', audited_by = $1, audited_at = NOW(), rejection_reason = NULL
+       WHERE id = $2
+       RETURNING *`,
+      [auditorId, loanId]
+    );
+    const loan = result.rows[0];
+
+    await pool.query(
+      `INSERT INTO staff_notifications (user_id, title, message, type, is_read, created_at)
+       VALUES ($1, $2, $3, 'loan', FALSE, NOW())`,
+      [
+        loanCheck.rows[0].employee_id,
+        'Loan Request Approved',
+        `Your loan request of ${loanCheck.rows[0].amount} ETB has been approved by the auditor and is awaiting payment by finance.`
+      ]
+    );
+
+    return loan;
+  }
+
+  async rejectLoan(loanId: string, auditorId: string, reason?: string) {
+    const loanCheck = await pool.query(`SELECT status, employee_id, amount FROM loans WHERE id = $1`, [loanId]);
+    if (loanCheck.rows.length === 0) {
+      throw new Error('Loan not found.');
+    }
+    if (loanCheck.rows[0].status !== 'pending') {
+      throw new Error('Only pending loans can be rejected.');
+    }
+
+    const result = await pool.query(
+      `UPDATE loans
+       SET status = 'rejected', audited_by = $1, audited_at = NOW(), rejection_reason = $2, completed_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [auditorId, reason || 'Rejected by auditor', loanId]
+    );
+    const loan = result.rows[0];
+
+    await pool.query(
+      `INSERT INTO staff_notifications (user_id, title, message, type, is_read, created_at)
+       VALUES ($1, $2, $3, 'loan', FALSE, NOW())`,
+      [
+        loanCheck.rows[0].employee_id,
+        'Loan Request Rejected',
+        `Your loan request of ${loanCheck.rows[0].amount} ETB has been rejected by the auditor. ${reason || ''}`.trim()
+      ]
+    );
+
+    return loan;
+  }
+
+  async payLoan(loanId: string, paidBy: string) {
+    const loanCheck = await pool.query(`SELECT status, employee_id, amount FROM loans WHERE id = $1`, [loanId]);
+    if (loanCheck.rows.length === 0) {
+      throw new Error('Loan not found.');
+    }
+    if (loanCheck.rows[0].status !== 'approved') {
+      throw new Error('Only approved loans can be marked as paid.');
+    }
+
+    const result = await pool.query(
+      `UPDATE loans
+       SET status = 'active', paid_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [loanId]
+    );
+    const loan = result.rows[0];
+
+    await pool.query(
+      `INSERT INTO staff_notifications (user_id, title, message, type, is_read, created_at)
+       VALUES ($1, $2, $3, 'loan', FALSE, NOW())`,
+      [
+        loanCheck.rows[0].employee_id,
+        'Loan Approved and Paid',
+        `Your approved loan of ${loanCheck.rows[0].amount} ETB has been paid out by finance and is now active. Monthly deductions will begin on your next payroll.`
+      ]
+    );
 
     return loan;
   }

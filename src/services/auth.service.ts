@@ -3,18 +3,8 @@ import pool from '../config/database';
 import { hashPassword, comparePassword } from '../utils/password';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import logger from '../utils/logger';
+import { normalizeRole } from '../utils/roleUtils';
 import { User, JWTPayload } from '../types';
-
-const normalizeUserRole = (role: string | null | undefined): string => {
-  if (!role) return '';
-  let normalized = role.toString().toLowerCase().trim().replace(/[_\s]+/g, '-');
-  if (normalized === 'clinicadmin') return 'clinic-admin';
-  if (normalized === 'financeadmin') return 'finance-clerk';
-  if (normalized === 'viceprincipal') return 'vice-principal';
-  if (normalized === 'schooladmin') return 'school-admin';
-  if (normalized === 'superadmin') return 'super-admin';
-  return normalized;
-};
 
 class AuthService {
   async login(emailOrDigitalId: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
@@ -41,7 +31,7 @@ class AuthService {
       }
 
       const user: any = result.rows[0];
-      user.role = normalizeUserRole(user.role);
+      user.role = normalizeRole(user.role) || user.role;
 
       if (!user.password_hash) {
         const error: any = new Error('Password is not set for this account. Please reset your password or contact support.');
@@ -82,6 +72,11 @@ class AuthService {
         throw error;
       }
 
+      if (!user.role) {
+        const error: any = new Error('Invalid user role');
+        error.statusCode = 500;
+        throw error;
+      }
       const payload: any = {
         userId: user.id,
         user_id: user.id,
@@ -97,7 +92,6 @@ class AuthService {
       const refreshToken = generateRefreshToken(payload);
 
       delete user.password_hash;
-      // Ensure identity_id is included in user object returned to frontend
       user.identity_id = user.id;
 
       logger.info(`User logged in: ${user.email} (${user.digital_id}) - ${user.role}`);
@@ -126,12 +120,16 @@ class AuthService {
       let user: any = null;
       if (result.rows.length > 0) {
         user = result.rows[0];
-        user.role = normalizeUserRole(user.role);
+        user.role = normalizeRole(user.role) || user.role;
       } else {
         throw new Error('Invalid refresh token');
       }
 
       if (!user || !user.is_active) {
+        throw new Error('Invalid refresh token');
+      }
+
+      if (!user.role) {
         throw new Error('Invalid refresh token');
       }
 
@@ -170,8 +168,11 @@ class AuthService {
 
       if (result.rows.length > 0) {
         const user: any = result.rows[0];
-        user.role = normalizeUserRole(user.role);
-        // Ensure identity_id is included
+        const normalizedRole = normalizeRole(user.role);
+        if (!normalizedRole) {
+          throw new Error('Invalid user role');
+        }
+        user.role = normalizedRole;
         user.identity_id = user.id;
         return user;
       }
