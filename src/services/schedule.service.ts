@@ -21,6 +21,13 @@ interface CourseFrequencyInput {
   sessionsPerWeek: number;
 }
 
+interface StructureRowInput {
+  classId: string;
+  teacherId: string;
+  subject: string;
+  sessionsPerWeek: number;
+}
+
 interface CourseInfo {
   courseId: string;
   courseName: string;
@@ -52,6 +59,23 @@ interface ScheduleEntry {
 // ─── Service ───────────────────────────────────────────────────────────────────
 
 class ScheduleService {
+
+  private async ensureScheduleStructureTable() {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS schedule_structure (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+        academic_year VARCHAR(20) NOT NULL,
+        class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+        subject VARCHAR(100) NOT NULL,
+        sessions_per_week INT NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(branch_id, academic_year, class_id, teacher_id, subject)
+      )
+    `);
+  }
 
   // ── Config CRUD ──────────────────────────────────────────────────────────────
 
@@ -182,6 +206,71 @@ class ScheduleService {
     return result.rows;
   }
 
+  // ── Timetable Structure CRUD ────────────────────────────────────────────────
+
+  async saveStructure(branchId: string, structures: StructureRowInput[], academicYear?: string) {
+    const year = academicYear || '2025/2026';
+    await this.ensureScheduleStructureTable();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      await client.query(
+        'DELETE FROM schedule_structure WHERE branch_id = $1 AND academic_year = $2',
+        [branchId, year]
+      );
+
+      for (const row of structures) {
+        const classCheck = await client.query(
+          'SELECT id FROM classes WHERE id = $1 AND branch_id = $2',
+          [row.classId, branchId]
+        );
+        if (classCheck.rows.length === 0) {
+          throw new Error(`Class not found for structure row: ${row.classId}`);
+        }
+
+        const teacherCheck = await client.query(
+          'SELECT id FROM teachers WHERE id = $1 AND branch_id = $2',
+          [row.teacherId, branchId]
+        );
+        if (teacherCheck.rows.length === 0) {
+          throw new Error(`Teacher not found for structure row: ${row.teacherId}`);
+        }
+
+        await client.query(
+          `INSERT INTO schedule_structure
+            (branch_id, academic_year, class_id, teacher_id, subject, sessions_per_week)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [branchId, year, row.classId, row.teacherId, row.subject, row.sessionsPerWeek]
+        );
+      }
+
+      await client.query('COMMIT');
+      return { count: structures.length };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getStructure(branchId: string, academicYear?: string) {
+    const year = academicYear || '2025/2026';
+    await this.ensureScheduleStructureTable();
+    const result = await pool.query(
+      `SELECT ss.*, c.name as class_name, c.section, u.name as teacher_name, u.digital_id as teacher_digital_id
+       FROM schedule_structure ss
+       JOIN classes c ON ss.class_id = c.id
+       JOIN teachers t ON ss.teacher_id = t.id
+       JOIN users u ON t.user_id = u.id
+       WHERE ss.branch_id = $1 AND ss.academic_year = $2
+       ORDER BY c.name, ss.subject, u.name`,
+      [branchId, year]
+    );
+    return result.rows;
+  }
+
   // ── Timetable Generation Engine ──────────────────────────────────────────────
 
   async generateTimetable(branchId: string, generatedBy: string, academicYear?: string) {
@@ -198,35 +287,46 @@ class ScheduleService {
     const distributeSubs = config.distribute_subjects;
     const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
-    // 2. Load courses with their teacher+class mappings and frequencies
-    const coursesResult = await pool.query(
-      `SELECT c.id as course_id, c.name as course_name, c.code as course_code,
-              c.teacher_id, u.name as teacher_name,
-              c.class_id, cl.name as class_name,
-              COALESCE(cf.sessions_per_week, 5) as sessions_per_week
-       FROM courses c
-       JOIN teachers t ON c.teacher_id = t.id
-       JOIN users u ON t.user_id = u.id
-       JOIN classes cl ON c.class_id = cl.id
-       LEFT JOIN course_frequency cf ON cf.course_id = c.id AND cf.academic_year = $2
-       WHERE t.branch_id = $1
-       ORDER BY c.name`,
-      [branchId, year]
-    );
+    // 2. Load timetable structure if defined, otherwise fall back to existing courses
+    const structureResult = await this.getStructure(branchId, year);
 
-    const courses: CourseInfo[] = coursesResult.rows.map((r: any) => ({
-      courseId: r.course_id,
-      courseName: r.course_name,
-      courseCode: r.course_code,
-      teacherId: r.teacher_id,
-      teacherName: r.teacher_name,
-      classId: r.class_id,
-      className: r.class_name,
-      sessionsPerWeek: parseInt(r.sessions_per_week)
-    }));
+    const courses: CourseInfo[] = structureResult.length > 0
+      ? structureResult.map((row: any) => ({
+          courseId: row.id,
+          courseName: row.subject,
+          courseCode: `${row.class_id}-${row.subject}`,
+          teacherId: row.teacher_id,
+          teacherName: row.teacher_name,
+          classId: row.class_id,
+          className: row.section ? `${row.class_name}${row.section}` : row.class_name,
+          sessionsPerWeek: parseInt(row.sessions_per_week)
+        }))
+      : (await pool.query(
+          `SELECT c.id as course_id, c.name as course_name, c.code as course_code,
+                  c.teacher_id, u.name as teacher_name,
+                  c.class_id, cl.name as class_name,
+                  COALESCE(cf.sessions_per_week, 5) as sessions_per_week
+           FROM courses c
+           JOIN teachers t ON c.teacher_id = t.id
+           JOIN users u ON t.user_id = u.id
+           JOIN classes cl ON c.class_id = cl.id
+           LEFT JOIN course_frequency cf ON cf.course_id = c.id AND cf.academic_year = $2
+           WHERE t.branch_id = $1
+           ORDER BY c.name`,
+          [branchId, year]
+        )).rows.map((r: any) => ({
+          courseId: r.course_id,
+          courseName: r.course_name,
+          courseCode: r.course_code,
+          teacherId: r.teacher_id,
+          teacherName: r.teacher_name,
+          classId: r.class_id,
+          className: r.class_name,
+          sessionsPerWeek: parseInt(r.sessions_per_week)
+        }));
 
     if (courses.length === 0) {
-      throw new Error('No courses found with teacher and class assignments. Please create courses first.');
+      throw new Error('No timetable structure or courses found. Please define timetable structure first.');
     }
 
     // 3. Load teacher unavailability

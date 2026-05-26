@@ -91,6 +91,33 @@ class ScheduleController {
     }
   }
 
+  // ── Timetable Structure ─────────────────────────────────────────────────────
+
+  async saveStructure(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id!;
+      const { structures, academicYear } = req.body;
+
+      const result = await scheduleService.saveStructure(branchId, structures, academicYear);
+
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      res.status(400).json({ success: false, error: { code: 'STRUCTURE_ERROR', message: error.message } });
+    }
+  }
+
+  async getStructure(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id!;
+      const academicYear = req.query.academicYear as string | undefined;
+      const structure = await scheduleService.getStructure(branchId, academicYear);
+
+      res.json({ success: true, data: structure });
+    } catch (error: any) {
+      res.status(400).json({ success: false, error: { code: 'STRUCTURE_ERROR', message: error.message } });
+    }
+  }
+
   // ── Timetable Generation ─────────────────────────────────────────────────────
 
   async generateTimetable(req: AuthRequest, res: Response): Promise<void> {

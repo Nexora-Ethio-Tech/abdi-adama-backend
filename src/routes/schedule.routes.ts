@@ -44,6 +44,18 @@ const courseFrequenciesSchema = Joi.object({
   academicYear: Joi.string().optional()
 });
 
+const structureSchema = Joi.object({
+  structures: Joi.array().items(
+    Joi.object({
+      classId: Joi.string().uuid().required(),
+      teacherId: Joi.string().uuid().required(),
+      subject: Joi.string().required(),
+      sessionsPerWeek: Joi.number().integer().min(1).max(10).required()
+    })
+  ).required(),
+  academicYear: Joi.string().optional()
+});
+
 const generateSchema = Joi.object({
   academicYear: Joi.string().optional()
 });
@@ -65,6 +77,10 @@ router.get('/teachers/constraints', scheduleController.getTeacherConstraints);
 // Course Frequencies
 router.put('/courses/frequencies', validate(courseFrequenciesSchema), scheduleController.saveCourseFrequencies);
 router.get('/courses/frequencies', scheduleController.getCourseFrequencies);
+
+// Timetable Structure
+router.post('/structure', validate(structureSchema), scheduleController.saveStructure);
+router.get('/structure', scheduleController.getStructure);
 
 // Generation
 router.post('/generate', validate(generateSchema), scheduleController.generateTimetable);
