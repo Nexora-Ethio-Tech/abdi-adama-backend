@@ -60,9 +60,9 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
          u.name AS "fullName",
          s.grade,
          CASE WHEN COUNT(sa.*) = 0 THEN 'N/A' ELSE ROUND(COUNT(sa.*) FILTER (WHERE sa.status = 'present')::numeric / COUNT(sa.*) * 100, 1)::text || '%' END AS attendance,
-         COALESCE('Rank: ' || ss.academic_rank::text, 'Pending Results') AS performance,
-         COALESCE(course_stats.course_count, 0) AS course_count,
-         COALESCE(course_stats.courses, '[]'::json) AS courses
+         COALESCE('Avg Grade: ' || ss.avg_grade::text, 'Pending Results') AS performance,
+         COALESCE(course_count, 0) AS course_count,
+         '[]'::json AS courses
        FROM parent_student ps
        JOIN students s ON ps.student_id = s.id
        JOIN users u ON s.user_id = u.id
@@ -71,16 +71,12 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
        LEFT JOIN (
          SELECT
            e.student_id,
-           COUNT(*) AS course_count,
-           json_agg(json_build_object('name', c.name, 'code', c.code, 'teacher', COALESCE(tu.name, 'N/A'))) AS courses
+           COUNT(*) AS course_count
          FROM silo_enrollments e
-         JOIN silo_courses c ON c.id = e.course_id
-         LEFT JOIN silo_identities ti ON ti.id = c.teacher_id
-         LEFT JOIN users tu ON ti.user_id = tu.id
          GROUP BY e.student_id
        ) AS course_stats ON course_stats.student_id = s.id
        WHERE ps.parent_id = $1
-       GROUP BY s.id, u.name, s.grade, ss.academic_rank, course_stats.course_count, course_stats.courses
+       GROUP BY s.id, u.name, s.grade, ss.avg_grade, course_count
        ORDER BY u.name ASC`,
       [parentId]
     );
@@ -106,11 +102,18 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
          n.content,
          n.created_at AS timestamp,
          'Logistics'::text AS category,
-         u.name AS "driverName"
+         n.driver_name AS "driverName"
        FROM logistics_notices n
-       LEFT JOIN users u ON u.id = n.driver_id
        WHERE n.deleted_at IS NULL
          AND n.created_at > NOW() - INTERVAL '30 days'
+         AND n.sender_id IN (
+           SELECT r.driver_id
+           FROM routes r
+           JOIN student_routes rm ON r.id = rm.route_id
+           WHERE rm.student_id IN (
+             SELECT student_id FROM parent_student WHERE parent_id = $1
+           )
+         )
 
        UNION ALL
 

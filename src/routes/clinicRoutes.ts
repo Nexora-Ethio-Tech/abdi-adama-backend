@@ -28,8 +28,8 @@ router.post('/medicine/deduct',       authorizeRoles('ClinicAdmin'), deductMedic
 router.get('/chat',                   authorizeRoles('ClinicAdmin', 'Parent'), getChatMessages);
 router.post('/chat',                  authorizeRoles('ClinicAdmin', 'Parent'), sendChatMessage);
 
-// Mark messages as read (per-conversation) - ClinicAdmin only
-// Called when ClinicAdmin opens a parent conversation to clear the unread badge
-router.patch('/chat/read',            authorizeRoles('ClinicAdmin'), markMessagesRead);
+// Mark messages as read (per-conversation) - ClinicAdmin and Parent
+// Called when either party opens the conversation to clear the unread badge
+router.patch('/chat/read',            authorizeRoles('ClinicAdmin', 'Parent'), markMessagesRead);
 
 export default router;

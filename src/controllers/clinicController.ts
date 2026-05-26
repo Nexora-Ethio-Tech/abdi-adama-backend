@@ -321,7 +321,7 @@ export const getChatMessages = async (req: Request, res: Response) => {
     let queryText = '';
     let params: any[] = [];
 
-    if (role === 'Parent') {
+    if (role === 'parent') {
       const selectedChildId = childId as string | undefined;
       if (selectedChildId) {
         const isLinked = await verifyParentChildLink(userId, selectedChildId);
@@ -371,7 +371,7 @@ export const getChatMessages = async (req: Request, res: Response) => {
         `;
         params = [childIds];
       }
-    } else if (role === 'ClinicAdmin') {
+    } else if (role === 'clinic-admin') {
       if (!childId) {
         queryText = `
           WITH latest_per_student AS (
@@ -446,7 +446,7 @@ export const sendChatMessage = async (req: Request, res: Response) => {
   }
 
   try {
-    if (senderRole === 'Parent') {
+    if (senderRole === 'parent') {
       const isLinked = await verifyParentChildLink(senderId, childId);
       if (!isLinked) {
         return sendError(res, 'Access denied: student not linked to your account.', 403);
@@ -463,7 +463,7 @@ export const sendChatMessage = async (req: Request, res: Response) => {
     }
 
     const studentName = studentResult.rows[0].student_name;
-    const senderRoleValue = senderRole === 'ClinicAdmin' ? 'clinic' : 'parent';
+    const senderRoleValue = senderRole === 'clinic-admin' ? 'clinic' : 'parent';
 
     const result = await pool.query(
       `INSERT INTO clinic_chat_messages (sender_id, sender_role, student_id, student_name, text, read)
@@ -483,11 +483,11 @@ export const sendChatMessage = async (req: Request, res: Response) => {
  * Marks all parent messages for a child as read.
  */
 export const markMessagesRead = async (req: Request, res: Response) => {
-  const { role } = (req as any).user;
+  const { user_id: userId, role } = (req as any).user;
   const { student_id } = req.body;
 
-  if (role !== 'ClinicAdmin') {
-    return sendError(res, 'Only ClinicAdmin can mark messages as read.', 403);
+  if (!['clinic-admin', 'parent'].includes(role)) {
+    return sendError(res, 'Only ClinicAdmin or Parent can mark messages as read.', 403);
   }
 
   if (!student_id) {
@@ -495,15 +495,34 @@ export const markMessagesRead = async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await pool.query(
-      `UPDATE clinic_chat_messages
-         SET read = TRUE
-       WHERE student_id = $1
-         AND sender_role = 'parent'
-         AND read = FALSE
-       RETURNING id`,
-      [student_id]
-    );
+    let result;
+
+    if (role === 'clinic-admin') {
+      result = await pool.query(
+        `UPDATE clinic_chat_messages
+           SET read = TRUE
+         WHERE student_id = $1
+           AND sender_role = 'parent'
+           AND read = FALSE
+         RETURNING id`,
+        [student_id]
+      );
+    } else {
+      const isLinked = await verifyParentChildLink(userId, student_id);
+      if (!isLinked) {
+        return sendError(res, 'Access denied: student not linked to your account.', 403);
+      }
+
+      result = await pool.query(
+        `UPDATE clinic_chat_messages
+           SET read = TRUE
+         WHERE student_id = $1
+           AND sender_role = 'clinic'
+           AND read = FALSE
+         RETURNING id`,
+        [student_id]
+      );
+    }
 
     return sendSuccess(res, {
       marked_read: result.rowCount ?? 0

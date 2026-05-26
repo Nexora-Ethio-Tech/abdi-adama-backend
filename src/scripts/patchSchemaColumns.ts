@@ -51,14 +51,21 @@ async function patchSchemaColumns() {
     console.log('📌 library_books:');
     await alterIfNotExists('library_books', 'book_code',    'VARCHAR(50)');
     await alterIfNotExists('library_books', 'description',  'TEXT');
+    await alterIfNotExists('library_books', 'isbn',         'VARCHAR(50)');
+    await alterIfNotExists('library_books', 'shelf',        'VARCHAR(100)');
     console.log();
 
     // ── library_loans table ───────────────────────────────────────────────────
     console.log('📌 library_loans:');
-    await alterIfNotExists('library_loans', 'student_name',      'VARCHAR(200)');
+    await alterIfNotExists('library_loans', 'teacher_id',        'UUID REFERENCES teachers(id) ON DELETE CASCADE');
+    await alterIfNotExists('library_loans', 'borrower_type',     'VARCHAR(20) DEFAULT \'student\'');
+    await alterIfNotExists('library_loans', 'borrower_name',     'VARCHAR(255)');
     await alterIfNotExists('library_loans', 'book_title',        'VARCHAR(300)');
     await alterIfNotExists('library_loans', 'book_code',         'VARCHAR(50)');
     await alterIfNotExists('library_loans', 'student_school_id', 'VARCHAR(50)');
+    await alterIfNotExists('library_loans', 'loan_status',        'VARCHAR(20) DEFAULT \'Borrowed\'');
+    // Drop NOT NULL constraint on student_id to support teacher loans
+    await client.query('ALTER TABLE library_loans ALTER COLUMN student_id DROP NOT NULL').catch(() => null);
     console.log();
 
     // ── medicine_inventory ────────────────────────────────────────────────────

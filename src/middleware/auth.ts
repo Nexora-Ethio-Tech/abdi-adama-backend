@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { verifyAccessToken } from '../utils/jwt';
 import pool from '../config/database';
-import { AuthRequest, UserRole } from '../types';
+import { AuthRequest, UserRole, User } from '../types';
 import logger from '../utils/logger';
 import { normalizeRole } from '../utils/roleUtils';
 
