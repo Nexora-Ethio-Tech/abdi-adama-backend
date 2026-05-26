@@ -108,12 +108,11 @@ class FinanceClerkService {
       fields.push(`fee_status = $${paramCount}`);
       values.push(data.feeStatus);
 
-      // If setting to reduced, set approval status to pending
-      if (data.feeStatus === 'reduced') {
-        paramCount++;
-        fields.push(`fee_approval_status = $${paramCount}`);
-        values.push('pending');
-      }
+      // If setting to reduced, set approval status to pending.
+      // If setting back to standard, clear any previous fee reduction state.
+      paramCount++;
+      fields.push(`fee_approval_status = $${paramCount}`);
+      values.push(data.feeStatus === 'reduced' ? 'pending' : 'none');
     }
 
     if (data.monthlyFee !== undefined) {

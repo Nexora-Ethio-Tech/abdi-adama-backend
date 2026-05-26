@@ -26,7 +26,7 @@ export const roleGuard = (allowedRoles: UserRole[]) => {
         success: false,
         error: {
           code: 'FORBIDDEN',
-          message: 'You do not have permission to access this resource'
+          message: `Only ${allowedRolesList.join(', ')} can access ${req.method} ${req.originalUrl}`
         }
       });
       return;

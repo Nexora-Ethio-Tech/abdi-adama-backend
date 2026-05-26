@@ -1,52 +1,23 @@
 import { Response, NextFunction } from 'express';
 import { verifyAccessToken } from '../utils/jwt';
 import pool from '../config/database';
-import { AuthRequest, User, UserRole } from '../types';
+import { AuthRequest, UserRole } from '../types';
 import logger from '../utils/logger';
-
-/**
- * Normalize role string to standard UserRole enum format (hyphenated lowercase)
- */
-const normalizeRole = (role: string | null | undefined): UserRole | null => {
-  if (!role) return null;
-  let r = role.toString().toLowerCase().trim();
-  // Replace underscores and spaces with hyphens
-  r = r.replace(/[_\s]+/g, '-');
-  // Handle common database variants
-  const roleMap: Record<string, UserRole> = {
-    'clinicadmin': UserRole.CLINIC_ADMIN,
-    'clinic-admin': UserRole.CLINIC_ADMIN,
-    'financeadmin': UserRole.FINANCE_CLERK,
-    'finance-admin': UserRole.FINANCE_CLERK,
-    'finance-clerk': UserRole.FINANCE_CLERK,
-    'finance_clerk': UserRole.FINANCE_CLERK,
-    'viceprincipal': UserRole.VICE_PRINCIPAL,
-    'vice-principal': UserRole.VICE_PRINCIPAL,
-    'vice_principal': UserRole.VICE_PRINCIPAL,
-    'schooladmin': UserRole.SCHOOL_ADMIN,
-    'school-admin': UserRole.SCHOOL_ADMIN,
-    'school_admin': UserRole.SCHOOL_ADMIN,
-    'superadmin': UserRole.SUPER_ADMIN,
-    'super-admin': UserRole.SUPER_ADMIN,
-    'super_admin': UserRole.SUPER_ADMIN,
-    'audit': UserRole.AUDITOR,
-    'auditor': UserRole.AUDITOR,
-    'driver': UserRole.DRIVER,
-    'librarian': UserRole.LIBRARIAN,
-    'teacher': UserRole.TEACHER,
-    'student': UserRole.STUDENT,
-    'parent': UserRole.PARENT
-  };
-
-  // Return mapped role or the normalized string if not in map
-  return roleMap[r] || (r as UserRole);
-};
+import { normalizeRole } from '../utils/roleUtils';
 
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
+    const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
+    let token: string | undefined;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    } else if (queryToken) {
+      token = queryToken;
+    }
+
+    if (!token) {
       res.status(401).json({
         success: false,
         error: {
@@ -56,8 +27,6 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       });
       return;
     }
-
-    const token = authHeader.substring(7);
     const decoded = verifyAccessToken(token);
 
     let result = await pool.query<User>(

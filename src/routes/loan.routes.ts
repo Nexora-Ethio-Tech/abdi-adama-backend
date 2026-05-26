@@ -19,6 +19,9 @@ router.get('/:id', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, User
 
 // Administrative modification routes
 router.post('/', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), loanController.issueLoan);
+router.post('/:id/confirm', roleGuard([UserRole.AUDITOR]), loanController.approveLoan);
+router.post('/:id/reject', roleGuard([UserRole.AUDITOR]), loanController.rejectLoan);
+router.post('/:id/pay', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), loanController.payLoan);
 router.patch('/:id/cancel', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), loanController.cancelLoan);
 
 export default router;

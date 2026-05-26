@@ -24,13 +24,77 @@ class LoanController {
       res.status(201).json({
         success: true,
         data: loan,
-        message: 'Loan successfully issued to employee.'
+        message: 'Loan request submitted and pending auditor approval.'
       });
     } catch (error: any) {
       res.status(400).json({
         success: false,
         error: {
           code: 'LOAN_ISSUANCE_FAILED',
+          message: error.message
+        }
+      });
+    }
+  }
+
+  async approveLoan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const auditorId = req.user!.id;
+      const loan = await loanService.approveLoan(id, auditorId);
+      res.json({
+        success: true,
+        data: loan,
+        message: 'Loan request approved and ready for payment.'
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'LOAN_APPROVAL_FAILED',
+          message: error.message
+        }
+      });
+    }
+  }
+
+  async rejectLoan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const { reason } = req.body;
+      const auditorId = req.user!.id;
+      const loan = await loanService.rejectLoan(id, auditorId, reason);
+      res.json({
+        success: true,
+        data: loan,
+        message: 'Loan request rejected.'
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'LOAN_REJECTION_FAILED',
+          message: error.message
+        }
+      });
+    }
+  }
+
+  async payLoan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const paidBy = req.user!.id;
+      const loan = await loanService.payLoan(id, paidBy);
+      res.json({
+        success: true,
+        data: loan,
+        message: 'Loan has been marked as paid and is now active.'
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'LOAN_PAYMENT_FAILED',
           message: error.message
         }
       });

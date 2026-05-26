@@ -63,10 +63,14 @@ CREATE TABLE IF NOT EXISTS loans (
   monthly_deduction NUMERIC NOT NULL CHECK (monthly_deduction > 0),
   max_months INT NOT NULL CHECK (max_months > 0),
   months_paid INT DEFAULT 0,
-  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'cancelled')),
+  status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'active', 'completed', 'rejected', 'cancelled')),
   issued_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  audited_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  audited_at TIMESTAMPTZ,
+  paid_at TIMESTAMPTZ,
   issued_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   completed_at TIMESTAMPTZ,
+  rejection_reason TEXT,
   notes TEXT
 );
 
