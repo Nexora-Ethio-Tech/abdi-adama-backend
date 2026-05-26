@@ -53,6 +53,7 @@ router.get('/transport/students', clerkOnly, financeClerkController.getTransport
 router.get('/transport/routes', clerkOnly, financeClerkController.getTransportRoutes);
 router.get('/transport/drivers', clerkOnly, financeClerkController.getTransportDrivers);
 router.get('/transport/policies', clerkOnly, financeClerkController.getTransportPolicies);
+router.get('/registration-fee', clerkOnly, financeClerkController.getGlobalRegistrationFee);
 router.post('/transport/assign', clerkOnly, validate(assignTransportSchema), financeClerkController.assignTransportStudent);
 router.post('/transport/stop', clerkOnly, validate(stopTransportSchema), financeClerkController.stopTransportStudent);
 router.get('/dashboard', clerkOnly, financeClerkController.getDashboard);

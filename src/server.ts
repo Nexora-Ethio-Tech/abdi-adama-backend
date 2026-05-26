@@ -46,6 +46,11 @@ async function ensureSchemaExtensions(): Promise<void> {
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(255)`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS student_user_id UUID REFERENCES users(id) ON DELETE SET NULL`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS parent_user_id UUID REFERENCES users(id) ON DELETE SET NULL`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS student_id_generated VARCHAR(255)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS student_password_temp VARCHAR(255)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS parent_id_generated VARCHAR(255)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS parent_password_temp VARCHAR(255)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS credentials_generated_at TIMESTAMPTZ`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS registration_completed_at TIMESTAMPTZ`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_profile JSONB`,
     // Library book code column (used for human-friendly Book ID like BK-1234)

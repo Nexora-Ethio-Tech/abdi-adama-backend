@@ -75,6 +75,21 @@ class FinanceClerkController {
     }
   }
 
+  // Get dashboard statistics
+  async getDashboard(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const stats = await financeClerkService.getDashboardStats(branchId!);
+
+      res.json({
+        success: true,
+        data: stats
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Get all students with fee information
   async getStudentsWithFees(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -123,6 +138,17 @@ class FinanceClerkController {
       const routes = await financeClerkService.getTransportRoutes(branchId!, search as string);
 
       res.json({ success: true, data: routes });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getGlobalRegistrationFee(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const fee = await financeClerkService.getGlobalRegistrationFee(branchId!);
+
+      res.json({ success: true, data: fee });
     } catch (error) {
       next(error);
     }
@@ -213,21 +239,6 @@ class FinanceClerkController {
         success: true,
         data: student,
         message: 'Fee status updated successfully'
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  // Get dashboard statistics
-  async getDashboard(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const branchId = req.user!.branch_id;
-      const stats = await financeClerkService.getDashboardStats(branchId!);
-
-      res.json({
-        success: true,
-        data: stats
       });
     } catch (error) {
       next(error);

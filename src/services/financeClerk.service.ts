@@ -195,6 +195,39 @@ class FinanceClerkService {
     return result.rows;
   }
 
+  // Get the global registration fee assigned by super admin
+  async getGlobalRegistrationFee(branchId: string): Promise<{ amount: number; source: string }> {
+    const settingsResult = await pool.query(
+      `SELECT key, value
+       FROM finance_settings
+       WHERE key IN ('student_registration_fee', 'registration_fee')
+       ORDER BY CASE key WHEN 'student_registration_fee' THEN 1 ELSE 2 END
+       LIMIT 1`
+    );
+
+    if (settingsResult.rows.length > 0) {
+      const setting = settingsResult.rows[0];
+      return {
+        amount: Number(setting.value) || 0,
+        source: setting.key
+      };
+    }
+
+    const policyResult = await pool.query(
+      `SELECT registration_fee
+       FROM financial_policies
+       WHERE branch_id = $1
+       ORDER BY academic_year DESC, grade_level NULLS FIRST
+       LIMIT 1`,
+      [branchId]
+    );
+
+    return {
+      amount: Number(policyResult.rows[0]?.registration_fee || 0),
+      source: 'financial_policies.registration_fee'
+    };
+  }
+
   // Assign or change a student's transport route and fee
   async assignTransportStudent(data: {
     branchId: string;
