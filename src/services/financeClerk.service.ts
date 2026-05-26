@@ -91,6 +91,241 @@ class FinanceClerkService {
     return result.rows;
   }
 
+  // Get transport students with current route/driver assignment
+  async getTransportStudents(branchId: string, search?: string, status: 'assigned' | 'unassigned' | 'all' = 'assigned') {
+    let query = `
+      SELECT
+        s.id,
+        s.grade,
+        s.bus_fee,
+        s.is_bus_user,
+        u.name,
+        u.email,
+        u.digital_id,
+        r.id AS route_id,
+        r.name AS route_name,
+        drv.id AS driver_id,
+        drv.name AS driver_name,
+        drv.digital_id AS driver_digital_id
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN LATERAL (
+        SELECT sr.route_id
+        FROM student_routes sr
+        WHERE sr.student_id = s.id
+        LIMIT 1
+      ) sr ON TRUE
+      LEFT JOIN routes r ON r.id = sr.route_id
+      LEFT JOIN users drv ON drv.id = r.driver_id
+      WHERE s.branch_id = $1
+    `;
+
+    const params: any[] = [branchId];
+    let paramCount = 1;
+
+    if (status !== 'all') {
+      query += status === 'assigned' ? ' AND sr.route_id IS NOT NULL' : ' AND sr.route_id IS NULL';
+    }
+
+    if (search) {
+      paramCount++;
+      query += ` AND (
+        u.name ILIKE $${paramCount}
+        OR u.digital_id ILIKE $${paramCount}
+        OR COALESCE(r.name, '') ILIKE $${paramCount}
+        OR COALESCE(drv.name, '') ILIKE $${paramCount}
+      )`;
+      params.push(`%${search}%`);
+    }
+
+    query += ' ORDER BY u.name';
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  // Get routes with assigned drivers for transport management
+  async getTransportRoutes(branchId: string, search?: string) {
+    let query = `
+      SELECT
+        r.id AS route_id,
+        r.name AS route_name,
+        r.driver_id,
+        drv.name AS driver_name,
+        drv.digital_id AS driver_digital_id,
+        COUNT(sr.student_id)::int AS student_count
+      FROM routes r
+      JOIN users drv ON drv.id = r.driver_id
+      LEFT JOIN student_routes sr ON sr.route_id = r.id
+      WHERE r.branch_id = $1
+    `;
+
+    const params: any[] = [branchId];
+    let paramCount = 1;
+
+    if (search) {
+      paramCount++;
+      query += ` AND (
+        r.name ILIKE $${paramCount}
+        OR drv.name ILIKE $${paramCount}
+        OR drv.digital_id ILIKE $${paramCount}
+      )`;
+      params.push(`%${search}%`);
+    }
+
+    query += `
+      GROUP BY r.id, drv.id
+      ORDER BY r.name
+    `;
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  // Assign or change a student's transport route and fee
+  async assignTransportStudent(data: {
+    branchId: string;
+    studentId: string;
+    routeId: string;
+    transportFee: number;
+    verifiedBy: string;
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const studentResult = await client.query(
+        `SELECT s.id, u.name
+         FROM students s
+         JOIN users u ON s.user_id = u.id
+         WHERE s.id = $1 AND s.branch_id = $2
+         FOR UPDATE`,
+        [data.studentId, data.branchId]
+      );
+
+      if (studentResult.rows.length === 0) {
+        throw new Error('Student not found');
+      }
+
+      const routeResult = await client.query(
+        `SELECT r.id, r.name, drv.name AS driver_name
+         FROM routes r
+         JOIN users drv ON drv.id = r.driver_id
+         WHERE r.id = $1 AND r.branch_id = $2`,
+        [data.routeId, data.branchId]
+      );
+
+      if (routeResult.rows.length === 0) {
+        throw new Error('Driver route not found');
+      }
+
+      await client.query('DELETE FROM student_routes WHERE student_id = $1', [data.studentId]);
+      await client.query(
+        'INSERT INTO student_routes (student_id, route_id) VALUES ($1, $2)',
+        [data.studentId, data.routeId]
+      );
+
+      await client.query(
+        `UPDATE students
+         SET bus_fee = $1,
+             is_bus_user = TRUE,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [data.transportFee, data.studentId]
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        studentId: data.studentId,
+        studentName: studentResult.rows[0].name,
+        routeId: routeResult.rows[0].id,
+        routeName: routeResult.rows[0].name,
+        driverName: routeResult.rows[0].driver_name,
+        transportFee: Number(data.transportFee),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Stop transport and create a prorated settlement transaction
+  async stopTransportStudent(data: {
+    branchId: string;
+    studentId: string;
+    daysUsed: number;
+    verifiedBy: string;
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const studentResult = await client.query(
+        `SELECT s.id, s.bus_fee, u.name
+         FROM students s
+         JOIN users u ON s.user_id = u.id
+         WHERE s.id = $1 AND s.branch_id = $2
+         FOR UPDATE`,
+        [data.studentId, data.branchId]
+      );
+
+      if (studentResult.rows.length === 0) {
+        throw new Error('Student not found');
+      }
+
+      const student = studentResult.rows[0];
+      const transportFee = Number(student.bus_fee || 0);
+      if (transportFee <= 0) {
+        throw new Error('This student does not have an active transport fee');
+      }
+
+      const clampedDaysUsed = Math.min(30, Math.max(0, Number(data.daysUsed)));
+      const amountDue = Number((((30 - clampedDaysUsed) * transportFee) / 30).toFixed(2));
+
+      await client.query('DELETE FROM student_routes WHERE student_id = $1', [data.studentId]);
+      await client.query(
+        `UPDATE students
+         SET bus_fee = 0,
+             is_bus_user = FALSE,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [data.studentId]
+      );
+
+      await client.query(
+        `INSERT INTO finance_transactions
+          (student_id, student_name, amount, type, date, verified_by, branch_id)
+         VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6)`,
+        [
+          data.studentId,
+          student.name,
+          amountDue,
+          'Transport Stop Settlement',
+          data.verifiedBy,
+          data.branchId,
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        studentId: data.studentId,
+        studentName: student.name,
+        daysUsed: clampedDaysUsed,
+        transportFee,
+        amountDue,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   // Update fee status
   async updateFeeStatus(studentId: string, data: {
     feeStatus?: string;

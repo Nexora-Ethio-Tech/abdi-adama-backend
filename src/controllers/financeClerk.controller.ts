@@ -95,6 +95,79 @@ class FinanceClerkController {
     }
   }
 
+  // Get transport-managed students
+  async getTransportStudents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { search, status } = req.query;
+
+      const students = await financeClerkService.getTransportStudents(
+        branchId!,
+        search as string,
+        (status as 'assigned' | 'unassigned' | 'all') || 'assigned'
+      );
+
+      res.json({ success: true, data: students });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get available driver routes for transport assignment
+  async getTransportRoutes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { search } = req.query;
+
+      const routes = await financeClerkService.getTransportRoutes(branchId!, search as string);
+
+      res.json({ success: true, data: routes });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Assign or change a student's driver/route
+  async assignTransportStudent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const verifiedBy = req.user!.name;
+      const { studentId, routeId, transportFee } = req.body;
+
+      const result = await financeClerkService.assignTransportStudent({
+        branchId: branchId!,
+        studentId,
+        routeId,
+        transportFee: Number(transportFee),
+        verifiedBy
+      });
+
+      res.status(201).json({ success: true, data: result, message: 'Transport assignment saved successfully' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Stop transport and create a proration settlement
+  async stopTransportStudent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const verifiedBy = req.user!.name;
+      const { studentId, daysUsed } = req.body;
+
+      const result = await financeClerkService.stopTransportStudent({
+        branchId: branchId!,
+        studentId,
+        daysUsed: Number(daysUsed),
+        verifiedBy
+      });
+
+      res.status(201).json({ success: true, data: result, message: 'Transport stopped and settlement recorded' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Update student fee status and create reduction request
   async updateFeeStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

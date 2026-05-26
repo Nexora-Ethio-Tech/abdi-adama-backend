@@ -20,6 +20,17 @@ const recordPaymentSchema = Joi.object({
   date: Joi.date().iso().required()
 });
 
+const assignTransportSchema = Joi.object({
+  studentId: Joi.string().uuid().required(),
+  routeId: Joi.string().uuid().required(),
+  transportFee: Joi.number().positive().required()
+});
+
+const stopTransportSchema = Joi.object({
+  studentId: Joi.string().uuid().required(),
+  daysUsed: Joi.number().integer().min(0).max(30).required()
+});
+
 const updateFeeStatusSchema = Joi.object({
   feeStatus: Joi.string().valid('standard', 'reduced'),
   monthlyFee: Joi.number().min(0),
@@ -38,6 +49,10 @@ router.post('/payments', clerkOnly, validate(recordPaymentSchema), financeClerkC
 router.get('/payments/:studentId', clerkOnly, financeClerkController.getPaymentHistory);
 router.get('/students/fees', clerkOnly, financeClerkController.getStudentsWithFees);
 router.patch('/students/:id/fee-status', clerkOnly, validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
+router.get('/transport/students', clerkOnly, financeClerkController.getTransportStudents);
+router.get('/transport/routes', clerkOnly, financeClerkController.getTransportRoutes);
+router.post('/transport/assign', clerkOnly, validate(assignTransportSchema), financeClerkController.assignTransportStudent);
+router.post('/transport/stop', clerkOnly, validate(stopTransportSchema), financeClerkController.stopTransportStudent);
 router.get('/dashboard', clerkOnly, financeClerkController.getDashboard);
 router.get('/overdue-payments', clerkOnly, financeClerkController.getOverduePayments);
 router.get('/reports/daily', clerkOnly, financeClerkController.getDailyReport);
