@@ -60,8 +60,10 @@ class UserService {
       const userPassword = password || (PIN_BASED_ROLES.includes(role) ? generate4DigitPIN() : generateRandomPassword());
       const passwordHash = await hashPassword(userPassword);
 
-      // Staff accounts created by School Admin should be active immediately.
-      const initialStatus = ['student', 'parent'].includes(role) ? USER_STATUS.PENDING : USER_STATUS.APPROVED;
+      // New accounts default to 'Pending' (waiting for approval).
+      // Only high-privilege admin accounts are auto-approved.
+      const autoApproveRoles = ['super-admin', 'school-admin'];
+      const initialStatus = autoApproveRoles.includes(role) ? USER_STATUS.APPROVED : USER_STATUS.PENDING;
 
       const userResult = await client.query<User>(
         `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)

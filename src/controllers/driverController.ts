@@ -6,6 +6,7 @@ import { sendSuccess, sendError, getPagination } from '../shared/responseUtils';
 import { getNextSaturday } from '../shared/dateUtils';
 import { broadcast, addClient, removeClient } from '../shared/sseManager';
 import { performAllCleanups } from '../shared/cleanupUtils';
+import * as notificationService from '../services/notificationService';
 
 /**
  * GET /api/driver/manifest  (also aliased at /api/transport/manifest)

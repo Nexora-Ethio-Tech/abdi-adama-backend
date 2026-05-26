@@ -581,11 +581,8 @@ class SchoolAdminService {
       `INSERT INTO pending_applications (
         branch_id,
         applicant_name,
-        name,
         applicant_email,
-        email,
         applicant_phone,
-        phone,
         dob,
         gender,
         parent_name,
@@ -604,8 +601,8 @@ class SchoolAdminService {
         status,
         notes,
         created_by,
-        date
-      ) VALUES ($1, $2, $2, $3, $3, $4, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, CURRENT_DATE)
+        created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, CURRENT_TIMESTAMP)
       RETURNING *`,
       [
         data.branchId,
