@@ -67,3 +67,21 @@ CREATE TABLE IF NOT EXISTS timetable_runs (
 
 CREATE INDEX IF NOT EXISTS idx_timetable_runs_branch ON timetable_runs(branch_id);
 CREATE INDEX IF NOT EXISTS idx_timetable_runs_status ON timetable_runs(status);
+
+-- Timetable structure: one row per class/teacher/subject assignment used by the
+-- timetable generator and saved from the Schedule Builder UI.
+CREATE TABLE IF NOT EXISTS schedule_structure (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id       UUID        NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+  academic_year   VARCHAR(20) NOT NULL DEFAULT '2025/2026',
+  class_id        UUID        NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  teacher_id      UUID        NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+  subject         VARCHAR(100) NOT NULL,
+  sessions_per_week INT       NOT NULL DEFAULT 1 CHECK (sessions_per_week BETWEEN 1 AND 10),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(branch_id, academic_year, class_id, teacher_id, subject)
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_structure_branch ON schedule_structure(branch_id);
+CREATE INDEX IF NOT EXISTS idx_schedule_structure_year ON schedule_structure(academic_year);

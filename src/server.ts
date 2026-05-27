@@ -2,21 +2,12 @@ import dotenv from 'dotenv';
 import app from './app';
 import pool from './config/database';
 import logger from './utils/logger';
+import ensureScheduleSchema from './scripts/ensureScheduleSchema';
 
 dotenv.config();
 
 const PORT = process.env.PORT || 5000;
 
-pool.query('SELECT NOW()', (err, res) => {
-  if (err) {
-    logger.error('Database connection failed:', err);
-    process.exit(1);
-  }
-  logger.info('Database connected successfully');
-  logger.info(`Database time: ${res.rows[0].now}`);
-});
-
-// Ensure schema extensions are applied (idempotent: safe to run every boot)
 async function ensureSchemaExtensions(): Promise<void> {
   const migrations = [
     // Classes — capacity & section columns (from schema_additions.sql)
@@ -72,22 +63,18 @@ async function ensureSchemaExtensions(): Promise<void> {
     try {
       await pool.query(sql);
     } catch (err: any) {
-      // Log but don't crash — columns may already exist under a different constraint
       logger.warn(`Schema migration skipped: ${sql.slice(0, 60)}... — ${err.message}`);
     }
   }
 
-  // Run payroll schema migration dynamically from database/payroll_schema.sql
   try {
-    const fs = require('fs');
-    const path = require('path');
-    const schemaPath = path.join(__dirname, '../database/payroll_schema.sql');
+    const schemaPath = path.resolve(process.cwd(), 'database', 'payroll_schema.sql');
     if (fs.existsSync(schemaPath)) {
       const schemaSql = fs.readFileSync(schemaPath, 'utf8');
       await pool.query(schemaSql);
       logger.info('✅ Payroll database schema verified and updated');
     } else {
-      logger.warn('⚠️ Payroll schema file not found at: ' + schemaPath);
+      logger.warn(`⚠️ Payroll schema file not found at: ${schemaPath}`);
     }
   } catch (err: any) {
     logger.error('❌ Failed to run payroll schema migration:', err);
@@ -96,32 +83,46 @@ async function ensureSchemaExtensions(): Promise<void> {
   logger.info('✅ Schema extensions verified');
 }
 
-ensureSchemaExtensions();
+async function bootstrap(): Promise<void> {
+  try {
+    const res = await pool.query('SELECT NOW()');
+    logger.info('Database connected successfully');
+    logger.info(`Database time: ${res.rows[0].now}`);
 
-const server = app.listen(PORT, () => {
-  logger.info(`🚀 Server running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`Health check: http://localhost:${PORT}/health`);
-});
+    await ensureSchemaExtensions();
+    await ensureScheduleSchema();
 
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    logger.info('HTTP server closed');
-    pool.end(() => {
-      logger.info('Database pool closed');
-      process.exit(0);
+    const server = app.listen(PORT, () => {
+      logger.info(`🚀 Server running on port ${PORT}`);
+      logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      logger.info(`Health check: http://localhost:${PORT}/health`);
     });
-  });
-});
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT signal received: closing HTTP server');
-  server.close(() => {
-    logger.info('HTTP server closed');
-    pool.end(() => {
-      logger.info('Database pool closed');
-      process.exit(0);
+    process.on('SIGTERM', () => {
+      logger.info('SIGTERM signal received: closing HTTP server');
+      server.close(() => {
+        logger.info('HTTP server closed');
+        pool.end(() => {
+          logger.info('Database pool closed');
+          process.exit(0);
+        });
+      });
     });
-  });
-});
+
+    process.on('SIGINT', () => {
+      logger.info('SIGINT signal received: closing HTTP server');
+      server.close(() => {
+        logger.info('HTTP server closed');
+        pool.end(() => {
+          logger.info('Database pool closed');
+          process.exit(0);
+        });
+      });
+    });
+  } catch (error) {
+    logger.error('Database connection failed:', error);
+    process.exit(1);
+  }
+}
+
+bootstrap();
