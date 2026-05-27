@@ -61,6 +61,30 @@ class SuperAdminController {
     }
   }
 
+  // ─── User Management ──────────────────────────────────────────────────────
+
+  async createUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { name, email, role, branchId, phone } = req.body;
+
+      const result = await superAdminService.createUser({
+        name,
+        email,
+        role,
+        branchId,
+        phone
+      });
+
+      res.status(201).json({
+        success: true,
+        data: result,
+        message: 'User created successfully. A welcome email has been sent.'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async updateUserStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params;
@@ -140,7 +164,8 @@ class SuperAdminController {
     }
   }
 
-  // Branch Management
+  // ─── Branch Management ────────────────────────────────────────────────────
+
   async createBranch(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branch = await superAdminService.createBranch(req.body);
@@ -206,7 +231,8 @@ class SuperAdminController {
     }
   }
 
-  // System Reports
+  // ─── System Reports ───────────────────────────────────────────────────────
+
   async getSystemReport(_req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const report = await superAdminService.getSystemReport();
@@ -232,7 +258,8 @@ class SuperAdminController {
     }
   }
 
-  // Academic Year Management
+  // ─── Academic Year Management ─────────────────────────────────────────────
+
   async createGlobalAcademicYear(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const academicYear = await superAdminService.createGlobalAcademicYear(req.body);
@@ -272,7 +299,8 @@ class SuperAdminController {
     }
   }
 
-  // Class Capacity
+  // ─── Class Capacity ───────────────────────────────────────────────────────
+
   async setClassCapacity(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params;
@@ -288,7 +316,8 @@ class SuperAdminController {
     }
   }
 
-  // Dashboard
+  // ─── Dashboard ────────────────────────────────────────────────────────────
+
   async getDashboard(_req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const dashboard = await superAdminService.getDashboard();
@@ -301,7 +330,8 @@ class SuperAdminController {
     }
   }
 
-  // Finance Settings Management
+  // ─── Finance Settings Management ─────────────────────────────────────────
+
   async getFinanceSettings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const settings = await superAdminService.getFinanceSettings();
