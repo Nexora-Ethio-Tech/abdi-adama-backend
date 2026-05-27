@@ -286,6 +286,29 @@ class SchoolAdminService {
     section?: string;
     branchId: string;
   }) {
+    const existing = await pool.query(
+      `SELECT *
+       FROM classes
+       WHERE branch_id = $1 AND name = $2 AND COALESCE(section, '') = COALESCE($3, '')
+       LIMIT 1`,
+      [data.branchId, data.name, data.section || null]
+    );
+
+    if (existing.rows.length > 0) {
+      const classId = existing.rows[0].id;
+      const result = await pool.query(
+        `UPDATE classes
+         SET name = $1,
+             section = $2,
+             capacity = COALESCE($3, capacity)
+         WHERE id = $4
+         RETURNING *`,
+        [data.name, data.section || null, data.capacity ?? null, classId]
+      );
+
+      return result.rows[0];
+    }
+
     const result = await pool.query(
       `INSERT INTO classes (name, capacity, section, branch_id, student_count)
        VALUES ($1, $2, $3, $4, 0)

@@ -19,7 +19,7 @@ const configSchema = Joi.object({
   periodsPerDay: Joi.number().integer().min(3).max(12).required(),
   startTime: Joi.string().pattern(/^\d{2}:\d{2}(:\d{2})?$/).required(),
   endTime: Joi.string().pattern(/^\d{2}:\d{2}(:\d{2})?$/).required(),
-  maxConsecutivePeriods: Joi.number().integer().min(1).max(6).required(),
+  maxConsecutivePeriods: Joi.number().integer().min(1).required(),
   distributeSubjects: Joi.boolean().required(),
   academicYear: Joi.string().optional()
 });

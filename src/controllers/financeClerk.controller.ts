@@ -75,6 +75,19 @@ class FinanceClerkController {
     }
   }
 
+  async rejectApplication(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const financeUserId = req.user!.id;
+
+      const result = await financeClerkService.rejectApplication(id, financeUserId);
+
+      res.status(200).json({ success: true, data: result, message: 'Application rejected and removed' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Get dashboard statistics
   async getDashboard(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

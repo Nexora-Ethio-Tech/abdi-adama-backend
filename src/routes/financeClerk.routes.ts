@@ -61,6 +61,8 @@ router.get('/overdue-payments', clerkOnly, financeClerkController.getOverduePaym
 router.get('/reports/daily', clerkOnly, financeClerkController.getDailyReport);
 router.get('/applications', clerkOnly, financeClerkController.getPendingApplications);
 router.patch('/applications/:id/approve', clerkOnly, financeClerkController.approveApplication);
+// Reject application (delete pending application)
+router.delete('/applications/:id', clerkOnly, financeClerkController.rejectApplication);
 
 // Shared Employee Payroll Profiles & Attendance Management
 router.post('/employee-profiles', readWriteFinance, employeeProfileController.createOrUpdateProfile);

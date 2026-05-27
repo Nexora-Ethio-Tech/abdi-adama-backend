@@ -552,6 +552,32 @@ class FinanceClerkService {
   async approveApplication(applicationId: string, payment: { amount: number; reference?: string }, financeUserId: string) {
     return await schoolAdminService.financeApproveApplication(applicationId, payment, financeUserId);
   }
+
+  // Reject an application and remove pending application record
+  async rejectApplication(applicationId: string, financeUserId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Ensure application exists and belongs to branch of finance user? For now just attempt delete
+      const res = await client.query(
+        `DELETE FROM pending_applications WHERE id = $1 RETURNING *`,
+        [applicationId]
+      );
+
+      if (res.rows.length === 0) {
+        throw new Error('Application not found');
+      }
+
+      await client.query('COMMIT');
+      return res.rows[0];
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 export default new FinanceClerkService();
