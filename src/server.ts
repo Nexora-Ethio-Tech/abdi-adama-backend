@@ -67,17 +67,26 @@ async function ensureSchemaExtensions(): Promise<void> {
     }
   }
 
+  // Run payroll and schedule schema migrations dynamically from database/*.sql
   try {
-    const schemaPath = path.resolve(process.cwd(), 'database', 'payroll_schema.sql');
-    if (fs.existsSync(schemaPath)) {
-      const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-      await pool.query(schemaSql);
-      logger.info('✅ Payroll database schema verified and updated');
-    } else {
-      logger.warn(`⚠️ Payroll schema file not found at: ${schemaPath}`);
-    }
+    const fs = require('fs');
+    const path = require('path');
+
+    const runSchemaFile = async (fileName: string, label: string) => {
+      const schemaPath = path.join(__dirname, '../database', fileName);
+      if (fs.existsSync(schemaPath)) {
+        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+        await pool.query(schemaSql);
+        logger.info(`✅ ${label} database schema verified and updated`);
+      } else {
+        logger.warn(`⚠️ ${label} schema file not found at: ${schemaPath}`);
+      }
+    };
+
+    await runSchemaFile('payroll_schema.sql', 'Payroll');
+    await runSchemaFile('schedule_schema.sql', 'Schedule Builder');
   } catch (err: any) {
-    logger.error('❌ Failed to run payroll schema migration:', err);
+    logger.error('❌ Failed to run schema migrations:', err);
   }
 
   logger.info('✅ Schema extensions verified');
