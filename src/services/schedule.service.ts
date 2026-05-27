@@ -282,12 +282,18 @@ class ScheduleService {
     try {
       await client.query('BEGIN');
 
+      const dedupedRows = new Map<string, StructureRowInput>();
+      for (const row of structures) {
+        const key = [row.classId, row.teacherId, row.subject].join('::');
+        dedupedRows.set(key, row);
+      }
+
       await client.query(
         'DELETE FROM schedule_structure WHERE branch_id = $1 AND academic_year = $2',
         [branchId, year]
       );
 
-      for (const row of structures) {
+      for (const row of dedupedRows.values()) {
         const classCheck = await client.query(
           'SELECT id FROM classes WHERE id = $1 AND branch_id = $2',
           [row.classId, branchId]
@@ -313,7 +319,7 @@ class ScheduleService {
       }
 
       await client.query('COMMIT');
-      return { count: structures.length };
+      return { count: dedupedRows.size };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

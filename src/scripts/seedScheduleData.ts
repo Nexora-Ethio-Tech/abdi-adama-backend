@@ -211,6 +211,35 @@ async function seedScheduleData() {
     }
     console.log(`  📊 Course frequencies: ${courseFrequencies.length} courses configured`);
 
+    // 8. Timetable structure (overwrite any existing demo rows for this branch/year)
+    await client.query(
+      `DELETE FROM schedule_structure
+       WHERE branch_id = $1 AND academic_year = '2025/2026'`,
+      [branchId]
+    );
+
+    const structureRows = courseEntries.map((entry) => ({
+      classId: classIds[entry.classIdx],
+      teacherId: teacherIds[entry.teacherIdx],
+      subject: entry.subject,
+      sessionsPerWeek: entry.sessions,
+    }));
+
+    const uniqueStructureRows = new Map<string, typeof structureRows[number]>();
+    for (const row of structureRows) {
+      uniqueStructureRows.set([row.classId, row.teacherId, row.subject].join('::'), row);
+    }
+
+    for (const row of uniqueStructureRows.values()) {
+      await client.query(
+        `INSERT INTO schedule_structure
+          (branch_id, academic_year, class_id, teacher_id, subject, sessions_per_week)
+         VALUES ($1, '2025/2026', $2, $3, $4, $5)`,
+        [branchId, row.classId, row.teacherId, row.subject, row.sessionsPerWeek]
+      );
+    }
+    console.log(`  🧩 Timetable structure: ${uniqueStructureRows.size} rows seeded`);
+
     await client.query('COMMIT');
 
     console.log('\n✅ Schedule builder seed data inserted successfully!');
@@ -218,6 +247,7 @@ async function seedScheduleData() {
     console.log(`   Teachers: ${teacherIds.length}`);
     console.log(`   Classes: ${classIds.length}`);
     console.log(`   Courses: ${courseIds.length}`);
+    console.log(`   Structure rows: ${uniqueStructureRows.size}`);
     console.log(`   Unavailabilities: ${unavailabilities.length}`);
 
   } catch (error) {
