@@ -43,7 +43,84 @@ async function ensureSchemaExtensions(): Promise<void> {
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS parent_password_temp VARCHAR(255)`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS credentials_generated_at TIMESTAMPTZ`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS registration_completed_at TIMESTAMPTZ`,
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_profile JSONB`,
+    `DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'pending_applications' AND column_name = 'name'
+        ) THEN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'pending_applications' AND column_name = 'applicant_name'
+          ) THEN
+            UPDATE pending_applications
+            SET applicant_name = name
+            WHERE applicant_name IS NULL AND name IS NOT NULL;
+            ALTER TABLE pending_applications ALTER COLUMN name DROP NOT NULL;
+          ELSE
+            ALTER TABLE pending_applications RENAME COLUMN name TO applicant_name;
+          END IF;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'pending_applications' AND column_name = 'email'
+        ) THEN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'pending_applications' AND column_name = 'applicant_email'
+          ) THEN
+            UPDATE pending_applications
+            SET applicant_email = email
+            WHERE applicant_email IS NULL AND email IS NOT NULL;
+            ALTER TABLE pending_applications ALTER COLUMN email DROP NOT NULL;
+          ELSE
+            ALTER TABLE pending_applications RENAME COLUMN email TO applicant_email;
+          END IF;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'pending_applications' AND column_name = 'phone'
+        ) THEN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'pending_applications' AND column_name = 'applicant_phone'
+          ) THEN
+            UPDATE pending_applications
+            SET applicant_phone = phone
+            WHERE applicant_phone IS NULL AND phone IS NOT NULL;
+            ALTER TABLE pending_applications ALTER COLUMN phone DROP NOT NULL;
+          ELSE
+            ALTER TABLE pending_applications RENAME COLUMN phone TO applicant_phone;
+          END IF;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'pending_applications' AND column_name = 'last_grade'
+        ) THEN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'pending_applications' AND column_name = 'grade_applying'
+          ) THEN
+            UPDATE pending_applications
+            SET grade_applying = last_grade
+            WHERE grade_applying IS NULL AND last_grade IS NOT NULL;
+            ALTER TABLE pending_applications ALTER COLUMN last_grade DROP NOT NULL;
+          ELSE
+            ALTER TABLE pending_applications RENAME COLUMN last_grade TO grade_applying;
+          END IF;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'pending_applications' AND column_name = 'date'
+        ) THEN
+          ALTER TABLE pending_applications ALTER COLUMN date DROP NOT NULL;
+        END IF;
+      END$$;`,
+       `ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_profile JSONB`,
     // Library book code column (used for human-friendly Book ID like BK-1234)
     `ALTER TABLE library_books ADD COLUMN IF NOT EXISTS book_code VARCHAR(50)`,
     // Driver Notifications — tracks driver-posted alerts with 3-day auto-purge
