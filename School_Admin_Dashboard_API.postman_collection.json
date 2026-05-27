@@ -1,0 +1,365 @@
+{
+  "info": {
+    "name": "School Admin Dashboard API",
+    "description": "API endpoints for School Admin dashboard features: At-Risk Students and Events Calendar",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.abdi-adama.com/api",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"65plante@gmail.com\",\n  \"password\": \"SchoolAdmin@2026\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Login as School Admin to get access token"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard - At-Risk Students",
+      "item": [
+        {
+          "name": "Get At-Risk Students",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/dashboard/at-risk-students",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "dashboard", "at-risk-students"]
+            },
+            "description": "Get all students with High or Medium risk levels in the School Admin's branch"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-admin/dashboard/at-risk-students",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["school-admin", "dashboard", "at-risk-students"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"students\": [\n      {\n        \"student_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"user_id\": \"550e8400-e29b-41d4-a716-446655440001\",\n        \"digital_id\": \"STD-MB-0015\",\n        \"name\": \"John Doe\",\n        \"email\": \"john.doe@example.com\",\n        \"grade\": \"10A\",\n        \"risk_level\": \"High\",\n        \"risk_factor\": \"5 absences in last 30 days, unpaid fees for 3 months\",\n        \"absence_count\": \"5\",\n        \"average_grade\": \"45.50\",\n        \"monthly_fee\": \"2500.00\",\n        \"bus_fee\": \"500.00\",\n        \"penalty_fee\": \"300.00\",\n        \"fee_status\": \"standard\",\n        \"created_at\": \"2026-01-15T08:00:00.000Z\"\n      }\n    ],\n    \"summary\": {\n      \"high\": 3,\n      \"medium\": 7\n    }\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Dashboard - Events Calendar",
+      "item": [
+        {
+          "name": "Get Upcoming Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/dashboard/upcoming-events?limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "dashboard", "upcoming-events"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Number of events to return (default: 10)"
+                }
+              ]
+            },
+            "description": "Get upcoming events for the School Admin's branch (future dates only)"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-admin/dashboard/upcoming-events?limit=10",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["school-admin", "dashboard", "upcoming-events"],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"550e8400-e29b-41d4-a716-446655440010\",\n      \"title\": \"Parent-Teacher Meeting\",\n      \"date\": \"2026-05-15\",\n      \"type\": \"Meeting\",\n      \"description\": \"Quarterly parent-teacher conference\",\n      \"created_at\": \"2026-05-01T08:00:00.000Z\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Parent-Teacher Meeting\",\n  \"date\": \"2026-05-15\",\n  \"type\": \"Meeting\",\n  \"description\": \"Quarterly parent-teacher conference for all grades\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "events"]
+            },
+            "description": "Create a new event for the School Admin's branch"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Parent-Teacher Meeting\",\n  \"date\": \"2026-05-15\",\n  \"type\": \"Meeting\",\n  \"description\": \"Quarterly parent-teacher conference\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-admin/events",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["school-admin", "events"]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"550e8400-e29b-41d4-a716-446655440020\",\n    \"title\": \"Parent-Teacher Meeting\",\n    \"date\": \"2026-05-15\",\n    \"type\": \"Meeting\",\n    \"description\": \"Quarterly parent-teacher conference\",\n    \"branch_id\": \"550e8400-e29b-41d4-a716-446655440030\",\n    \"created_at\": \"2026-05-09T10:30:00.000Z\"\n  },\n  \"message\": \"Event created successfully\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Event",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Parent-Teacher Meeting (Updated)\",\n  \"date\": \"2026-05-16\",\n  \"description\": \"Rescheduled to May 16th\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/events/:eventId",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "events", ":eventId"],
+              "variable": [
+                {
+                  "key": "eventId",
+                  "value": "",
+                  "description": "Event UUID"
+                }
+              ]
+            },
+            "description": "Update an existing event in the School Admin's branch"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Parent-Teacher Meeting (Updated)\",\n  \"date\": \"2026-05-16\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-admin/events/:eventId",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["school-admin", "events", ":eventId"],
+                  "variable": [
+                    {
+                      "key": "eventId",
+                      "value": "550e8400-e29b-41d4-a716-446655440020"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"550e8400-e29b-41d4-a716-446655440020\",\n    \"title\": \"Parent-Teacher Meeting (Updated)\",\n    \"date\": \"2026-05-16\",\n    \"type\": \"Meeting\",\n    \"description\": \"Rescheduled to May 16th\",\n    \"branch_id\": \"550e8400-e29b-41d4-a716-446655440030\",\n    \"created_at\": \"2026-05-01T08:00:00.000Z\"\n  },\n  \"message\": \"Event updated successfully\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Event",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/school-admin/events/:eventId",
+              "host": ["{{baseUrl}}"],
+              "path": ["school-admin", "events", ":eventId"],
+              "variable": [
+                {
+                  "key": "eventId",
+                  "value": "",
+                  "description": "Event UUID"
+                }
+              ]
+            },
+            "description": "Delete an event from the School Admin's branch"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-admin/events/:eventId",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["school-admin", "events", ":eventId"],
+                  "variable": [
+                    {
+                      "key": "eventId",
+                      "value": "550e8400-e29b-41d4-a716-446655440020"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Event \\\"Parent-Teacher Meeting\\\" deleted successfully\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
