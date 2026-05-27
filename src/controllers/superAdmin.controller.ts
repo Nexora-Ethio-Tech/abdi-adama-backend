@@ -330,6 +330,55 @@ class SuperAdminController {
     }
   }
 
+  // ─── SMTP / Email Settings Management ────────────────────────────────────
+
+  async getSmtpSettings(_req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const settings = await superAdminService.getSmtpSettings();
+      res.json({
+        success: true,
+        data: settings,
+        note: 'smtp_pass is write-only and never returned for security reasons.'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateSmtpSettings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await superAdminService.updateSmtpSettings(
+        req.body,
+        req.user!.id,
+        req.user!.name
+      );
+      res.json({
+        success: true,
+        data: result,
+        message: `SMTP settings updated: ${result.updated.join(', ')}`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async testSmtpSettings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'A recipient email address is required.' }
+        });
+        return;
+      }
+      const result = await superAdminService.testSmtpSettings(email);
+      res.json({ success: result.success, message: result.message });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // ─── Finance Settings Management ─────────────────────────────────────────
 
   async getFinanceSettings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {

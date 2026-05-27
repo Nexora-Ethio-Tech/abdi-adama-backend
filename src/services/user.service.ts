@@ -10,6 +10,11 @@ import { CreateUserDTO, User, UserFilters, CreateUserResult, UserStatus } from '
 // Roles that use 4-digit PIN instead of complex password
 const PIN_BASED_ROLES = ['teacher', 'student', 'parent', 'finance-clerk', 'librarian', 'clinic-admin', 'driver'];
 
+// Only these roles receive a welcome email — they are created by the super admin,
+// work remotely, and have real email addresses. All other roles (teachers, students,
+// etc.) are on-site staff whose credentials are handed to them in person.
+const EMAIL_ON_CREATE_ROLES = ['school-admin', 'vice-principal', 'auditor'];
+
 class UserService {
   async createUser(userData: CreateUserDTO, createdBy: string): Promise<CreateUserResult> {
     const client: PoolClient = await pool.connect();
@@ -95,8 +100,10 @@ class UserService {
 
       logger.info(`User created: ${user.email} (${role}) by ${createdBy}`);
 
-      // Send welcome email with temporary credentials (non-blocking — failure never rolls back user creation)
-      if (user.email && !user.email.endsWith('@no-reply.local')) {
+      // Send welcome email only for roles created by super admin (school-admin, vice-principal, auditor).
+      // These users are remote, have real email addresses, and need their credentials delivered digitally.
+      // All other roles are on-site staff whose credentials are handed to them in person.
+      if (EMAIL_ON_CREATE_ROLES.includes(role) && user.email && !user.email.endsWith('@no-reply.local')) {
         sendWelcomeEmail(user.name, user.email, userPassword, user.role).catch((e) => {
           logger.error('Failed to send welcome email:', e);
         });

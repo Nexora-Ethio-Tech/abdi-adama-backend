@@ -77,4 +77,9 @@ router.get('/finance-settings', superAdminController.getFinanceSettings);
 router.patch('/finance-settings/:key', superAdminController.updateFinanceSetting);
 router.get('/finance-settings/audit-log', superAdminController.getFinanceSettingsAuditLog);
 
+// SMTP / Email Settings Management
+router.get('/smtp-settings', superAdminController.getSmtpSettings);
+router.put('/smtp-settings', superAdminController.updateSmtpSettings);
+router.post('/smtp-settings/test', superAdminController.testSmtpSettings);
+
 export default router;

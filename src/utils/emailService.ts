@@ -20,6 +20,15 @@ function getTransporter(): nodemailer.Transporter {
   return _transporter;
 }
 
+/**
+ * Clears the cached transporter so the next send picks up updated env vars.
+ * Called by superAdminService.updateSmtpSettings() after saving new credentials.
+ */
+export function resetTransporter(): void {
+  _transporter = null;
+  logger.info('[EMAIL] Transporter reset — next send will use updated SMTP config');
+}
+
 // The "from" address: prefer SMTP_FROM, fall back to SMTP_USER so the env
 // variable is optional and emails never go out with "from: <undefined>".
 const getSenderAddress = () =>

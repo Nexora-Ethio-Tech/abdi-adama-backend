@@ -2,6 +2,9 @@ import pool from '../config/database';
 import { hashPassword, generateRandomPassword } from '../utils/password';
 import { sendWelcomeEmail } from '../utils/emailService';
 
+// Roles that receive a welcome email on creation — must match user.service.ts
+const EMAIL_ON_CREATE_ROLES = ['school-admin', 'vice-principal', 'auditor'];
+
 class SuperAdminService {
   // Branch Management
   async createBranch(data: { name: string; code: string; logoUrl?: string; phone?: string; email?: string; address?: string }) {
@@ -122,7 +125,7 @@ class SuperAdminService {
 
     // 4. Insert the new user into the database
     const result = await pool.query(
-      `INSERT INTO users (digital_id, name, email, password, role, branch_id, phone, status)
+      `INSERT INTO users (digital_id, name, email, password_hash, role, branch_id, phone, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active')
        RETURNING id, digital_id, name, email, role, branch_id, phone, status, created_at`,
       [
@@ -138,11 +141,12 @@ class SuperAdminService {
 
     const newUser = result.rows[0];
 
-    // 5. Send welcome email with plain-text password (non-blocking)
-    //    If email delivery fails it logs the error but does NOT roll back user creation
-    sendWelcomeEmail(data.name, data.email, plainPassword, data.role).catch((err) => {
-      console.error(`[createUser] Welcome email failed for ${data.email}:`, err);
-    });
+    // 5. Send welcome email — only for roles that warrant email delivery (non-blocking)
+    if (EMAIL_ON_CREATE_ROLES.includes(data.role)) {
+      sendWelcomeEmail(data.name, data.email, plainPassword, data.role).catch((err) => {
+        console.error(`[createUser] Welcome email failed for ${data.email}:`, err);
+      });
+    }
 
     // 6. Return the new user — password is never included in the response
     return newUser;
@@ -285,6 +289,106 @@ class SuperAdminService {
       recentUsers: recentUsersResult.rows,
       pendingUsers: parseInt(pendingUsersResult.rows[0].count)
     };
+  }
+
+  // ─── SMTP / Email Settings Management ───────────────────────────────────
+
+  async getSmtpSettings() {
+    const SMTP_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_from'];
+    const result = await pool.query(
+      `SELECT key, value, updated_by, updated_at FROM finance_settings WHERE key = ANY($1) ORDER BY key`,
+      [SMTP_KEYS]
+    );
+
+    // Return a clean object — smtp_pass is intentionally excluded from GET
+    // so the password is never sent to the frontend
+    const settings: Record<string, string> = {
+      smtp_host: '',
+      smtp_port: '587',
+      smtp_user: '',
+      smtp_from: '',
+    };
+    for (const row of result.rows) {
+      settings[row.key] = row.value;
+    }
+    return settings;
+  }
+
+  async updateSmtpSettings(
+    data: {
+      smtp_host?: string;
+      smtp_port?: string;
+      smtp_user?: string;
+      smtp_pass?: string;
+      smtp_from?: string;
+    },
+    userId: string,
+    userName: string
+  ) {
+    const ALLOWED_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from'];
+    const updated: string[] = [];
+
+    for (const key of ALLOWED_KEYS) {
+      const value = (data as any)[key];
+      if (value === undefined || value === null) continue;
+
+      // Get old value for audit
+      const currentResult = await pool.query(
+        `SELECT value FROM finance_settings WHERE key = $1`, [key]
+      );
+      const oldValue = currentResult.rows[0]?.value ?? null;
+
+      // Upsert
+      await pool.query(
+        `INSERT INTO finance_settings (key, value, updated_by, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (key) DO UPDATE
+         SET value = $2, updated_by = $3, updated_at = NOW()`,
+        [key, value, userId]
+      );
+
+      // Audit — mask the password value
+      const auditValue = key === 'smtp_pass' ? '••••••••' : value;
+      const auditOld   = key === 'smtp_pass' ? '••••••••' : oldValue;
+      await pool.query(
+        `INSERT INTO finance_settings_audit (setting_key, old_value, new_value, changed_by, changed_by_name)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [key, auditOld, auditValue, userId, userName]
+      );
+
+      // Apply to process.env immediately so the running server uses the new values
+      // without needing a restart
+      process.env[key.toUpperCase()] = value;
+      if (key === 'smtp_from') process.env['SMTP_FROM'] = value;
+
+      updated.push(key);
+    }
+
+    // Invalidate the singleton transporter so next email uses the new config
+    const emailService = require('../utils/emailService');
+    if (typeof emailService.resetTransporter === 'function') {
+      emailService.resetTransporter();
+    }
+
+    return { updated };
+  }
+
+  async testSmtpSettings(toEmail: string): Promise<{ success: boolean; message: string }> {
+    const { sendEmail } = require('../utils/emailService');
+    const sent = await sendEmail(
+      toEmail,
+      'SMTP Test – Abdi Adama School IMS',
+      `<div style="font-family:Arial,sans-serif;padding:20px;max-width:500px;margin:auto;border:1px solid #e2e8f0;border-radius:8px;">
+        <h2 style="color:#4f46e5;">✅ SMTP Configuration Test</h2>
+        <p>This is a test email sent from the <strong>Abdi Adama School IMS</strong> Super Admin panel.</p>
+        <p>If you received this, your SMTP settings are configured correctly.</p>
+        <p style="font-size:12px;color:#64748b;margin-top:20px;">Sent at: ${new Date().toISOString()}</p>
+      </div>`
+    );
+    if (sent) {
+      return { success: true, message: `Test email sent successfully to ${toEmail}` };
+    }
+    return { success: false, message: 'Failed to send test email. Check your SMTP credentials and try again.' };
   }
 
   // ─── Finance Settings Management ─────────────────────────────────────────
