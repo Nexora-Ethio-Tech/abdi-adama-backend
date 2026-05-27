@@ -416,7 +416,7 @@ CREATE TABLE finance_transactions (
     student_id      UUID          REFERENCES students(id) ON DELETE SET NULL,
     student_name    VARCHAR(150),
     amount          NUMERIC(14,2) NOT NULL,
-    type            VARCHAR(50)   NOT NULL,
+    type            VARCHAR(150)  NOT NULL,
     date            DATE          NOT NULL,
     verified_by     VARCHAR(150),
     branch_id       UUID          REFERENCES branches(id) ON DELETE SET NULL,

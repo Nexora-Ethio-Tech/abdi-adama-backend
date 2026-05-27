@@ -665,7 +665,7 @@ CREATE TABLE events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title VARCHAR(200) NOT NULL,
   date DATE NOT NULL,
-  type VARCHAR(50) NOT NULL,
+  type VARCHAR(150) NOT NULL,
   description TEXT,
   branch_id UUID REFERENCES branches(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

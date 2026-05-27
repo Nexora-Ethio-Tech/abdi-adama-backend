@@ -26,7 +26,7 @@ async function createMissingTables() {
         student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
         student_name VARCHAR(150) NOT NULL,
         amount NUMERIC(12,2) NOT NULL,
-        type VARCHAR(50) NOT NULL,
+        type VARCHAR(150) NOT NULL,
         date DATE NOT NULL DEFAULT CURRENT_DATE,
         verified_by VARCHAR(150),
         branch_id UUID REFERENCES branches(id) ON DELETE SET NULL,
