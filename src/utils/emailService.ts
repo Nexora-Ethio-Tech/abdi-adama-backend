@@ -1,24 +1,31 @@
+import nodemailer from 'nodemailer';
 import logger from './logger';
 
-/**
- * Stub email service for logging and future integration with a real provider (e.g. Nodemailer, AWS SES, SendGrid).
- */
 export async function sendEmail(to: string, subject: string, htmlBody: string): Promise<boolean> {
-  logger.info(`[EMAIL SERVICE] Sending Email to ${to}`);
-  logger.info(`[EMAIL SERVICE] Subject: ${subject}`);
-  logger.info(`[EMAIL SERVICE] Body snippet:\n${htmlBody}`);
-  
-  // Real implementation stub:
-  // try {
-  //   const transporter = nodemailer.createTransport({...});
-  //   await transporter.sendMail({ from, to, subject, html: htmlBody });
-  //   return true;
-  // } catch (e) {
-  //   logger.error('Failed to send email:', e);
-  //   return false;
-  // }
-  
-  return true;
+  try {
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT),
+      secure: false,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+
+    await transporter.sendMail({
+      from: `"Abdi Adama School IMS" <${process.env.SMTP_FROM}>`,
+      to,
+      subject,
+      html: htmlBody,
+    });
+
+    logger.info(`[EMAIL SERVICE] Email sent successfully to ${to}`);
+    return true;
+  } catch (error) {
+    logger.error(`[EMAIL SERVICE] Failed to send email to ${to}:`, error);
+    return false;
+  }
 }
 
 /**

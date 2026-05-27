@@ -31,7 +31,7 @@ const capacitySchema = Joi.object({
   capacity: Joi.number().integer().min(0).required()
 });
 
-// ✅ New: Create user schema
+//  New: Create user schema
 const createUserSchema = Joi.object({
   name: Joi.string().required(),
   email: Joi.string().email().required(),

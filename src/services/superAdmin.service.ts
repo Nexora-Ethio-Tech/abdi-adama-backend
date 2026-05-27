@@ -1,4 +1,6 @@
 import pool from '../config/database';
+import { hashPassword, generateRandomPassword } from '../utils/password';
+import { sendWelcomeEmail } from '../utils/emailService';
 
 class SuperAdminService {
   // Branch Management
@@ -90,7 +92,64 @@ class SuperAdminService {
     return { message: 'Branch deleted successfully' };
   }
 
-  // System-wide Reports
+  // ─── User Management ──────────────────────────────────────────────────────
+
+  async createUser(data: {
+    name: string;
+    email: string;
+    role: string;
+    branchId?: string;
+    phone?: string;
+  }) {
+    // 1. Check if email is already taken
+    const existing = await pool.query(
+      `SELECT id FROM users WHERE email = $1`,
+      [data.email]
+    );
+    if (existing.rows.length > 0) {
+      throw new Error('A user with this email already exists');
+    }
+
+    // 2. Generate plain-text password (for email) and hash it for DB storage
+    const plainPassword = generateRandomPassword();
+    const hashedPassword = await hashPassword(plainPassword);
+
+    // 3. Generate a unique digital ID  e.g. USR-20260527-48291
+    const date = new Date();
+    const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+    const randomPart = Math.floor(10000 + Math.random() * 90000);
+    const digitalId = `USR-${dateStr}-${randomPart}`;
+
+    // 4. Insert the new user into the database
+    const result = await pool.query(
+      `INSERT INTO users (digital_id, name, email, password, role, branch_id, phone, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active')
+       RETURNING id, digital_id, name, email, role, branch_id, phone, status, created_at`,
+      [
+        digitalId,
+        data.name,
+        data.email,
+        hashedPassword,
+        data.role,
+        data.branchId || null,
+        data.phone   || null,
+      ]
+    );
+
+    const newUser = result.rows[0];
+
+    // 5. Send welcome email with plain-text password (non-blocking)
+    //    If email delivery fails it logs the error but does NOT roll back user creation
+    sendWelcomeEmail(data.name, data.email, plainPassword, data.role).catch((err) => {
+      console.error(`[createUser] Welcome email failed for ${data.email}:`, err);
+    });
+
+    // 6. Return the new user — password is never included in the response
+    return newUser;
+  }
+
+  // ─── System-wide Reports ──────────────────────────────────────────────────
+
   async getSystemReport() {
     const branchesResult = await pool.query(`SELECT COUNT(*) as count FROM branches`);
     
@@ -158,7 +217,8 @@ class SuperAdminService {
     };
   }
 
-  // Academic Year Management (Global)
+  // ─── Academic Year Management (Global) ───────────────────────────────────
+
   async createGlobalAcademicYear(data: { yearName: string; startDate: string; endDate: string }) {
     const result = await pool.query(
       `INSERT INTO academic_years (year_name, start_date, end_date, is_active)
@@ -188,7 +248,8 @@ class SuperAdminService {
     return result.rows;
   }
 
-  // Set Grade/Section Capacity Limits
+  // ─── Class Capacity ───────────────────────────────────────────────────────
+
   async setClassCapacity(classId: string, capacity: number) {
     const result = await pool.query(
       `UPDATE classes SET capacity = $1 WHERE id = $2 RETURNING *`,
@@ -201,7 +262,8 @@ class SuperAdminService {
     return result.rows[0];
   }
 
-  // Dashboard
+  // ─── Dashboard ────────────────────────────────────────────────────────────
+
   async getDashboard() {
     const systemReport = await this.getSystemReport();
     
@@ -225,7 +287,8 @@ class SuperAdminService {
     };
   }
 
-  // Finance Settings Management
+  // ─── Finance Settings Management ─────────────────────────────────────────
+
   async getFinanceSettings() {
     const result = await pool.query(`SELECT * FROM finance_settings ORDER BY key`);
     return result.rows;
