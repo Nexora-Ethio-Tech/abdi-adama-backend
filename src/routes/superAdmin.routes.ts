@@ -31,10 +31,20 @@ const capacitySchema = Joi.object({
   capacity: Joi.number().integer().min(0).required()
 });
 
+// ✅ New: Create user schema
+const createUserSchema = Joi.object({
+  name: Joi.string().required(),
+  email: Joi.string().email().required(),
+  role: Joi.string().required(),
+  branchId: Joi.string().uuid().optional(),
+  phone: Joi.string().allow('').optional()
+});
+
 // User Management
 router.post('/create-school-admin', validate(schemas.createAdminUser), superAdminController.createSchoolAdmin);
 router.post('/create-vice-principal', validate(schemas.createAdminUser), superAdminController.createVicePrincipal);
 router.post('/create-auditor', validate(schemas.createAdminUser), superAdminController.createAuditor);
+router.post('/users', validate(createUserSchema), superAdminController.createUser); // ✅ New
 router.get('/users', superAdminController.getAllUsers);
 router.get('/users/:id', superAdminController.getUserById);
 router.patch('/users/:id/status', validate(schemas.updateUserStatus), superAdminController.updateUserStatus);
