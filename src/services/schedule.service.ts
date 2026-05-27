@@ -155,7 +155,7 @@ class ScheduleService {
          updated_at = NOW()
        RETURNING *`,
       [branchId, year, config.periodsPerDay, config.startTime, config.endTime,
-       config.maxConsecutivePeriods, config.distributeSubjects]
+        config.maxConsecutivePeriods, config.distributeSubjects]
     );
     return result.rows[0];
   }
@@ -359,17 +359,17 @@ class ScheduleService {
 
     const courses: CourseInfo[] = structureResult.length > 0
       ? structureResult.map((row: any) => ({
-          courseId: row.id,
-          courseName: row.subject,
-          courseCode: `${row.class_id}-${row.subject}`,
-          teacherId: row.teacher_id,
-          teacherName: row.teacher_name,
-          classId: row.class_id,
-          className: row.section ? `${row.class_name}${row.section}` : row.class_name,
-          sessionsPerWeek: parseInt(row.sessions_per_week)
-        }))
+        courseId: row.id,
+        courseName: row.subject,
+        courseCode: `${row.class_id}-${row.subject}`,
+        teacherId: row.teacher_id,
+        teacherName: row.teacher_name,
+        classId: row.class_id,
+        className: row.section ? `${row.class_name}${row.section}` : row.class_name,
+        sessionsPerWeek: parseInt(row.sessions_per_week)
+      }))
       : (await pool.query(
-          `SELECT c.id as course_id, c.name as course_name, c.code as course_code,
+        `SELECT c.id as course_id, c.name as course_name, c.code as course_code,
                   c.teacher_id, COALESCE(u.name, 'Unknown') as teacher_name,
                   c.class_id, cl.name as class_name,
                   COALESCE(cf.sessions_per_week, 5) as sessions_per_week
@@ -380,17 +380,17 @@ class ScheduleService {
            LEFT JOIN course_frequency cf ON cf.course_id = c.id AND cf.academic_year = $2
            WHERE cl.branch_id = $1 AND c.teacher_id IS NOT NULL
            ORDER BY c.name`,
-          [branchId, year]
-        )).rows.map((r: any) => ({
-          courseId: r.course_id,
-          courseName: r.course_name,
-          courseCode: r.course_code,
-          teacherId: r.teacher_id,
-          teacherName: r.teacher_name,
-          classId: r.class_id,
-          className: r.class_name,
-          sessionsPerWeek: parseInt(r.sessions_per_week)
-        }));
+        [branchId, year]
+      )).rows.map((r: any) => ({
+        courseId: r.course_id,
+        courseName: r.course_name,
+        courseCode: r.course_code,
+        teacherId: r.teacher_id,
+        teacherName: r.teacher_name,
+        classId: r.class_id,
+        className: r.class_name,
+        sessionsPerWeek: parseInt(r.sessions_per_week)
+      }));
 
     if (courses.length === 0) {
       throw new Error('No timetable structure or courses found. Please define timetable structure first.');
@@ -474,7 +474,7 @@ class ScheduleService {
        VALUES ($1, $2, 'pending', $3, $4, $5, 0, $6)
        RETURNING *`,
       [branchId, year, JSON.stringify(candidates),
-       candidates[0].length, totalSlotsPossible, generatedBy]
+        candidates[0].length, totalSlotsPossible, generatedBy]
     );
 
     return {
