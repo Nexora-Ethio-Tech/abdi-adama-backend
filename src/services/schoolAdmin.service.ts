@@ -785,17 +785,21 @@ class SchoolAdminService {
       // ── Persist payment + generated account IDs ─────────────────────────────
       const updateResult = await client.query(
         `UPDATE pending_applications
-         SET status                  = $1,
-             finance_status          = $2,
-             finance_user_id         = $3,
-             finance_approved_at     = NOW(),
-             payment_amount          = $4,
-             payment_reference       = $5,
-             student_user_id         = $6,
-             parent_user_id          = $7,
-             credentials_generated_at = NOW(),
-             updated_at              = NOW()
-         WHERE id = $8
+         SET status                    = $1,
+             finance_status            = $2,
+             finance_user_id           = $3,
+             finance_approved_at       = NOW(),
+             payment_amount            = $4,
+             payment_reference         = $5,
+             student_user_id           = $6,
+             parent_user_id            = $7,
+             student_id_generated      = $8,
+             student_password_temp     = $9,
+             parent_id_generated       = $10,
+             parent_password_temp      = $11,
+             credentials_generated_at  = NOW(),
+             updated_at                = NOW()
+         WHERE id = $12
          RETURNING *`,
         [
           'payment-confirmed',
@@ -805,6 +809,10 @@ class SchoolAdminService {
           payment.reference || null,
           studentCreate.user.id,
           parentCreate.user.id,
+          studentCreate.user.digital_id,
+          studentCreate.temporaryPassword,
+          parentCreate.user.digital_id,
+          parentCreate.temporaryPassword,
           applicationId,
         ]
       );
