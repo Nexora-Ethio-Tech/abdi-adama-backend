@@ -370,15 +370,15 @@ class ScheduleService {
         }))
       : (await pool.query(
           `SELECT c.id as course_id, c.name as course_name, c.code as course_code,
-                  c.teacher_id, u.name as teacher_name,
+                  c.teacher_id, COALESCE(u.name, 'Unknown') as teacher_name,
                   c.class_id, cl.name as class_name,
                   COALESCE(cf.sessions_per_week, 5) as sessions_per_week
            FROM courses c
-           JOIN teachers t ON c.teacher_id = t.id
-           JOIN users u ON t.user_id = u.id
+           LEFT JOIN teachers t ON c.teacher_id = t.id
+           LEFT JOIN users u ON t.user_id = u.id
            JOIN classes cl ON c.class_id = cl.id
            LEFT JOIN course_frequency cf ON cf.course_id = c.id AND cf.academic_year = $2
-           WHERE t.branch_id = $1
+           WHERE cl.branch_id = $1 AND c.teacher_id IS NOT NULL
            ORDER BY c.name`,
           [branchId, year]
         )).rows.map((r: any) => ({
