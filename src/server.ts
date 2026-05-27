@@ -162,6 +162,7 @@ async function ensureSchemaExtensions(): Promise<void> {
 
     await runSchemaFile('payroll_schema.sql', 'Payroll');
     await runSchemaFile('schedule_schema.sql', 'Schedule Builder');
+    await runSchemaFile('email_smtp_migration.sql', 'Email / SMTP');
   } catch (err: any) {
     logger.error('❌ Failed to run schema migrations:', err);
   }

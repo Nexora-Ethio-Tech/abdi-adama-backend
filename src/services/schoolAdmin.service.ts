@@ -1,6 +1,7 @@
 import pool from '../config/database';
 import userService from './user.service';
 import { generate4DigitPIN, hashPassword } from '../utils/password';
+import { sendAdmissionCredentialsEmail } from '../utils/emailService';
 
 class SchoolAdminService {
   // User Management (existing methods)
@@ -739,60 +740,62 @@ class SchoolAdminService {
   async financeApproveApplication(applicationId: string, payment: { amount: number; reference?: string }, financeUserId: string) {
     const client = await pool.connect();
     try {
-      const { generateCredentials } = require('../utils/credentialGenerator');
-
       await client.query('BEGIN');
 
       const appRes = await client.query('SELECT * FROM pending_applications WHERE id = $1 FOR UPDATE', [applicationId]);
       if (appRes.rows.length === 0) throw new Error('Application not found');
       const app = appRes.rows[0];
 
-      // Create student and parent user accounts using userService
-      const userService = require('./user.service').default;
+      // Lazy-require to avoid circular dependency (user.service → schoolAdmin.service)
+      const userServiceInstance = require('./user.service').default;
 
-      // Helper to generate a throwaway email if none provided
-      const genEmail = (rolePrefix: string) => `${rolePrefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}@no-reply.local`;
+      // Helper: generate a throwaway email for accounts that have no real email.
+      // The @no-reply.local suffix is checked in user.service to suppress welcome emails
+      // for these placeholder addresses.
+      const genPlaceholderEmail = (prefix: string) =>
+        `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}@no-reply.local`;
 
-      const studentData = {
-        name: app.applicant_name,
-        email: app.applicant_email || genEmail('student'),
-        role: 'student',
-        branchId: app.branch_id,
-        grade: app.grade_applying
-      };
+      // ── Create student account ──────────────────────────────────────────────
+      const studentEmail = app.applicant_email || genPlaceholderEmail('student');
+      const studentCreate = await userServiceInstance.createUser(
+        {
+          name: app.applicant_name,
+          email: studentEmail,
+          role: 'student',
+          branchId: app.branch_id,
+          grade: app.grade_applying,
+        },
+        financeUserId
+      );
 
-      const parentData = {
-        name: app.parent_name || `${app.applicant_name} Parent`,
-        email: genEmail('parent'),
-        role: 'parent',
-        branchId: app.branch_id
-      };
+      // ── Create parent account ───────────────────────────────────────────────
+      // Parents rarely have an email on the application form, so we always use a
+      // placeholder. The parent receives their credentials via the student's email
+      // (see sendAdmissionCredentialsEmail below).
+      const parentCreate = await userServiceInstance.createUser(
+        {
+          name: app.parent_name || `${app.applicant_name} Parent`,
+          email: genPlaceholderEmail('parent'),
+          role: 'parent',
+          branchId: app.branch_id,
+        },
+        financeUserId
+      );
 
-      const studentCreate = await userService.createUser(studentData, financeUserId);
-      const parentCreate = await userService.createUser(parentData, financeUserId);
-
-      // Generate credentials for student and parent
-      const credentials = generateCredentials();
-
-      // Record payment and update application status to payment-confirmed
-      // School Admin will complete final registration by assigning class/section
+      // ── Persist payment + generated account IDs ─────────────────────────────
       const updateResult = await client.query(
-        `UPDATE pending_applications 
-         SET status = $1, 
-             finance_status = $2, 
-             finance_user_id = $3, 
-             finance_approved_at = NOW(), 
-             payment_amount = $4, 
-             payment_reference = $5, 
-             student_user_id = $6, 
-             parent_user_id = $7, 
-             student_id_generated = $8,
-             student_password_temp = $9,
-             parent_id_generated = $10,
-             parent_password_temp = $11,
+        `UPDATE pending_applications
+         SET status                  = $1,
+             finance_status          = $2,
+             finance_user_id         = $3,
+             finance_approved_at     = NOW(),
+             payment_amount          = $4,
+             payment_reference       = $5,
+             student_user_id         = $6,
+             parent_user_id          = $7,
              credentials_generated_at = NOW(),
-             updated_at = NOW() 
-         WHERE id = $12 
+             updated_at              = NOW()
+         WHERE id = $8
          RETURNING *`,
         [
           'payment-confirmed',
@@ -802,24 +805,33 @@ class SchoolAdminService {
           payment.reference || null,
           studentCreate.user.id,
           parentCreate.user.id,
-          credentials.studentId,
-          credentials.studentPassword,
-          credentials.parentId,
-          credentials.parentPassword,
-          applicationId
+          applicationId,
         ]
       );
 
       await client.query('COMMIT');
 
+      // ── Send admission credentials email to the student's real email ─────────
+      // We send one email that covers both the student login and notes the parent
+      // account. This fires after COMMIT so a failure never rolls back the DB work.
+      if (app.applicant_email && studentCreate.temporaryPassword) {
+        sendAdmissionCredentialsEmail(
+          app.applicant_name,
+          app.applicant_email,
+          'student',
+          studentEmail,
+          studentCreate.temporaryPassword,
+          app.applicant_name,
+          app.grade_applying
+        ).catch((err) => {
+          console.error('[financeApproveApplication] Failed to send student credentials email:', err);
+        });
+      }
+
       return {
         application: updateResult.rows[0],
         student: studentCreate,
         parent: parentCreate,
-        credentials: {
-          studentId: credentials.studentId,
-          parentId: credentials.parentId
-        }
       };
     } catch (error) {
       await client.query('ROLLBACK');

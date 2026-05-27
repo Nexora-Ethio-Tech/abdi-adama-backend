@@ -4,7 +4,7 @@ import { hashPassword, generateRandomPassword, generate4DigitPIN } from '../util
 import { generateDigitalId } from '../utils/idGenerator';
 import { USER_STATUS } from '../config/constants';
 import logger from '../utils/logger';
-import { sendEmail } from '../utils/emailService';
+import { sendWelcomeEmail } from '../utils/emailService';
 import { CreateUserDTO, User, UserFilters, CreateUserResult, UserStatus } from '../types';
 
 // Roles that use 4-digit PIN instead of complex password
@@ -95,31 +95,11 @@ class UserService {
 
       logger.info(`User created: ${user.email} (${role}) by ${createdBy}`);
 
-      // Send welcome email with temporary password (if generated)
-      try {
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-        const subject = 'Welcome to Abdi Adama School IMS';
-        const htmlBody = `
-          <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
-            <h2 style="color: #4f46e5;">Welcome to Abdi Adama School IMS</h2>
-            <p>Dear <strong>${user.name}</strong>,</p>
-            <p>Your account has been created with the role <strong>${user.role}</strong>.</p>
-            <p>Please use the following credentials to sign in for the first time:</p>
-            <ul>
-              <li><strong>Email:</strong> ${user.email}</li>
-              <li><strong>Password:</strong> ${userPassword}</li>
-            </ul>
-            <p>Login here: <a href="${frontendUrl}/login">${frontendUrl}/login</a></p>
-            <p style="font-size:12px;color:#64748b;">You will be prompted to change your password after first login.</p>
-          </div>
-        `;
-
-        if (user.email) {
-          await sendEmail(user.email, subject, htmlBody);
-          logger.info(`Welcome email sent to ${user.email}`);
-        }
-      } catch (e) {
-        logger.error('Failed to send welcome email:', e);
+      // Send welcome email with temporary credentials (non-blocking — failure never rolls back user creation)
+      if (user.email && !user.email.endsWith('@no-reply.local')) {
+        sendWelcomeEmail(user.name, user.email, userPassword, user.role).catch((e) => {
+          logger.error('Failed to send welcome email:', e);
+        });
       }
 
       return {

@@ -1,5 +1,5 @@
 import pool from '../config/database';
-import { sendLoanNotification } from '../utils/emailService';
+import { sendLoanSubmittedEmail, sendLoanApprovedEmail } from '../utils/emailService';
 
 class LoanService {
   /**
@@ -62,16 +62,14 @@ class LoanService {
       ]
     );
 
-    // 7. Call sendEmail stub
+    // 7. Send "loan submitted" email so the employee knows it's pending review
     const userResult = await pool.query(`SELECT name, email FROM users WHERE id = $1`, [employeeId]);
     if (userResult.rows.length > 0) {
       const { name, email } = userResult.rows[0];
       if (email) {
-        try {
-          await sendLoanNotification(name, email, amount, monthlyDeduction, maxMonths);
-        } catch (err) {
-          console.error('Failed to send loan email notification:', err);
-        }
+        sendLoanSubmittedEmail(name, email, amount, monthlyDeduction, maxMonths).catch((err) => {
+          console.error('Failed to send loan submission email:', err);
+        });
       }
     }
 
@@ -167,6 +165,29 @@ class LoanService {
         `Your approved loan of ${loanCheck.rows[0].amount} ETB has been paid out by finance and is now active. Monthly deductions will begin on your next payroll.`
       ]
     );
+
+    // Send "approved & disbursed" email now that the loan is truly active
+    const userResult = await pool.query(
+      `SELECT u.name, u.email, l.monthly_deduction, l.max_months
+       FROM users u
+       JOIN loans l ON l.id = $1
+       WHERE u.id = $2`,
+      [loanId, loanCheck.rows[0].employee_id]
+    );
+    if (userResult.rows.length > 0) {
+      const { name, email, monthly_deduction, max_months } = userResult.rows[0];
+      if (email) {
+        sendLoanApprovedEmail(
+          name,
+          email,
+          Number(loanCheck.rows[0].amount),
+          Number(monthly_deduction),
+          Number(max_months)
+        ).catch((err) => {
+          console.error('Failed to send loan approval email:', err);
+        });
+      }
+    }
 
     return loan;
   }

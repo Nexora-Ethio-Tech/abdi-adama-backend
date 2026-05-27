@@ -1,35 +1,57 @@
 import nodemailer from 'nodemailer';
 import logger from './logger';
 
-export async function sendEmail(to: string, subject: string, htmlBody: string): Promise<boolean> {
-  try {
-    const transporter = nodemailer.createTransport({
+// ─── Singleton transporter ────────────────────────────────────────────────────
+// Created once at module load time so we don't pay the setup cost on every send.
+let _transporter: nodemailer.Transporter | null = null;
+
+function getTransporter(): nodemailer.Transporter {
+  if (!_transporter) {
+    _transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT),
+      port: Number(process.env.SMTP_PORT) || 587,
       secure: false,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
     });
+  }
+  return _transporter;
+}
 
-    await transporter.sendMail({
-      from: `"Abdi Adama School IMS" <${process.env.SMTP_FROM}>`,
+// The "from" address: prefer SMTP_FROM, fall back to SMTP_USER so the env
+// variable is optional and emails never go out with "from: <undefined>".
+const getSenderAddress = () =>
+  `"Abdi Adama School IMS" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`;
+
+// ─── Core send helper ─────────────────────────────────────────────────────────
+
+export async function sendEmail(
+  to: string,
+  subject: string,
+  htmlBody: string
+): Promise<boolean> {
+  try {
+    await getTransporter().sendMail({
+      from: getSenderAddress(),
       to,
       subject,
       html: htmlBody,
     });
-
-    logger.info(`[EMAIL SERVICE] Email sent successfully to ${to}`);
+    logger.info(`[EMAIL] Sent "${subject}" → ${to}`);
     return true;
   } catch (error) {
-    logger.error(`[EMAIL SERVICE] Failed to send email to ${to}:`, error);
+    logger.error(`[EMAIL] Failed to send "${subject}" → ${to}:`, error);
     return false;
   }
 }
 
+// ─── Welcome email ────────────────────────────────────────────────────────────
+
 /**
  * Sends a welcome email to a newly created user with their login credentials.
+ * Works for both admin roles (complex password) and operational roles (4-digit PIN).
  */
 export async function sendWelcomeEmail(
   name: string,
@@ -37,7 +59,9 @@ export async function sendWelcomeEmail(
   password: string,
   role: string
 ): Promise<boolean> {
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
   const subject = 'Welcome to Abdi Adama School IMS – Your Account is Ready';
+
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
       <h2 style="color: #4f46e5; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">
@@ -45,10 +69,7 @@ export async function sendWelcomeEmail(
       </h2>
 
       <p>Dear <strong>${name}</strong>,</p>
-      <p>
-        Your account has been created by the Super Admin. You can now log in to the
-        School Information Management System using the credentials below.
-      </p>
+      <p>Your account has been created. You can now log in using the credentials below.</p>
 
       <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
         <tr style="background-color: #f8fafc;">
@@ -77,7 +98,7 @@ export async function sendWelcomeEmail(
 
       <h3 style="color: #4f46e5;">How to Log In</h3>
       <ol style="line-height: 1.8; color: #475569;">
-        <li>Go to the School IMS login page.</li>
+        <li>Go to the <a href="${frontendUrl}/login">School IMS login page</a>.</li>
         <li>Enter your email: <strong>${email}</strong></li>
         <li>Enter your temporary password shown above.</li>
         <li>You will be prompted to set a new password on first login.</li>
@@ -85,7 +106,7 @@ export async function sendWelcomeEmail(
 
       <div style="margin-top: 30px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 15px;">
         This is an automated message. If you did not expect this account or believe
-        this is an error, please contact your Super Admin immediately.
+        this is an error, please contact your administrator immediately.
       </div>
     </div>
   `;
@@ -93,23 +114,73 @@ export async function sendWelcomeEmail(
   return sendEmail(email, subject, htmlBody);
 }
 
+// ─── Loan notification ────────────────────────────────────────────────────────
+
 /**
- * Sends a formatted loan notification email to an employee.
+ * Sent when a loan request is SUBMITTED (pending auditor review).
+ * Subject and body reflect the pending state — not "issued successfully".
  */
-export async function sendLoanNotification(
+export async function sendLoanSubmittedEmail(
   employeeName: string,
   email: string,
   amount: number,
   monthlyDeduction: number,
   maxMonths: number
 ): Promise<boolean> {
-  const subject = 'Loan Issued successfully - Abdi Adama School IMS';
+  const subject = 'Loan Request Submitted – Abdi Adama School IMS';
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
-      <h2 style="color: #4f46e5; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">Loan Agreement Information</h2>
+      <h2 style="color: #4f46e5; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">Loan Request Submitted</h2>
       <p>Dear <strong>${employeeName}</strong>,</p>
-      <p>This is to inform you that a loan has been successfully issued to you in the School Management Information System (IMS).</p>
-      
+      <p>Your loan request has been submitted and is <strong>pending auditor approval</strong>. You will receive another notification once it is reviewed.</p>
+
+      <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
+        <tr style="background-color: #f8fafc;">
+          <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Requested Amount</th>
+          <td style="padding: 10px; border: 1px solid #e2e8f0;"><strong>${amount} ETB</strong></td>
+        </tr>
+        <tr>
+          <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Proposed Monthly Deduction</th>
+          <td style="padding: 10px; border: 1px solid #e2e8f0; color: #dc2626;"><strong>${monthlyDeduction} ETB</strong></td>
+        </tr>
+        <tr style="background-color: #f8fafc;">
+          <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Maximum Duration</th>
+          <td style="padding: 10px; border: 1px solid #e2e8f0;"><strong>${maxMonths} Months</strong></td>
+        </tr>
+      </table>
+
+      <div style="background-color: #fefce8; border: 1px solid #fde68a; border-radius: 6px; padding: 15px; margin: 20px 0;">
+        <strong style="color: #92400e;">⏳ Status: Pending Auditor Review</strong>
+        <p style="margin: 8px 0 0; color: #78350f;">
+          No deductions will begin until the loan is approved and paid out by Finance.
+        </p>
+      </div>
+
+      <div style="margin-top: 30px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+        This is an automated system notification. If you did not request this loan, please contact the Finance Department immediately.
+      </div>
+    </div>
+  `;
+  return sendEmail(email, subject, htmlBody);
+}
+
+/**
+ * Sent when a loan is APPROVED by the auditor and paid out by Finance (status → active).
+ */
+export async function sendLoanApprovedEmail(
+  employeeName: string,
+  email: string,
+  amount: number,
+  monthlyDeduction: number,
+  maxMonths: number
+): Promise<boolean> {
+  const subject = 'Loan Approved & Disbursed – Abdi Adama School IMS';
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+      <h2 style="color: #4f46e5; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">Loan Approved &amp; Disbursed</h2>
+      <p>Dear <strong>${employeeName}</strong>,</p>
+      <p>Your loan has been approved by the auditor and the funds have been disbursed by Finance. Monthly deductions will begin on your next payroll cycle.</p>
+
       <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
         <tr style="background-color: #f8fafc;">
           <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Loan Amount</th>
@@ -124,21 +195,25 @@ export async function sendLoanNotification(
           <td style="padding: 10px; border: 1px solid #e2e8f0;"><strong>${maxMonths} Months</strong></td>
         </tr>
       </table>
-      
-      <p>The monthly repayment amount will be automatically deducted from your basic salary starting from the next payroll cycle until the loan is fully repaid.</p>
-      <p>You can view your real-time outstanding balance, payment history, and salary slips at any time in your staff dashboard under the **My Finance** tab.</p>
-      
+
+      <p>You can view your outstanding balance, payment history, and salary slips at any time in your staff dashboard under the <strong>My Finance</strong> tab.</p>
+
       <div style="margin-top: 30px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 15px;">
-        This is an automated system notification. If you did not request this loan or believe there is an error, please contact the Finance Department immediately.
+        This is an automated system notification. For any inquiries, please contact the Finance Department.
       </div>
     </div>
   `;
-
   return sendEmail(email, subject, htmlBody);
 }
 
+// Keep the old export name as an alias so any other callers don't break.
+// Points to the "submitted" variant since that was the original call site.
+export const sendLoanNotification = sendLoanSubmittedEmail;
+
+// ─── Payroll notification ─────────────────────────────────────────────────────
+
 /**
- * Sends a formatted payroll notification email to an employee when payroll is finalized.
+ * Sent to every employee when a payroll run is finalized.
  */
 export async function sendPayrollNotification(
   employeeName: string,
@@ -147,26 +222,91 @@ export async function sendPayrollNotification(
   year: number,
   netPay: number
 ): Promise<boolean> {
-  const subject = `Payslip Available for ${month} ${year} - Abdi Adama School IMS`;
+  const subject = `Payslip Available for ${month} ${year} – Abdi Adama School IMS`;
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
       <h2 style="color: #4f46e5; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">Payslip Published</h2>
       <p>Dear <strong>${employeeName}</strong>,</p>
-      <p>Your payslip for the month of <strong>${month} ${year}</strong> has been processed and finalized by the Finance Department.</p>
-      
+      <p>Your payslip for <strong>${month} ${year}</strong> has been processed and finalized by the Finance Department.</p>
+
       <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 15px; margin: 20px 0; text-align: center;">
         <span style="font-size: 14px; color: #166534; display: block; margin-bottom: 5px;">Net Salary Pay</span>
-        <strong style="font-size: 24px; color: #15803d;">${netPay} ETB</strong>
+        <strong style="font-size: 24px; color: #15803d;">${netPay.toFixed(2)} ETB</strong>
       </div>
-      
+
       <p>A full breakdown of your basic salary, allowances, overtime, absent deductions, loan repayments, pension, and income tax is now available.</p>
-      <p>Please log in to your **Staff Portal** and go to the **My Finance** page to view and download your full payslip.</p>
-      
+      <p>Please log in to your <strong>Staff Portal</strong> and go to the <strong>My Finance</strong> page to view and download your full payslip.</p>
+
       <div style="margin-top: 30px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 15px;">
-        This is an automated system notification. For any inquiries regarding your salary slip calculations, please contact your branch finance clerk.
+        This is an automated system notification. For any inquiries regarding your salary calculations, please contact your branch finance clerk.
+      </div>
+    </div>
+  `;
+  return sendEmail(email, subject, htmlBody);
+}
+
+// ─── Admission credentials email ──────────────────────────────────────────────
+
+/**
+ * Sent to a student (or parent) when their account is created during admission approval.
+ * Clearly shows the login email AND the temporary PIN/password.
+ */
+export async function sendAdmissionCredentialsEmail(
+  recipientName: string,
+  recipientEmail: string,
+  role: 'student' | 'parent',
+  loginEmail: string,
+  temporaryPassword: string,
+  studentName: string,
+  grade: string
+): Promise<boolean> {
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const roleLabel = role === 'student' ? 'Student' : 'Parent / Guardian';
+  const subject = `Your ${roleLabel} Account – Abdi Adama School IMS`;
+
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+      <h2 style="color: #4f46e5; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">
+        Welcome to Abdi Adama School IMS 🎉
+      </h2>
+
+      <p>Dear <strong>${recipientName}</strong>,</p>
+      <p>
+        The admission process for <strong>${studentName}</strong> (Grade: <strong>${grade}</strong>) has been completed.
+        Your <strong>${roleLabel}</strong> account is now active.
+      </p>
+
+      <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
+        <tr style="background-color: #f8fafc;">
+          <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Login Email</th>
+          <td style="padding: 10px; border: 1px solid #e2e8f0;">${loginEmail}</td>
+        </tr>
+        <tr>
+          <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Temporary Password / PIN</th>
+          <td style="padding: 10px; border: 1px solid #e2e8f0;">
+            <strong style="color: #dc2626; font-size: 16px; letter-spacing: 2px;">${temporaryPassword}</strong>
+          </td>
+        </tr>
+      </table>
+
+      <div style="background-color: #fefce8; border: 1px solid #fde68a; border-radius: 6px; padding: 15px; margin: 20px 0;">
+        <strong style="color: #92400e;">⚠️ Important:</strong>
+        <p style="margin: 8px 0 0; color: #78350f;">
+          Please log in and change your password immediately. Do not share your credentials with anyone.
+        </p>
+      </div>
+
+      <p>
+        <a href="${frontendUrl}/login" style="display: inline-block; background-color: #4f46e5; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: bold;">
+          Log In Now
+        </a>
+      </p>
+
+      <div style="margin-top: 30px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+        This is an automated message. If you believe this is an error, please contact the school administration immediately.
       </div>
     </div>
   `;
 
-  return sendEmail(email, subject, htmlBody);
+  return sendEmail(recipientEmail, subject, htmlBody);
 }
