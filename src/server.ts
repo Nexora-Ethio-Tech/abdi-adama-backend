@@ -167,11 +167,13 @@ async function ensureSchemaExtensions(): Promise<void> {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name VARCHAR(255) NOT NULL,
       description TEXT,
+      amount INTEGER NOT NULL DEFAULT 1,
       value NUMERIC(12,2) NOT NULL,
       branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
+    `ALTER TABLE assets ADD COLUMN IF NOT EXISTS amount INTEGER NOT NULL DEFAULT 1`,
     `CREATE TABLE IF NOT EXISTS payment_items (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
