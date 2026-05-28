@@ -344,6 +344,25 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       expect(Array.isArray(res.body.data)).toBe(true);
     });
 
+    it('should get financial report for auditor', async () => {
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(start.getDate() - 30);
+      const startString = start.toISOString().slice(0, 10);
+      const endString = today.toISOString().slice(0, 10);
+
+      const res = await request(app)
+        .get('/api/auditor/financial-report')
+        .query({ startDate: startString, endDate: endString })
+        .set('Authorization', `Bearer ${auditorToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toBeDefined();
+      expect(res.body.data.summary).toBeDefined();
+      expect(typeof res.body.data.summary.totalTransactions).toBe('number');
+      expect(typeof res.body.data.summary.totalCollected).toBe('number');
+    });
+
     it('should get fee reduction requests', async () => {
       const res = await request(app)
         .get('/api/auditor/fee-reductions')
