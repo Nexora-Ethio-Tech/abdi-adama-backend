@@ -123,7 +123,7 @@ async function ensureSchemaExtensions(): Promise<void> {
           ALTER TABLE pending_applications ALTER COLUMN date DROP NOT NULL;
         END IF;
       END$$;`,
-       `ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_profile JSONB`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_profile JSONB`,
     // Library book code column (used for human-friendly Book ID like BK-1234)
     `ALTER TABLE library_books ADD COLUMN IF NOT EXISTS book_code VARCHAR(50)`,
     // Driver Notifications — tracks driver-posted alerts with 3-day auto-purge

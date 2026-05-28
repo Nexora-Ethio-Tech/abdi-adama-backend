@@ -44,7 +44,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .post('/api/auth/login')
         .send(superAdminCreds);
-      
+
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.accessToken).toBeDefined();
@@ -55,7 +55,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .post('/api/auth/login')
         .send(schoolAdminCreds);
-      
+
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       schoolAdminToken = res.body.data.accessToken;
@@ -66,7 +66,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .post('/api/auth/login')
         .send(vicePrincipalCreds);
-      
+
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       vicePrincipalToken = res.body.data.accessToken;
@@ -76,7 +76,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .post('/api/auth/login')
         .send(auditorCreds);
-      
+
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       auditorToken = res.body.data.accessToken;
@@ -86,7 +86,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/auth/me')
         .set('Authorization', `Bearer ${superAdminToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(res.body.data.role).toBe('super-admin');
     });
@@ -95,7 +95,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .post('/api/auth/login')
         .send({ email: 'wrong@email.com', password: 'wrong' });
-      
+
       expect(res.status).toBe(401);
     });
   });
@@ -105,7 +105,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/super-admin/branches')
         .set('Authorization', `Bearer ${superAdminToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);
     });
@@ -114,7 +114,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/super-admin/reports/system')
         .set('Authorization', `Bearer ${superAdminToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(res.body.data.totalBranches).toBeDefined();
     });
@@ -123,7 +123,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/super-admin/dashboard')
         .set('Authorization', `Bearer ${superAdminToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(res.body.data).toBeDefined();
     });
@@ -139,7 +139,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
           email: `finance${Date.now()}@test.com`,
           branchId: branchId
         });
-      
+
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
     });
@@ -148,7 +148,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/super-admin/users')
         .set('Authorization', `Bearer ${superAdminToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);
     });
@@ -164,7 +164,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
           email: `teacher${Date.now()}@test.com`,
           role: 'teacher'
         });
-      
+
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       teacherId = res.body.data.user.id;
@@ -180,7 +180,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
           role: 'student',
           grade: '10'
         });
-      
+
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
     });
@@ -194,7 +194,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
           email: `clerk${Date.now()}@test.com`,
           role: 'finance-clerk'
         });
-      
+
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
     });
@@ -203,7 +203,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/school-admin/users')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);
     });
@@ -219,7 +219,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
           capacity: 30,
           section: 'A'
         });
-      
+
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       classId = res.body.data.id;
@@ -229,7 +229,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/school-admin/classes')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);
     });
@@ -244,7 +244,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
         .patch(`/api/school-admin/classes/${classId}/assign-teacher`)
         .set('Authorization', `Bearer ${schoolAdminToken}`)
         .send({ teacherId });
-      
+
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
     });
@@ -255,7 +255,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/school-admin/dashboard')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(res.body.data).toBeDefined();
     });
@@ -266,7 +266,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/teacher/dashboard')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
+
       expect(res.status).toBe(200);
     });
 
@@ -274,7 +274,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/teacher/schedule')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
+
       expect(res.status).toBe(200);
     });
   });
@@ -284,7 +284,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/finance-clerk/dashboard')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
+
       expect(res.status).toBe(200);
     });
 
@@ -292,7 +292,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/finance-clerk/payments')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);
     });
@@ -303,7 +303,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/vice-principal/dashboard')
         .set('Authorization', `Bearer ${vicePrincipalToken}`);
-      
+
       expect(res.status).toBe(200);
     });
 
@@ -311,7 +311,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/vice-principal/absence-queue')
         .set('Authorization', `Bearer ${vicePrincipalToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);
     });
@@ -320,7 +320,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/vice-principal/lesson-plans/pending')
         .set('Authorization', `Bearer ${vicePrincipalToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);
     });
@@ -331,7 +331,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/auditor/dashboard')
         .set('Authorization', `Bearer ${auditorToken}`);
-      
+
       expect(res.status).toBe(200);
     });
 
@@ -339,7 +339,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/auditor/payments')
         .set('Authorization', `Bearer ${auditorToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);
     });
@@ -367,7 +367,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/auditor/fee-reductions')
         .set('Authorization', `Bearer ${auditorToken}`);
-      
+
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);
     });
@@ -378,7 +378,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/super-admin/users')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
+
       expect(res.status).toBe(403);
     });
 
@@ -386,7 +386,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       const res = await request(app)
         .get('/api/finance-clerk/payments')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
-      
+
       expect(res.status).toBe(403);
     });
 
@@ -406,7 +406,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
           email: 'invalid-email',
           role: 'teacher'
         });
-      
+
       expect(res.status).toBe(400);
     });
 
@@ -419,7 +419,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
           email: 'test@test.com',
           role: 'super-admin'
         });
-      
+
       expect(res.status).toBe(400);
     });
   });
