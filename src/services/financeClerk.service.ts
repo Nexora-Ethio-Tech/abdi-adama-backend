@@ -581,7 +581,8 @@ class FinanceClerkService {
       }
 
       const clampedDaysUsed = Math.min(30, Math.max(0, Number(data.daysUsed)));
-      const amountDue = Number((((30 - clampedDaysUsed) * transportFee) / 30).toFixed(2));
+      // Charge the student for the days used this month (prorated)
+      const amountDue = Number(((clampedDaysUsed * transportFee) / 30).toFixed(2));
 
       await client.query('DELETE FROM student_routes WHERE student_id = $1', [data.studentId]);
       await client.query(
@@ -601,7 +602,7 @@ class FinanceClerkService {
           data.studentId,
           student.name,
           amountDue,
-          'Transport Stop Settlement',
+          'Transport Stop Charge',
           data.verifiedBy,
           data.branchId,
         ]
