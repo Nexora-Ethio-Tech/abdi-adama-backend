@@ -542,6 +542,25 @@ class FinanceClerkService {
         throw new Error('This student does not have an active transport fee');
       }
 
+      // Check whether student has paid their transport fee for the current month.
+      // If the student has outstanding transport payments (paid < transportFee), do not allow stop.
+      const paidRes = await client.query(
+        `SELECT COALESCE(SUM(amount),0) as total_paid
+         FROM finance_transactions
+         WHERE student_id = $1
+           AND (type ILIKE '%transport%' OR type ILIKE '%bus%')
+           AND EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE)
+           AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)`,
+        [data.studentId]
+      );
+
+      const paidThisMonth = Number(paidRes.rows[0]?.total_paid || 0);
+      if (paidThisMonth < transportFee) {
+        const err: any = new Error('Student has overdue transport payments; cannot stop transport until settled');
+        err.code = 'TRANSPORT_OVERDUE';
+        throw err;
+      }
+
       const clampedDaysUsed = Math.min(30, Math.max(0, Number(data.daysUsed)));
       const amountDue = Number((((30 - clampedDaysUsed) * transportFee) / 30).toFixed(2));
 
