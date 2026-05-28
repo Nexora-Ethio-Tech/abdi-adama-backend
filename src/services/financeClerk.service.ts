@@ -127,7 +127,7 @@ class FinanceClerkService {
         `INSERT INTO payments (student_id, payer_id, branch_id, month, date, total_amount, reference)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [data.studentId, null, data.branchId, data.month, data.date || new Date().toISOString().slice(0,10), total, data.reference || null]
+        [data.studentId, null, data.branchId, data.month, data.date || new Date().toISOString().slice(0, 10), total, data.reference || null]
       );
 
       const payment = paymentRes.rows[0];
@@ -144,7 +144,7 @@ class FinanceClerkService {
       await client.query(
         `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [data.studentId, student.name, total, `Payment (${data.month})`, data.date || new Date().toISOString().slice(0,10), data.verifiedBy, data.branchId]
+        [data.studentId, student.name, total, `Payment (${data.month})`, data.date || new Date().toISOString().slice(0, 10), data.verifiedBy, data.branchId]
       );
 
       // Recompute outstanding and update student_collections
@@ -161,7 +161,7 @@ class FinanceClerkService {
         `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
          VALUES ($1, $2, $3, $4, NOW())
          ON CONFLICT (student_id, month) DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
-        [data.studentId, data.month, dueDate.toISOString().slice(0,10), status]
+        [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
       );
 
       await client.query('COMMIT');
@@ -199,7 +199,7 @@ class FinanceClerkService {
 
   // Get outstanding amounts per fee type for a student for a given month
   async getStudentOutstanding(studentId: string, month?: string) {
-    const targetMonth = month || new Date().toISOString().slice(0,7);
+    const targetMonth = month || new Date().toISOString().slice(0, 7);
 
     // Fetch student fees
     const studentRes = await pool.query(
