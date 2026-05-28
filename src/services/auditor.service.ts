@@ -123,7 +123,7 @@ class AuditorService {
   }
 
   // View audit trail
-  async getAuditTrail(branchId: string, filters?: { userId?: string; action?: string; startDate?: string; endDate?: string }) {
+  async getAuditTrail(branchId: string, filters?: { userId?: string; action?: string; category?: string; direction?: string; startDate?: string; endDate?: string }) {
     let query = `
       SELECT al.*
       FROM audit_log al
@@ -133,6 +133,30 @@ class AuditorService {
     `;
     const params: any[] = [branchId];
     let paramIndex = 2;
+
+    if (filters?.userId) {
+      query += ` AND al.student_id = $${paramIndex}`;
+      params.push(filters.userId);
+      paramIndex++;
+    }
+
+    if (filters?.action) {
+      query += ` AND al.action_label ILIKE $${paramIndex}`;
+      params.push(`%${filters.action}%`);
+      paramIndex++;
+    }
+
+    if (filters?.category) {
+      query += ` AND al.category = $${paramIndex}`;
+      params.push(filters.category);
+      paramIndex++;
+    }
+
+    if (filters?.direction) {
+      query += ` AND al.direction = $${paramIndex}`;
+      params.push(filters.direction);
+      paramIndex++;
+    }
 
     if (filters?.startDate) {
       query += ` AND al.timestamp >= $${paramIndex}`;

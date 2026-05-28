@@ -45,9 +45,10 @@ const updateFeeStatusSchema = Joi.object({
 });
 
 // Role Guard segments
-const clerkOnly = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]);
+const readOnlyInventory = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]);
 const readWriteFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]);
 const readOnlyFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]);
+const clerkOnly = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]);
 
 // Clerk-only Student Payment & Fee Routes
 router.post('/payments', clerkOnly, validate(recordPaymentSchema), financeClerkController.recordPayment);
@@ -63,7 +64,7 @@ router.get('/registration-fee', clerkOnly, financeClerkController.getGlobalRegis
 router.post('/transport/assign', clerkOnly, validate(assignTransportSchema), financeClerkController.assignTransportStudent);
 router.post('/transport/stop', clerkOnly, validate(stopTransportSchema), financeClerkController.stopTransportStudent);
 router.get('/dashboard', clerkOnly, financeClerkController.getDashboard);
-router.get('/assets', clerkOnly, assetController.getAssets);
+router.get('/assets', readOnlyInventory, assetController.getAssets);
 router.post('/assets', clerkOnly, assetController.createAsset);
 router.patch('/assets/:id', clerkOnly, assetController.updateAsset);
 router.delete('/assets/:id', clerkOnly, assetController.deleteAsset);

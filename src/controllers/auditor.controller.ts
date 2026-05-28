@@ -88,11 +88,13 @@ class AuditorController {
   async getAuditTrail(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const { userId, action, startDate, endDate } = req.query;
+      const { userId, action, category, direction, startDate, endDate } = req.query;
 
       const auditTrail = await auditorService.getAuditTrail(branchId!, {
         userId: userId as string,
         action: action as string,
+        category: category as string,
+        direction: direction as string,
         startDate: startDate as string,
         endDate: endDate as string
       });
