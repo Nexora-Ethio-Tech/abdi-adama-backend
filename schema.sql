@@ -449,6 +449,7 @@ CREATE TABLE assets (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name            VARCHAR(255)    NOT NULL,
     description     TEXT,
+    amount          INTEGER         NOT NULL DEFAULT 1,
     value           NUMERIC(12,2)   NOT NULL,
     branch_id       UUID            NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),

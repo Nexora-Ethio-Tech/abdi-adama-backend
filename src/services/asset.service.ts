@@ -5,6 +5,7 @@ export interface Asset {
   id: string;
   name: string;
   description?: string;
+  amount: number;
   value: number;
   branch_id: string;
   created_at: string;
@@ -14,6 +15,7 @@ export interface Asset {
 export interface CreateAssetDTO {
   name: string;
   description?: string;
+  amount: number;
   value: number;
   branch_id: string;
 }
@@ -32,12 +34,12 @@ class AssetService {
   }
 
   async createAsset(data: CreateAssetDTO): Promise<Asset> {
-    const { name, description, value, branch_id } = data;
+    const { name, description, amount, value, branch_id } = data;
     const result = await pool.query(
-      `INSERT INTO assets (name, description, value, branch_id)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO assets (name, description, amount, value, branch_id)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [name, description || null, value, branch_id]
+      [name, description || null, amount, value, branch_id]
     );
     return result.rows[0];
   }
@@ -62,6 +64,12 @@ class AssetService {
     if (data.value !== undefined) {
       fields.push(`value = $${paramIndex}`);
       values.push(data.value);
+      paramIndex++;
+    }
+
+    if (data.amount !== undefined) {
+      fields.push(`amount = $${paramIndex}`);
+      values.push(data.amount);
       paramIndex++;
     }
 
