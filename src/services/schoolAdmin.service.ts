@@ -1388,6 +1388,187 @@ class SchoolAdminService {
       client.release();
     }
   }
+
+  // Subject Management
+  async getSubjects(branchId: string) {
+    const result = await pool.query(
+      `SELECT * FROM subjects WHERE branch_id = $1 ORDER BY grade_level, name`,
+      [branchId]
+    );
+    return result.rows;
+  }
+
+  async createSubject(data: any) {
+    const result = await pool.query(
+      `INSERT INTO subjects (name, code, description, grade_level, branch_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [data.name, data.code, data.description || null, data.gradeLevel || data.grade_level, data.branchId]
+    );
+    return result.rows[0];
+  }
+
+  async updateSubject(id: string, branchId: string, data: any) {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramCount = 0;
+
+    if (data.name) {
+      paramCount++;
+      fields.push(`name = $${paramCount}`);
+      values.push(data.name);
+    }
+
+    if (data.code) {
+      paramCount++;
+      fields.push(`code = $${paramCount}`);
+      values.push(data.code);
+    }
+
+    if (data.description !== undefined) {
+      paramCount++;
+      fields.push(`description = $${paramCount}`);
+      values.push(data.description);
+    }
+
+    if (data.gradeLevel || data.grade_level) {
+      paramCount++;
+      fields.push(`grade_level = $${paramCount}`);
+      values.push(data.gradeLevel || data.grade_level);
+    }
+
+    if (fields.length === 0) {
+      throw new Error('No fields to update');
+    }
+
+    paramCount++;
+    values.push(id);
+    paramCount++;
+    values.push(branchId);
+
+    const result = await pool.query(
+      `UPDATE subjects 
+       SET ${fields.join(', ')}, updated_at = NOW()
+       WHERE id = $${paramCount - 1} AND branch_id = $${paramCount}
+       RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('Subject not found or access denied');
+    }
+
+    return result.rows[0];
+  }
+
+  async deleteSubject(id: string, branchId: string) {
+    const result = await pool.query(
+      `DELETE FROM subjects WHERE id = $1 AND branch_id = $2 RETURNING id`,
+      [id, branchId]
+    );
+    if (result.rows.length === 0) {
+      throw new Error('Subject not found or access denied');
+    }
+  }
+
+  async promoteTeacher(userId: string, branchId: string, data: any) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Verify user exists, is a teacher, and belongs to this branch
+      const userCheck = await client.query(
+        `SELECT id, role, name, staff_profile FROM users WHERE id = $1 AND branch_id = $2`,
+        [userId, branchId]
+      );
+      if (userCheck.rows.length === 0) {
+        throw new Error('Teacher not found in your branch');
+      }
+      if (userCheck.rows[0].role !== 'teacher') {
+        throw new Error('User is not a teacher');
+      }
+
+      // 2. Fetch or verify teacher record
+      const teacherCheck = await client.query(
+        `SELECT id FROM teachers WHERE user_id = $1`,
+        [userId]
+      );
+      if (teacherCheck.rows.length === 0) {
+        throw new Error('Teacher profile record not found');
+      }
+      const teacherId = teacherCheck.rows[0].id;
+
+      const { promotionType, grades, subjects, sections, beforeSchool } = data;
+
+      // 3. Update staff_profile in users table to store general promotion history/info
+      const currentProfile = userCheck.rows[0].staff_profile || {};
+      const updatedProfile = {
+        ...currentProfile,
+        promotion: {
+          promotionType,
+          grades: grades || [],
+          subjects: subjects || [],
+          sections: sections || {},
+          beforeSchool: beforeSchool || {},
+          promotedAt: new Date().toISOString()
+        }
+      };
+
+      await client.query(
+        `UPDATE users SET staff_profile = $1 WHERE id = $2`,
+        [JSON.stringify(updatedProfile), userId]
+      );
+
+      // 4. Update teachers table based on promotion type
+      if (promotionType === 'head-of-department') {
+        // Subjects must be saved in the subjects TEXT[] column in teachers table
+        await client.query(
+          `UPDATE teachers 
+           SET is_dean = true, 
+               subjects = $1,
+               updated_at = NOW() 
+           WHERE id = $2`,
+          [subjects || [], teacherId]
+        );
+      } else if (promotionType === 'home-teacher') {
+        // Grades and classes mapping
+        // Set is_room_teacher to true
+        // If there are grades and sections, set assigned_room_class to first select (e.g. 'Grade 10A')
+        let assignedClass = '';
+        if (grades && grades.length > 0) {
+          const firstGrade = grades[0];
+          const firstSectionList = sections && sections[firstGrade];
+          const firstSection = firstSectionList && firstSectionList.length > 0 ? firstSectionList[0] : '';
+          assignedClass = firstSection ? `${firstGrade}${firstSection}` : firstGrade;
+        }
+
+        await client.query(
+          `UPDATE teachers 
+           SET is_room_teacher = true, 
+               assigned_room_class = $1,
+               updated_at = NOW() 
+           WHERE id = $2`,
+          [assignedClass || null, teacherId]
+        );
+      } else if (promotionType === 'before-school-educator') {
+        // Can add before-school metadata or flags in teachers table if needed
+        await client.query(
+          `UPDATE teachers 
+           SET updated_at = NOW() 
+           WHERE id = $2`,
+          [teacherId]
+        );
+      }
+
+      await client.query('COMMIT');
+      return { success: true, promotionType };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 export default new SchoolAdminService();

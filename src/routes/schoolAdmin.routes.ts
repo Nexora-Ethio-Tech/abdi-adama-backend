@@ -80,6 +80,13 @@ router.patch('/users/:id/status', validate(schemas.updateUserStatus), schoolAdmi
 router.post('/users/:id/reset-pin', schoolAdminController.resetUserPIN);
 router.delete('/users/:id', schoolAdminController.deleteUser);
 
+// Teacher Promotion & Subjects Management
+router.patch('/users/:id/promote', schoolAdminController.promoteTeacher);
+router.get('/subjects', schoolAdminController.getSubjects);
+router.post('/subjects', schoolAdminController.createSubject);
+router.patch('/subjects/:id', schoolAdminController.updateSubject);
+router.delete('/subjects/:id', schoolAdminController.deleteSubject);
+
 // Student-Class Management
 router.post('/students/assign-class', validate(schemas.assignStudentToClass), schoolAdminController.assignStudentToClass);
 router.delete('/students/:studentId/remove-class', schoolAdminController.removeStudentFromClass);

@@ -937,6 +937,83 @@ class SchoolAdminController {
       next(error);
     }
   }
+
+  // Subject Management
+  async getSubjects(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const subjects = await schoolAdminService.getSubjects(branchId!);
+      res.json({
+        success: true,
+        data: subjects
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async createSubject(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const subjectData = { ...req.body, branchId };
+      const subject = await schoolAdminService.createSubject(subjectData);
+      res.status(201).json({
+        success: true,
+        data: subject,
+        message: 'Subject created successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateSubject(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+      const subject = await schoolAdminService.updateSubject(id, branchId!, req.body);
+      res.json({
+        success: true,
+        data: subject,
+        message: 'Subject updated successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deleteSubject(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+      await schoolAdminService.deleteSubject(id, branchId!);
+      res.json({
+        success: true,
+        message: 'Subject deleted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Teacher Promotion Management
+  async promoteTeacher(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+      const promotionData = req.body;
+      
+      const result = await schoolAdminService.promoteTeacher(id, branchId!, promotionData);
+      
+      res.json({
+        success: true,
+        data: result,
+        message: 'Teacher promoted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new SchoolAdminController();
