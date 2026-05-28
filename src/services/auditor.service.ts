@@ -170,11 +170,19 @@ class AuditorService {
       [branchId]
     );
 
-    const pendingResult = await pool.query(
+    // Count pending fee reduction requests for this branch
+    const pendingFeeResult = await pool.query(
       `SELECT COUNT(*) as count
        FROM students
        WHERE branch_id = $1 AND fee_approval_status = 'pending'`,
       [branchId]
+    );
+
+    // Count pending employee loan requests (not scoped to branch — loans are system-wide for auditor review)
+    const pendingLoansResult = await pool.query(
+      `SELECT COUNT(*) as count
+       FROM loans
+       WHERE status = 'pending'`
     );
 
     const recentResult = await pool.query(
@@ -185,6 +193,9 @@ class AuditorService {
       [branchId]
     );
 
+    const pendingFeeReductions = parseInt(pendingFeeResult.rows[0].count);
+    const pendingLoans = parseInt(pendingLoansResult.rows[0].count);
+
     return {
       totalPayments: {
         count: parseInt(totalResult.rows[0].count),
@@ -194,7 +205,9 @@ class AuditorService {
         count: parseInt(monthlyResult.rows[0].count),
         total: parseFloat(monthlyResult.rows[0].total)
       },
-      pendingFeeReductions: parseInt(pendingResult.rows[0].count),
+      pendingFeeReductions,
+      pendingLoans,
+      pendingApprovals: pendingFeeReductions + pendingLoans,
       recentTransactions: recentResult.rows
     };
   }
