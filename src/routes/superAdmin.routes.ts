@@ -60,6 +60,7 @@ router.delete('/branches/:id', superAdminController.deleteBranch);
 // System Reports
 router.get('/reports/system', superAdminController.getSystemReport);
 router.get('/reports/branch/:id', superAdminController.getBranchReport);
+router.get('/analytics', superAdminController.getAnalytics);
 
 // Academic Year Management
 router.post('/academic-years', validate(academicYearSchema), superAdminController.createGlobalAcademicYear);

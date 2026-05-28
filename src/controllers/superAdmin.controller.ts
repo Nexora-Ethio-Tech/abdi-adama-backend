@@ -258,6 +258,19 @@ class SuperAdminController {
     }
   }
 
+  async getAnalytics(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { branchId } = req.query;
+      const analytics = await superAdminService.getAnalytics(branchId ? String(branchId) : undefined);
+      res.json({
+        success: true,
+        data: analytics
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // ─── Academic Year Management ─────────────────────────────────────────────
 
   async createGlobalAcademicYear(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
