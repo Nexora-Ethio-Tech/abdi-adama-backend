@@ -234,11 +234,12 @@ class FinanceClerkService {
   }
 
   // Assign or change a student's transport route and fee
+  // Fee is determined by the Super Admin's financial policy for the student's grade
   async assignTransportStudent(data: {
     branchId: string;
     studentId: string;
     driverId: string;
-    transportFee: number;
+    transportFee: number; // Ignored; fetched from policy
     verifiedBy: string;
   }) {
     const client = await pool.connect();
@@ -246,7 +247,7 @@ class FinanceClerkService {
       await client.query('BEGIN');
 
       const studentResult = await client.query(
-        `SELECT s.id, u.name
+        `SELECT s.id, s.grade, u.name
          FROM students s
          JOIN users u ON s.user_id = u.id
          WHERE s.id = $1 AND s.branch_id = $2
@@ -256,6 +257,24 @@ class FinanceClerkService {
 
       if (studentResult.rows.length === 0) {
         throw new Error('Student not found');
+      }
+
+      const student = studentResult.rows[0];
+
+      // Fetch the Super Admin's financial policy fee for this student's grade
+      const policyResult = await client.query(
+        `SELECT bus_fee
+         FROM financial_policies
+         WHERE branch_id = $1
+           AND (grade_level = $2 OR grade_level IS NULL)
+         ORDER BY grade_level DESC NULLS LAST
+         LIMIT 1`,
+        [data.branchId, student.grade]
+      );
+
+      let policyFee = Number(policyResult.rows[0]?.bus_fee || 0);
+      if (policyFee <= 0) {
+        throw new Error('No valid transport fee policy configured for this student grade');
       }
 
       const driverResult = await client.query(
@@ -298,18 +317,18 @@ class FinanceClerkService {
              is_bus_user = TRUE,
              updated_at = NOW()
          WHERE id = $2`,
-        [data.transportFee, data.studentId]
+        [policyFee, data.studentId]
       );
 
       await client.query('COMMIT');
 
       return {
         studentId: data.studentId,
-        studentName: studentResult.rows[0].name,
+        studentName: student.name,
         routeId: routeResult.rows[0].id,
         routeName: routeResult.rows[0].name,
         driverName: driverResult.rows[0].name,
-        transportFee: Number(data.transportFee),
+        transportFee: policyFee,
       };
     } catch (error) {
       await client.query('ROLLBACK');
