@@ -78,6 +78,27 @@ class SuperAdminService {
       branchId ? [new Date().toISOString().slice(0, 10), branchId] : [new Date().toISOString().slice(0, 10)]
     );
 
+    // Overdue payments (students with outstanding balance and last payment > 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const overdueParams = branchId ? [branchId, thirtyDaysAgo.toISOString().slice(0, 10)] : [thirtyDaysAgo.toISOString().slice(0, 10)];
+    const overdueWhereBranch = branchId ? 'AND s.branch_id = $1' : '';
+
+    const overdueResult = await pool.query(
+      `SELECT COUNT(*)::int AS overdue_count,
+              COALESCE(SUM((s.monthly_fee + s.bus_fee + s.penalty_fee) - COALESCE(p.total_paid,0)), 0)::numeric AS overdue_amount
+       FROM students s
+       LEFT JOIN (
+         SELECT student_id, COALESCE(SUM(amount),0) AS total_paid, MAX(date) AS last_payment
+         FROM finance_transactions ft
+         ${branchId ? 'WHERE ft.branch_id = $1' : ''}
+         GROUP BY student_id
+       ) p ON p.student_id = s.id
+       WHERE ((s.monthly_fee + s.bus_fee + s.penalty_fee) - COALESCE(p.total_paid,0)) > 0
+         AND COALESCE(p.last_payment, s.created_at) < $${branchId ? 2 : 1}`,
+      overdueParams
+    );
+
     const staffAttendanceResult = await pool.query(
       `SELECT COUNT(DISTINCT u.id)::int AS total_staff,
               COUNT(DISTINCT CASE WHEN ea.status = 'present' THEN ea.user_id END)::int AS present_staff
@@ -150,6 +171,10 @@ class SuperAdminService {
         ? Number((((monthlyStudents - previousMonthStudents) / previousMonthStudents) * 100).toFixed(1))
         : 0
     };
+
+    // Attach overdue metrics
+    (overview as any).overdueCount = overdueResult.rows[0]?.overdue_count || 0;
+    (overview as any).overdueAmount = Number(overdueResult.rows[0]?.overdue_amount || 0);
 
     return {
       scope: branchId ? 'branch' : 'global',
