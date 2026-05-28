@@ -443,7 +443,20 @@ CREATE TABLE finance_summaries (
 );
 
 -- ============================================================
--- 25. FINANCE — PAYMENT STATUS LOGS
+-- 25. FINANCE — ASSETS
+-- ============================================================
+CREATE TABLE assets (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            VARCHAR(255)    NOT NULL,
+    description     TEXT,
+    value           NUMERIC(12,2)   NOT NULL,
+    branch_id       UUID            NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- 26. FINANCE — PAYMENT STATUS LOGS
 -- ============================================================
 CREATE TABLE payment_status_logs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

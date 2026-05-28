@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import financeClerkController from '../controllers/financeClerk.controller';
 import employeeProfileController from '../controllers/employeeProfile.controller';
-import superAdminController from '../controllers/superAdmin.controller';
+import assetController from '../controllers/asset.controller';
 import { authenticate } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
 import { validate } from '../middleware/validator';
@@ -63,7 +63,10 @@ router.get('/registration-fee', clerkOnly, financeClerkController.getGlobalRegis
 router.post('/transport/assign', clerkOnly, validate(assignTransportSchema), financeClerkController.assignTransportStudent);
 router.post('/transport/stop', clerkOnly, validate(stopTransportSchema), financeClerkController.stopTransportStudent);
 router.get('/dashboard', clerkOnly, financeClerkController.getDashboard);
-router.get('/finance-settings', clerkOnly, superAdminController.getFinanceSettings);
+router.get('/assets', clerkOnly, assetController.getAssets);
+router.post('/assets', clerkOnly, assetController.createAsset);
+router.patch('/assets/:id', clerkOnly, assetController.updateAsset);
+router.delete('/assets/:id', clerkOnly, assetController.deleteAsset);
 router.get('/overdue-payments', clerkOnly, financeClerkController.getOverduePayments);
 router.get('/reports/daily', clerkOnly, financeClerkController.getDailyReport);
 router.get('/applications', clerkOnly, financeClerkController.getPendingApplications);

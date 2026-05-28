@@ -163,6 +163,15 @@ async function ensureSchemaExtensions(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_finance_transactions_branch_date ON finance_transactions(branch_id, date)`,
     `CREATE INDEX IF NOT EXISTS idx_finance_transactions_student_id ON finance_transactions(student_id)`,
+    `CREATE TABLE IF NOT EXISTS assets (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(255) NOT NULL,
+      description TEXT,
+      value NUMERIC(12,2) NOT NULL,
+      branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
     `CREATE TABLE IF NOT EXISTS payment_items (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
