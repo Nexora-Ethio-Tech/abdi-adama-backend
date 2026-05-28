@@ -58,7 +58,8 @@ export const schemas = {
     role: Joi.string().valid('teacher', 'student', 'parent', 'finance-clerk', 'driver', 'librarian', 'clinic-admin').required(),
     branchId: Joi.string().uuid().optional(),
     password: Joi.string().min(8).optional(),
-    grade: Joi.string().optional()
+    grade: Joi.string().optional(),
+    staffProfile: Joi.object().unknown(true).optional()
   }),
 
   // Schema for dedicated admin creation endpoints (no role field needed)
