@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import financeClerkController from '../controllers/financeClerk.controller';
 import employeeProfileController from '../controllers/employeeProfile.controller';
+import superAdminController from '../controllers/superAdmin.controller';
 import { authenticate } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
 import { validate } from '../middleware/validator';
@@ -15,9 +16,13 @@ router.use(authenticate);
 // Validation schemas
 const recordPaymentSchema = Joi.object({
   studentId: Joi.string().uuid().required(),
-  amount: Joi.number().positive().required(),
-  type: Joi.alternatives().try(Joi.string(), Joi.array().items(Joi.string().required())).required(),
-  date: Joi.date().iso().required()
+  items: Joi.array().items(Joi.object({
+    feeType: Joi.string().required(),
+    amount: Joi.number().positive().required()
+  })).min(1).required(),
+  month: Joi.string().pattern(/^\d{4}-\d{2}$/).required(),
+  date: Joi.date().iso().optional(),
+  reference: Joi.string().allow('', null).optional()
 });
 
 const assignTransportSchema = Joi.object({
@@ -47,6 +52,7 @@ const readOnlyFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN,
 // Clerk-only Student Payment & Fee Routes
 router.post('/payments', clerkOnly, validate(recordPaymentSchema), financeClerkController.recordPayment);
 router.get('/payments/:studentId', clerkOnly, financeClerkController.getPaymentHistory);
+router.get('/students/:id/outstanding', clerkOnly, financeClerkController.getStudentOutstanding);
 router.get('/students/fees', clerkOnly, financeClerkController.getStudentsWithFees);
 router.patch('/students/:id/fee-status', clerkOnly, validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
 router.get('/transport/students', clerkOnly, financeClerkController.getTransportStudents);
@@ -57,6 +63,7 @@ router.get('/registration-fee', clerkOnly, financeClerkController.getGlobalRegis
 router.post('/transport/assign', clerkOnly, validate(assignTransportSchema), financeClerkController.assignTransportStudent);
 router.post('/transport/stop', clerkOnly, validate(stopTransportSchema), financeClerkController.stopTransportStudent);
 router.get('/dashboard', clerkOnly, financeClerkController.getDashboard);
+router.get('/finance-settings', clerkOnly, superAdminController.getFinanceSettings);
 router.get('/overdue-payments', clerkOnly, financeClerkController.getOverduePayments);
 router.get('/reports/daily', clerkOnly, financeClerkController.getDailyReport);
 router.get('/applications', clerkOnly, financeClerkController.getPendingApplications);

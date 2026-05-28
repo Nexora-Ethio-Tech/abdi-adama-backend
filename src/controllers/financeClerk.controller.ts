@@ -7,16 +7,16 @@ class FinanceClerkController {
   // Record payment
   async recordPayment(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { studentId, amount, type, date } = req.body;
+      const { studentId, items, month, date, reference } = req.body;
       const verifiedBy = req.user!.name;
       const branchId = req.user!.branch_id;
-      const normalizedType = Array.isArray(type) ? type.join(', ') : type;
 
       const payment = await financeClerkService.recordPayment({
         studentId,
-        amount,
-        type: normalizedType,
+        items,
+        month,
         date,
+        reference,
         verifiedBy,
         branchId: branchId!
       });
@@ -41,6 +41,19 @@ class FinanceClerkController {
         success: true,
         data: payments
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getStudentOutstanding(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const { month } = req.query; // YYYY-MM
+
+      const outstanding = await financeClerkService.getStudentOutstanding(id, (month as string) || undefined);
+
+      res.json({ success: true, data: outstanding });
     } catch (error) {
       next(error);
     }

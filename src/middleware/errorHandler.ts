@@ -41,6 +41,19 @@ export const errorHandler = (err: CustomError, req: Request, res: Response, _nex
     return;
   }
 
+  // Handle ambiguous Postgres parameter type errors with friendlier message
+  if (/could not determine data type of parameter \$\d+/i.test(err.message || '')) {
+    res.status(400).json({
+      success: false,
+      error: {
+        code: 'BAD_QUERY_PARAMETER',
+        message: 'Database query failed due to ambiguous parameter type. Please check your filter values and try again.',
+        details: err.message
+      }
+    });
+    return;
+  }
+
   res.status(err.statusCode || 500).json({
     success: false,
     error: {
