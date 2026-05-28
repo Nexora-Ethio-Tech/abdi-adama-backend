@@ -15,15 +15,12 @@ class LoanService {
    * Issues a new loan to an employee.
    */
   async issueLoan(employeeId: string, amount: number, notes: string, issuedBy: string) {
-    // 1. Validate employee has a payroll profile set up with basic salary > 0
+    // 1. Fetch employee salary if profile exists (used for deduction calculation only)
     const profileCheck = await pool.query(
       `SELECT basic_salary FROM employee_payroll_profiles WHERE user_id = $1`,
       [employeeId]
     );
-    if (profileCheck.rows.length === 0 || Number(profileCheck.rows[0].basic_salary) <= 0) {
-      throw new Error('Employee has no salary profile configured or salary is 0. Cannot issue loan.');
-    }
-    const basicSalary = Number(profileCheck.rows[0].basic_salary);
+    const basicSalary = profileCheck.rows.length > 0 ? Number(profileCheck.rows[0].basic_salary) : 0;
 
     // 2. Validate no existing pending/approved/active loan
     const activeCheck = await pool.query(
@@ -40,7 +37,11 @@ class LoanService {
     const deductionPercentage = await this.getFinanceSetting('loan_deduction_percentage', 30);
 
     // 4. Calculate monthly deduction = basic_salary * deductionPercentage / 100
-    const monthlyDeduction = parseFloat(((basicSalary * deductionPercentage) / 100).toFixed(2));
+    //    If no salary profile, fall back to evenly splitting the loan across max_months
+    const salaryBasedDeduction = parseFloat(((basicSalary * deductionPercentage) / 100).toFixed(2));
+    const monthlyDeduction = salaryBasedDeduction > 0
+      ? salaryBasedDeduction
+      : parseFloat((amount / maxMonths).toFixed(2));
 
     // 5. Create loan record in pending status for auditor review
     const result = await pool.query(
