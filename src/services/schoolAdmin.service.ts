@@ -156,40 +156,62 @@ class SchoolAdminService {
       values.push(updateData.email);
     }
 
-    // Handle parent phone if provided for student role
-    if (updateData.parentPhone && user.role === 'student') {
-      const { validateAndFormatPhoneNumber } = require('../utils/validation');
-      const phoneValidation = validateAndFormatPhoneNumber(updateData.parentPhone);
-      if (!phoneValidation.isValid) {
-        throw new Error(phoneValidation.error || 'Invalid phone number');
-      }
-      paramCount++;
-      fields.push(`parent_phone = $${paramCount}`);
-      values.push(phoneValidation.formatted);
-    }
-
-    if (fields.length === 0) {
+    if (fields.length === 0 && (!updateData.grade && !updateData.parentPhone)) {
       throw new Error('No fields to update');
     }
 
-    paramCount++;
-    fields.push(`updated_at = NOW()`);
-    values.push(userId);
+    if (fields.length > 0) {
+      paramCount++;
+      fields.push(`updated_at = NOW()`);
+      values.push(userId);
 
-    const result = await pool.query(
-      `UPDATE users SET ${fields.join(', ')}
-       WHERE id = $${paramCount}
-       RETURNING id, digital_id, name, email, role, status, branch_id`,
-      values
-    );
-
-    // If student, update grade in students table
-    if (user.role === 'student' && updateData.grade) {
-      await pool.query(
-        `UPDATE students SET grade = $1 WHERE user_id = $2`,
-        [updateData.grade, userId]
+      const result = await pool.query(
+        `UPDATE users SET ${fields.join(', ')}
+         WHERE id = $${paramCount}
+         RETURNING id, digital_id, name, email, role, status, branch_id`,
+        values
       );
     }
+
+    // If student, update grade and parent_phone in students table
+    if (user.role === 'student') {
+      const studentUpdates: string[] = [];
+      const studentValues: any[] = [];
+      let studentParamCount = 1;
+
+      if (updateData.grade) {
+        studentUpdates.push(`grade = $${studentParamCount}`);
+        studentValues.push(updateData.grade);
+        studentParamCount++;
+      }
+
+      if (updateData.parentPhone) {
+        const { validateAndFormatPhoneNumber } = require('../utils/validation');
+        const phoneValidation = validateAndFormatPhoneNumber(updateData.parentPhone);
+        if (!phoneValidation.isValid) {
+          throw new Error(phoneValidation.error || 'Invalid phone number');
+        }
+        studentUpdates.push(`parent_phone = $${studentParamCount}`);
+        studentValues.push(phoneValidation.formatted);
+        studentParamCount++;
+      }
+
+      if (studentUpdates.length > 0) {
+        studentUpdates.push(`updated_at = NOW()`);
+        // Add user_id to the values array and increment param count
+        const userIdParamCount = studentParamCount;
+        studentValues.push(userId);
+        await pool.query(
+          `UPDATE students SET ${studentUpdates.join(', ')} WHERE user_id = $${userIdParamCount}`,
+          studentValues
+        );
+      }
+    }
+
+    const result = await pool.query(
+      `SELECT id, digital_id, name, email, role, status, branch_id FROM users WHERE id = $1`,
+      [userId]
+    );
 
     return result.rows[0];
   }
@@ -424,7 +446,7 @@ class SchoolAdminService {
     }
   }
 
-  // Teacher Assignment
+  // Teacher Assignment (with ability to replace existing teacher)
   async assignTeacherToClass(classId: string, teacherId: string, branchId: string) {
     // Verify class belongs to branch
     const classCheck = await pool.query(
@@ -470,21 +492,34 @@ class SchoolAdminService {
       )
     `);
 
-    // Insert assignment if not exists
+    // Delete any existing assignments for this class (to allow replacement)
     await pool.query(
-      `INSERT INTO class_teachers (class_id, teacher_id, branch_id)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (class_id, teacher_id) DO NOTHING`,
-      [classId, actualTeacherId, branchId]
-    );
-
-    // Return updated class row
-    const updated = await pool.query(
-      `SELECT c.* FROM classes c WHERE c.id = $1`,
+      `DELETE FROM class_teachers WHERE class_id = $1`,
       [classId]
     );
 
-    return updated.rows[0];
+    // Insert new assignment
+    await pool.query(
+      `INSERT INTO class_teachers (class_id, teacher_id, branch_id)
+       VALUES ($1, $2, $3)`,
+      [classId, actualTeacherId, branchId]
+    );
+
+    // Return updated class with teacher data
+    const result = await pool.query(
+      `SELECT 
+        c.*,
+        COALESCE(json_agg(json_build_object('teacher_id', ct.teacher_id, 'teacher_name', u.name, 'teacher_user_id', t.user_id) ) FILTER (WHERE ct.id IS NOT NULL), '[]') as teachers
+      FROM classes c
+      LEFT JOIN class_teachers ct ON ct.class_id = c.id
+      LEFT JOIN teachers t ON ct.teacher_id = t.id
+      LEFT JOIN users u ON t.user_id = u.id
+      WHERE c.id = $1
+      GROUP BY c.id`,
+      [classId]
+    );
+
+    return result.rows[0];
   }
 
   async unassignTeacherFromClass(classId: string, teacherId: string, branchId: string) {
