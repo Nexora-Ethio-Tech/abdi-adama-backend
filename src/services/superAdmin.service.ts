@@ -6,6 +6,159 @@ import { sendWelcomeEmail } from '../utils/emailService';
 const EMAIL_ON_CREATE_ROLES = ['school-admin', 'vice-principal', 'auditor'];
 
 class SuperAdminService {
+  async getAnalytics(branchId?: string) {
+    const currentMonthStart = new Date();
+    currentMonthStart.setDate(1);
+    currentMonthStart.setHours(0, 0, 0, 0);
+
+    const lastMonthStart = new Date(currentMonthStart);
+    lastMonthStart.setMonth(lastMonthStart.getMonth() - 1);
+
+    const staffRoles = ['school-admin', 'vice-principal', 'teacher', 'finance-clerk', 'librarian', 'clinic-admin', 'driver', 'auditor'];
+    const branchParams = branchId ? [branchId] : [];
+    const branchWhere = branchId ? 'WHERE b.id = $1' : '';
+
+    const branchLocationColumnResult = await pool.query(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'branches'
+         AND column_name IN ('location', 'address')
+       ORDER BY CASE column_name WHEN 'location' THEN 1 ELSE 2 END
+       LIMIT 1`
+    );
+    const branchLocationColumn = branchLocationColumnResult.rows[0]?.column_name;
+    const branchLocationSelect = branchLocationColumn ? `b.${branchLocationColumn}` : 'NULL';
+
+    const branchesResult = await pool.query(
+      `SELECT b.id, b.name, ${branchLocationSelect} AS location
+       FROM branches b
+       ${branchWhere}
+       ORDER BY b.name`,
+      branchParams
+    );
+
+    const studentsResult = await pool.query(
+      `SELECT COUNT(*)::int AS total_students
+       FROM students s
+       ${branchId ? 'WHERE s.branch_id = $1' : ''}`,
+      branchParams
+    );
+
+    const lastMonthStudentsResult = await pool.query(
+      `SELECT COUNT(*)::int AS total_students
+       FROM students s
+       WHERE s.created_at < $1${branchId ? ' AND s.branch_id = $2' : ''}`,
+      branchId ? [currentMonthStart, branchId] : [currentMonthStart]
+    );
+
+    const branchCollectedResult = await pool.query(
+      `SELECT ft.branch_id, COALESCE(SUM(ft.amount), 0)::numeric AS collected
+       FROM finance_transactions ft
+       WHERE ft.date >= $1${branchId ? ' AND ft.branch_id = $2' : ''}
+       GROUP BY ft.branch_id`,
+      branchId ? [currentMonthStart.toISOString().slice(0, 10), branchId] : [currentMonthStart.toISOString().slice(0, 10)]
+    );
+
+    const expectedResult = await pool.query(
+      `SELECT s.branch_id, COALESCE(SUM(COALESCE(s.monthly_fee, 0) + COALESCE(s.bus_fee, 0) + COALESCE(s.penalty_fee, 0)), 0)::numeric AS expected,
+              COUNT(*)::int AS students
+       FROM students s
+       ${branchId ? 'WHERE s.branch_id = $1' : ''}
+       GROUP BY s.branch_id`,
+      branchParams
+    );
+
+    const studentAttendanceResult = await pool.query(
+      `SELECT COUNT(DISTINCT s.id)::int AS total_students,
+              COUNT(DISTINCT CASE WHEN sa.status = 'present' THEN sa.student_id END)::int AS present_students
+       FROM students s
+       LEFT JOIN student_attendance sa ON sa.student_id = s.id AND sa.date = $1
+       ${branchId ? 'WHERE s.branch_id = $2' : ''}`,
+      branchId ? [new Date().toISOString().slice(0, 10), branchId] : [new Date().toISOString().slice(0, 10)]
+    );
+
+    const staffAttendanceResult = await pool.query(
+      `SELECT COUNT(DISTINCT u.id)::int AS total_staff,
+              COUNT(DISTINCT CASE WHEN ea.status = 'present' THEN ea.user_id END)::int AS present_staff
+       FROM users u
+       LEFT JOIN employee_attendance ea ON ea.user_id = u.id AND ea.date = $1
+       WHERE u.role <> 'super-admin'
+         AND u.role <> 'student'
+         AND u.role <> 'parent'
+         ${branchId ? 'AND u.branch_id = $2' : 'AND u.branch_id IS NOT NULL'}`,
+      branchId ? [new Date().toISOString().slice(0, 10), branchId] : [new Date().toISOString().slice(0, 10)]
+    );
+
+    const monthlyStudents = parseInt(studentsResult.rows[0]?.total_students || '0', 10);
+    const previousMonthStudents = parseInt(lastMonthStudentsResult.rows[0]?.total_students || '0', 10);
+    const studentAttendanceTotal = parseInt(studentAttendanceResult.rows[0]?.total_students || '0', 10);
+    const studentAttendancePresent = parseInt(studentAttendanceResult.rows[0]?.present_students || '0', 10);
+    const staffAttendanceTotal = parseInt(staffAttendanceResult.rows[0]?.total_staff || '0', 10);
+    const staffAttendancePresent = parseInt(staffAttendanceResult.rows[0]?.present_staff || '0', 10);
+
+    const branchMap = new Map<string, { collected: number; expected: number; students: number }>();
+    for (const row of expectedResult.rows) {
+      branchMap.set(row.branch_id, {
+        collected: 0,
+        expected: Number(row.expected || 0),
+        students: Number(row.students || 0)
+      });
+    }
+    for (const row of branchCollectedResult.rows) {
+      const current = branchMap.get(row.branch_id) || { collected: 0, expected: 0, students: 0 };
+      current.collected = Number(row.collected || 0);
+      branchMap.set(row.branch_id, current);
+    }
+
+    const branchPerformance = branchesResult.rows.map((branch) => {
+      const metrics = branchMap.get(branch.id) || { collected: 0, expected: 0, students: 0 };
+      const percent = metrics.expected > 0 ? Math.round((metrics.collected / metrics.expected) * 100) : 0;
+
+      return {
+        id: branch.id,
+        name: branch.name,
+        location: branch.location,
+        collected: metrics.collected,
+        expected: metrics.expected,
+        percent,
+        students: metrics.students
+      };
+    });
+
+    const branchSummary = branchId
+      ? branchPerformance[0] || null
+      : null;
+
+    const feeCollected = branchId
+      ? branchSummary?.collected || 0
+      : branchPerformance.reduce((sum, item) => sum + item.collected, 0);
+
+    const feeExpected = branchId
+      ? branchSummary?.expected || 0
+      : branchPerformance.reduce((sum, item) => sum + item.expected, 0);
+
+    const overview = {
+      feeCollected,
+      feeExpected,
+      feePercent: feeExpected > 0 ? Math.round((feeCollected / feeExpected) * 100) : 0,
+      studentAttendance: studentAttendanceTotal > 0 ? Number(((studentAttendancePresent / studentAttendanceTotal) * 100).toFixed(1)) : 0,
+      staffAttendance: staffAttendanceTotal > 0 ? Number(((staffAttendancePresent / staffAttendanceTotal) * 100).toFixed(1)) : 0,
+      currentStudents: monthlyStudents,
+      lastMonthStudents: previousMonthStudents,
+      enrollmentGrowth: previousMonthStudents > 0
+        ? Number((((monthlyStudents - previousMonthStudents) / previousMonthStudents) * 100).toFixed(1))
+        : 0
+    };
+
+    return {
+      scope: branchId ? 'branch' : 'global',
+      selectedBranch: branchSummary,
+      overview,
+      branchPerformance
+    };
+  }
+
   // Branch Management
   async createBranch(data: { name: string; code: string; logoUrl?: string; phone?: string; email?: string; address?: string }) {
     const result = await pool.query(
