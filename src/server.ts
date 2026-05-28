@@ -11,6 +11,8 @@ const PORT = process.env.PORT || 5000;
 
 async function ensureSchemaExtensions(): Promise<void> {
   const migrations = [
+    // Branches — legacy installs may still be missing the branch code column
+    `ALTER TABLE branches ADD COLUMN IF NOT EXISTS code VARCHAR(20)`,
     // Classes — capacity & section columns (from schema_additions.sql)
     `ALTER TABLE classes ADD COLUMN IF NOT EXISTS capacity INT DEFAULT 0`,
     `ALTER TABLE classes ADD COLUMN IF NOT EXISTS section VARCHAR(10)`,
