@@ -3,12 +3,58 @@ import schoolAdminService from './schoolAdmin.service';
 import { generateCredentials } from '../utils/credentialGenerator';
 
 class FinanceClerkService {
-  // Record payment
+  private async getRegistrationDueForMonth(client: any, studentId: string, branchId: string, targetMonth: string): Promise<number> {
+    const regPaidRes = await client.query(
+      `SELECT 1
+       FROM payments p
+       JOIN payment_items pi ON pi.payment_id = p.id
+       WHERE p.student_id = $1
+         AND pi.fee_type = 'registration'
+         AND COALESCE(p.month, '') <= $2
+       LIMIT 1`,
+      [studentId, targetMonth]
+    );
+
+    if (regPaidRes.rows.length > 0) {
+      return 0;
+    }
+
+    const reg = await this.getGlobalRegistrationFee(branchId).catch(() => ({ amount: 0 }));
+    return Number(reg.amount || 0);
+  }
+
+  private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string) {
+    const feeTypes = ['monthly', 'bus', 'penalty', 'registration'];
+    let outstandingTotal = 0;
+
+    for (const ft of feeTypes) {
+      let due = 0;
+      if (ft === 'monthly') due = Number(student.monthly_fee || 0);
+      else if (ft === 'bus') due = Number(student.bus_fee || 0);
+      else if (ft === 'penalty') due = Number(student.penalty_fee || 0);
+      else if (ft === 'registration') due = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
+
+      const paidRes = await client.query(
+        `SELECT COALESCE(SUM(pi.amount),0) as paid
+         FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
+        [student.id, month, ft]
+      );
+
+      const paid = Number(paidRes.rows[0].paid || 0);
+      outstandingTotal += Math.max(0, due - paid);
+    }
+
+    return outstandingTotal;
+  }
+
+  // Record an itemized payment and update collections status
   async recordPayment(data: {
     studentId: string;
-    amount: number;
-    type: string;
-    date: string;
+    items: { feeType: string; amount: number }[];
+    month: string; // YYYY-MM
+    date?: string;
+    reference?: string;
     verifiedBy: string;
     branchId: string;
   }) {
@@ -16,29 +62,118 @@ class FinanceClerkService {
     try {
       await client.query('BEGIN');
 
-      // Get student name
-      const studentResult = await client.query(
-        'SELECT u.name FROM students s JOIN users u ON s.user_id = u.id WHERE s.id = $1',
+      // Lock student row
+      const studentRes = await client.query(
+        `SELECT s.id, s.monthly_fee, s.bus_fee, s.penalty_fee, s.branch_id, u.name
+         FROM students s JOIN users u ON s.user_id = u.id
+         WHERE s.id = $1 FOR UPDATE`,
         [data.studentId]
       );
 
-      if (studentResult.rows.length === 0) {
+      if (studentRes.rows.length === 0) {
         throw new Error('Student not found');
       }
 
-      const studentName = studentResult.rows[0].name;
+      const student = studentRes.rows[0];
 
-      // Insert transaction
-      const result = await client.query(
-        `INSERT INTO finance_transactions 
-        (student_id, student_name, amount, type, date, verified_by, branch_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING *`,
-        [data.studentId, studentName, data.amount, data.type, data.date, data.verifiedBy, data.branchId]
+      // Validate and compute totals
+      let total = 0;
+      const toInsertItems: { feeType: string; amount: number }[] = [];
+
+      for (const it of data.items) {
+        const feeType = it.feeType;
+        const amt = Number(it.amount) || 0;
+
+        // Determine amount due for fee type
+        let dueForType = 0;
+        if (feeType === 'monthly') dueForType = Number(student.monthly_fee || 0);
+        else if (feeType === 'bus') dueForType = Number(student.bus_fee || 0);
+        else if (feeType === 'penalty') dueForType = Number(student.penalty_fee || 0);
+        else if (feeType === 'registration') {
+          dueForType = await this.getRegistrationDueForMonth(client, data.studentId, data.branchId, data.month);
+        } else {
+          // Unknown fee type — accept provided amount as a custom charge
+          dueForType = amt;
+        }
+
+        // Amount already paid for this fee type in the same month
+        const paidRes = await client.query(
+          `SELECT COALESCE(SUM(pi.amount),0) AS paid
+           FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+           WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
+          [data.studentId, data.month, feeType]
+        );
+
+        const alreadyPaid = Number(paidRes.rows[0].paid || 0);
+        const remaining = Math.max(0, dueForType - alreadyPaid);
+
+        if (remaining <= 0) {
+          throw new Error(`Fee type already fully paid: ${feeType}`);
+        }
+
+        const payAmount = Math.min(amt, remaining);
+        if (payAmount <= 0) continue;
+
+        total += payAmount;
+        toInsertItems.push({ feeType, amount: payAmount });
+      }
+
+      if (toInsertItems.length === 0) {
+        throw new Error('No payable items provided');
+      }
+
+      // Create payment
+      const paymentRes = await client.query(
+        `INSERT INTO payments (student_id, payer_id, branch_id, month, date, total_amount, reference)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [data.studentId, null, data.branchId, data.month, data.date || new Date().toISOString().slice(0,10), total, data.reference || null]
+      );
+
+      const payment = paymentRes.rows[0];
+
+      // Insert items
+      for (const it of toInsertItems) {
+        await client.query(
+          `INSERT INTO payment_items (payment_id, fee_type, amount) VALUES ($1, $2, $3)`,
+          [payment.id, it.feeType, it.amount]
+        );
+      }
+
+      // Also record a finance_transactions summary (backwards compatibility)
+      await client.query(
+        `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [data.studentId, student.name, total, `Payment (${data.month})`, data.date || new Date().toISOString().slice(0,10), data.verifiedBy, data.branchId]
+      );
+
+      // Recompute outstanding and update student_collections
+      const outstandingTotal = await this.computeMonthlyOutstanding(client, student, data.branchId, data.month);
+
+      // Determine due_date (simple heuristic: 10th of month) and status
+      const dueDate = new Date(`${data.month}-10`);
+      const now = new Date();
+      let status = 'in_collections';
+      if (outstandingTotal <= 0) status = 'cleared';
+      else if (now > dueDate) status = 'overdue';
+
+      await client.query(
+        `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (student_id, month) DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
+        [data.studentId, data.month, dueDate.toISOString().slice(0,10), status]
       );
 
       await client.query('COMMIT');
-      return result.rows[0];
+
+      return {
+        payment: {
+          ...payment,
+          items: toInsertItems
+        },
+        outstanding: outstandingTotal,
+        collectionStatus: status
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -47,15 +182,77 @@ class FinanceClerkService {
     }
   }
 
-  // Get payment history
+  // Get itemized payment history for a student
   async getPaymentHistory(studentId: string) {
     const result = await pool.query(
-      `SELECT * FROM finance_transactions 
-       WHERE student_id = $1 
-       ORDER BY date DESC, created_at DESC`,
+      `SELECT p.*, 
+        COALESCE(json_agg(json_build_object('feeType', pi.fee_type, 'amount', pi.amount)) FILTER (WHERE pi.id IS NOT NULL), '[]') AS items
+       FROM payments p
+       LEFT JOIN payment_items pi ON pi.payment_id = p.id
+       WHERE p.student_id = $1
+       GROUP BY p.id
+       ORDER BY p.date DESC, p.created_at DESC`,
       [studentId]
     );
     return result.rows;
+  }
+
+  // Get outstanding amounts per fee type for a student for a given month
+  async getStudentOutstanding(studentId: string, month?: string) {
+    const targetMonth = month || new Date().toISOString().slice(0,7);
+
+    // Fetch student fees
+    const studentRes = await pool.query(
+      `SELECT s.id, s.monthly_fee, s.bus_fee, s.penalty_fee, s.branch_id, u.name, u.parent_phone
+       FROM students s JOIN users u ON s.user_id = u.id
+       WHERE s.id = $1`,
+      [studentId]
+    );
+
+    if (studentRes.rows.length === 0) throw new Error('Student not found');
+    const student = studentRes.rows[0];
+
+    // Fee types to report
+    const feeTypes = [
+      { key: 'monthly', label: 'Monthly Tuition', due: Number(student.monthly_fee || 0) },
+      { key: 'registration', label: 'Registration Fee', due: 0 },
+      { key: 'bus', label: 'Bus Fee', due: Number(student.bus_fee || 0) },
+      { key: 'penalty', label: 'Penalty Fee', due: Number(student.penalty_fee || 0) }
+    ];
+
+    const registrationDue = await this.getRegistrationDueForMonth(pool, studentId, student.branch_id, targetMonth);
+    feeTypes.find((f) => f.key === 'registration')!.due = registrationDue;
+
+    const feesWithPaid: any[] = [];
+    let totalDue = 0;
+    let totalPaid = 0;
+
+    for (const ft of feeTypes) {
+      totalDue += Number(ft.due || 0);
+      const paidRes = await pool.query(
+        `SELECT COALESCE(SUM(pi.amount),0) as paid
+         FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
+        [studentId, targetMonth, ft.key]
+      );
+      const paid = Number(paidRes.rows[0].paid || 0);
+      totalPaid += paid;
+      feesWithPaid.push({ feeType: ft.key, label: ft.label, due: Number(ft.due || 0), paid, remaining: Math.max(0, Number(ft.due || 0) - paid) });
+    }
+
+    // Also pull collection status
+    const collRes = await pool.query(`SELECT status, due_date FROM student_collections WHERE student_id = $1 AND month = $2`, [studentId, targetMonth]);
+    const collection = collRes.rows[0] || null;
+
+    return {
+      student: { id: student.id, name: student.name, parent_phone: student.parent_phone },
+      month: targetMonth,
+      fees: feesWithPaid,
+      totalDue,
+      totalPaid,
+      totalRemaining: Math.max(0, totalDue - totalPaid),
+      collection
+    };
   }
 
   // Get students with fee information
@@ -73,16 +270,17 @@ class FinanceClerkService {
     const params: any[] = [branchId];
     let paramCount = 1;
 
-    if (feeStatus) {
+    if (feeStatus && feeStatus !== 'all') {
       paramCount++;
-      query += ` AND s.fee_status = $${paramCount}`;
+      query += ` AND s.fee_status::text = $${paramCount}`;
       params.push(feeStatus);
     }
 
-    if (search) {
+    if (search && search.trim()) {
       paramCount++;
-      query += ` AND (u.name ILIKE $${paramCount} OR u.digital_id ILIKE $${paramCount})`;
-      params.push(`%${search}%`);
+      const searchTerm = `%${search.trim()}%`;
+      query += ` AND (u.name::text ILIKE $${paramCount} OR u.digital_id::text ILIKE $${paramCount})`;
+      params.push(searchTerm);
     }
 
     query += ' ORDER BY u.name';
@@ -500,22 +698,67 @@ class FinanceClerkService {
 
   // Get overdue payments
   async getOverduePayments(branchId: string) {
-    // Students who haven't paid this month
+    const month = new Date().toISOString().slice(0, 7);
+    await this.syncCollectionStatusesForMonth(month, branchId);
+
     const result = await pool.query(
       `SELECT 
         s.id, s.grade, s.monthly_fee, s.bus_fee, s.penalty_fee,
         u.name, u.email, u.digital_id, s.parent_phone
-      FROM students s
+      FROM student_collections sc
+      JOIN students s ON s.id = sc.student_id
       JOIN users u ON s.user_id = u.id
-      LEFT JOIN finance_transactions ft ON s.id = ft.student_id 
-        AND EXTRACT(MONTH FROM ft.date) = EXTRACT(MONTH FROM CURRENT_DATE)
-        AND EXTRACT(YEAR FROM ft.date) = EXTRACT(YEAR FROM CURRENT_DATE)
-      WHERE s.branch_id = $1 AND ft.id IS NULL
+      WHERE s.branch_id = $1 AND sc.month = $2 AND sc.status = 'overdue'
       ORDER BY u.name`,
-      [branchId]
+      [branchId, month]
     );
 
     return result.rows;
+  }
+
+  async syncCollectionStatusesForMonth(month: string, branchId?: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const params: any[] = [];
+      let where = '';
+      if (branchId) {
+        params.push(branchId);
+        where = ` AND s.branch_id = $${params.length}`;
+      }
+
+      const studentsRes = await client.query(
+        `SELECT s.id, s.monthly_fee, s.bus_fee, s.penalty_fee, s.branch_id
+         FROM students s
+         WHERE 1=1 ${where}`,
+        params
+      );
+
+      for (const student of studentsRes.rows) {
+        const outstandingTotal = await this.computeMonthlyOutstanding(client, student, student.branch_id, month);
+        const dueDate = new Date(`${month}-10`);
+        const now = new Date();
+        let status = 'in_collections';
+        if (outstandingTotal <= 0) status = 'cleared';
+        else if (now > dueDate) status = 'overdue';
+
+        await client.query(
+          `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (student_id, month)
+           DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
+          [student.id, month, dueDate.toISOString().slice(0, 10), status]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Get daily collection report

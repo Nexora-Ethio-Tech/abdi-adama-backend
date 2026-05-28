@@ -3,6 +3,7 @@ import app from './app';
 import pool from './config/database';
 import logger from './utils/logger';
 import ensureScheduleSchema from './scripts/ensureScheduleSchema';
+import financeClerkService from './services/financeClerk.service';
 
 dotenv.config();
 
@@ -134,6 +135,36 @@ async function ensureSchemaExtensions(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_driver_notifications_driver_id ON driver_notifications(driver_id)`,
     `CREATE INDEX IF NOT EXISTS idx_driver_notifications_created_at ON driver_notifications(created_at)`,
+    // Payments and collections for finance module
+    `CREATE TABLE IF NOT EXISTS payments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      payer_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      branch_id UUID,
+      month VARCHAR(7),
+      date DATE DEFAULT CURRENT_DATE,
+      total_amount NUMERIC NOT NULL,
+      reference VARCHAR(255),
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_payments_student_month ON payments(student_id, month)`,
+    `CREATE TABLE IF NOT EXISTS payment_items (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+      fee_type VARCHAR(100) NOT NULL,
+      amount NUMERIC NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_payment_items_fee_type ON payment_items(fee_type)`,
+    `CREATE TABLE IF NOT EXISTS student_collections (
+      student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      month VARCHAR(7) NOT NULL,
+      due_date DATE,
+      status VARCHAR(20) NOT NULL DEFAULT 'in_collections',
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (student_id, month)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_student_collections_month ON student_collections(month)`,
   ];
 
   for (const sql of migrations) {
@@ -179,6 +210,20 @@ async function bootstrap(): Promise<void> {
     await ensureSchemaExtensions();
     await ensureScheduleSchema();
 
+    // Keep monthly collections statuses fresh for current month
+    const runCollectionsSync = async () => {
+      try {
+        const month = new Date().toISOString().slice(0, 7);
+        await financeClerkService.syncCollectionStatusesForMonth(month);
+        logger.info(`✅ Finance collections sync completed for ${month}`);
+      } catch (err: any) {
+        logger.warn(`⚠️ Finance collections sync failed: ${err.message}`);
+      }
+    };
+
+    await runCollectionsSync();
+    const collectionsSyncInterval = setInterval(runCollectionsSync, 60 * 60 * 1000);
+
     const server = app.listen(PORT, () => {
       logger.info(`🚀 Server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -187,6 +232,7 @@ async function bootstrap(): Promise<void> {
 
     process.on('SIGTERM', () => {
       logger.info('SIGTERM signal received: closing HTTP server');
+      clearInterval(collectionsSyncInterval);
       server.close(() => {
         logger.info('HTTP server closed');
         pool.end(() => {
@@ -198,6 +244,7 @@ async function bootstrap(): Promise<void> {
 
     process.on('SIGINT', () => {
       logger.info('SIGINT signal received: closing HTTP server');
+      clearInterval(collectionsSyncInterval);
       server.close(() => {
         logger.info('HTTP server closed');
         pool.end(() => {
