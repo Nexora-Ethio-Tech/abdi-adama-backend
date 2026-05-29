@@ -16,6 +16,8 @@ async function ensureSchemaExtensions(): Promise<void> {
     // Classes — capacity & section columns (from schema_additions.sql)
     `ALTER TABLE classes ADD COLUMN IF NOT EXISTS capacity INT DEFAULT 0`,
     `ALTER TABLE classes ADD COLUMN IF NOT EXISTS section VARCHAR(10)`,
+    `ALTER TABLE classes ADD COLUMN IF NOT EXISTS grade VARCHAR(10)`,
+    `ALTER TABLE classes ADD COLUMN IF NOT EXISTS current_count INT DEFAULT 0`,
     `ALTER TABLE students ADD COLUMN IF NOT EXISTS requested_aid_amount NUMERIC(12,2)`,
     // Loans — allow pending/approved workflow (fixes loans_status_check on older DBs)
     `ALTER TABLE loans ADD COLUMN IF NOT EXISTS audited_by UUID REFERENCES users(id) ON DELETE SET NULL`,
@@ -28,6 +30,7 @@ async function ensureSchemaExtensions(): Promise<void> {
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_name VARCHAR(200)`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_email VARCHAR(255)`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_phone VARCHAR(30)`,
+    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS digital_id VARCHAR(50)`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS grade_applying VARCHAR(20)`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS parent_phone VARCHAR(30)`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS gender VARCHAR(10)`,

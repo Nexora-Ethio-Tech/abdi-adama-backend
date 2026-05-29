@@ -393,8 +393,33 @@ class FinanceClerkService {
     return result.rows;
   }
 
-  // Get the global registration fee assigned by super admin
-  async getGlobalRegistrationFee(branchId: string): Promise<{ amount: number; source: string }> {
+  /** Resolve registration fee from DB (grade-specific → global setting → branch policy). */
+  async resolveRegistrationFee(
+    branchId: string,
+    gradeApplying?: string | null
+  ): Promise<{ amount: number; source: string }> {
+    const gradeLevel = String(gradeApplying || '')
+      .replace(/grade\s*/i, '')
+      .replace(/\D/g, '')
+      .trim();
+
+    if (gradeLevel) {
+      const gradeFee = await pool.query(
+        `SELECT registration_fee
+         FROM branch_grade_fees
+         WHERE branch_id = $1 AND grade_level = $2
+         LIMIT 1`,
+        [branchId, gradeLevel]
+      );
+      const gradeAmount = Number(gradeFee.rows[0]?.registration_fee);
+      if (gradeAmount > 0) {
+        return {
+          amount: gradeAmount,
+          source: `branch_grade_fees (Grade ${gradeLevel})`
+        };
+      }
+    }
+
     const settingsResult = await pool.query(
       `SELECT key, value
        FROM finance_settings
@@ -405,25 +430,41 @@ class FinanceClerkService {
 
     if (settingsResult.rows.length > 0) {
       const setting = settingsResult.rows[0];
-      return {
-        amount: Number(setting.value) || 0,
-        source: setting.key
-      };
+      const amount = Number(setting.value) || 0;
+      if (amount > 0) {
+        return { amount, source: `finance_settings.${setting.key}` };
+      }
     }
 
-    const policyResult = await pool.query(
-      `SELECT registration_fee
-       FROM financial_policies
-       WHERE branch_id = $1
-       ORDER BY academic_year DESC, grade_level NULLS FIRST
-       LIMIT 1`,
-      [branchId]
-    );
+    const policyQuery = gradeLevel
+      ? `SELECT registration_fee
+         FROM financial_policies
+         WHERE branch_id = $1 AND grade_level = $2
+         ORDER BY academic_year DESC
+         LIMIT 1`
+      : `SELECT registration_fee
+         FROM financial_policies
+         WHERE branch_id = $1
+         ORDER BY academic_year DESC, grade_level NULLS FIRST
+         LIMIT 1`;
+
+    const policyParams = gradeLevel ? [branchId, gradeLevel] : [branchId];
+    const policyResult = await pool.query(policyQuery, policyParams);
+    const policyAmount = Number(policyResult.rows[0]?.registration_fee) || 0;
 
     return {
-      amount: Number(policyResult.rows[0]?.registration_fee || 0),
-      source: 'financial_policies.registration_fee'
+      amount: policyAmount,
+      source: gradeLevel
+        ? `financial_policies (Grade ${gradeLevel})`
+        : 'financial_policies.registration_fee'
     };
+  }
+
+  async getGlobalRegistrationFee(
+    branchId: string,
+    gradeApplying?: string | null
+  ): Promise<{ amount: number; source: string }> {
+    return this.resolveRegistrationFee(branchId, gradeApplying);
   }
 
   // Assign or change a student's transport route and fee
@@ -837,9 +878,34 @@ class FinanceClerkService {
     return await schoolAdminService.getApplicationsForFinance(branchId, status);
   }
 
-  // Approve an application (delegate to schoolAdminService)
-  async approveApplication(applicationId: string, payment: { amount: number; reference?: string }, financeUserId: string) {
-    return await schoolAdminService.financeApproveApplication(applicationId, payment, financeUserId);
+  // Approve an application (delegate to schoolAdminService; fee is always resolved server-side)
+  async approveApplication(
+    applicationId: string,
+    payment: { amount?: number; reference?: string },
+    financeUserId: string
+  ) {
+    const appRes = await pool.query(
+      `SELECT branch_id, grade_applying FROM pending_applications WHERE id = $1`,
+      [applicationId]
+    );
+    if (appRes.rows.length === 0) {
+      throw new Error('Application not found');
+    }
+
+    const app = appRes.rows[0];
+    const resolved = await this.resolveRegistrationFee(app.branch_id, app.grade_applying);
+
+    if (resolved.amount <= 0) {
+      throw new Error(
+        'Registration fee is not configured in system settings. Please contact the administrator.'
+      );
+    }
+
+    return await schoolAdminService.financeApproveApplication(
+      applicationId,
+      { amount: resolved.amount, reference: payment.reference },
+      financeUserId
+    );
   }
 
   // Reject an application and remove pending application record

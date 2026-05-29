@@ -664,6 +664,7 @@ class SchoolAdminService {
         applicant_name,
         applicant_email,
         applicant_phone,
+        digital_id,
         dob,
         gender,
         parent_name,
@@ -683,13 +684,14 @@ class SchoolAdminService {
         notes,
         created_by,
         created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, CURRENT_TIMESTAMP)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, CURRENT_TIMESTAMP)
       RETURNING *`,
       [
         data.branchId,
         data.applicantName || 'Unknown Applicant',
         data.applicantEmail || null,
         data.applicantPhone || '0000000000',
+        data.digitalId || null,
         data.dob || '2000-01-01',
         data.gender || null,
         data.parentName || 'Unknown Parent',
@@ -738,7 +740,7 @@ class SchoolAdminService {
 
   async getPendingApplications(branchId: string, status?: string) {
     let query = `
-      SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, dob, gender,
+      SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, digital_id, dob, gender,
              parent_name, parent_phone, address, previous_school, grade_applying,
              blood_group, allergies, chronic_conditions, current_medications, 
              transcript_mime_type, transcript_file_name, transcript_file_size, 
@@ -794,7 +796,7 @@ class SchoolAdminService {
   // Finance: get applications assigned for finance review
   async getApplicationsForFinance(branchId: string, status?: string) {
     let query = `
-      SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, dob, gender,
+      SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, digital_id, dob, gender,
              parent_name, parent_phone, address, previous_school, grade_applying,
              blood_group, allergies, chronic_conditions, current_medications, 
              transcript_mime_type, transcript_file_name, transcript_file_size, 

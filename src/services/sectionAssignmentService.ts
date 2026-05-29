@@ -30,9 +30,9 @@ export const normalizeGradeForSectionQuery = (grade: string): string => {
 const sectionCountSql = 'COALESCE(c.current_count, c.student_count, 0)';
 
 const gradeMatchSql = `(
-  c.grade = $1
-  OR c.name ILIKE 'Grade ' || $1 || '%'
+  c.name ILIKE 'Grade ' || $1 || '%'
   OR c.name ILIKE $1 || '%'
+  OR regexp_replace(c.name, '[^0-9]', '', 'g') = $1
 )`;
 
 const hasAvailableSlotSql = `(

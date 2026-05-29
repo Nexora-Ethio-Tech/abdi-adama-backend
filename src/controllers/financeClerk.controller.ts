@@ -172,7 +172,8 @@ class FinanceClerkController {
   async getGlobalRegistrationFee(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const fee = await financeClerkService.getGlobalRegistrationFee(branchId!);
+      const grade = (req.query.grade as string) || undefined;
+      const fee = await financeClerkService.getGlobalRegistrationFee(branchId!, grade);
 
       res.json({ success: true, data: fee });
     } catch (error) {
