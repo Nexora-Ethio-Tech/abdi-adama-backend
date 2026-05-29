@@ -446,6 +446,104 @@ class SuperAdminController {
       next(error);
     }
   }
+
+  // ─── System Settings ─────────────────────────────────────────────────────
+
+  async getSystemSettings(_req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const settings = await superAdminService.getSystemSettings();
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateSystemSettings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const settings = await superAdminService.updateSystemSettings(req.body, req.user!.id);
+      res.json({
+        success: true,
+        data: settings,
+        message: 'System settings updated successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // ─── Branch grade fees ───────────────────────────────────────────────────
+
+  async getBranchGradeFees(_req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const fees = await superAdminService.getBranchGradeFees();
+      res.json({ success: true, data: fees });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async upsertBranchGradeFee(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { branchId, gradeLevel, monthlyFee, registrationFee, busFee } = req.body;
+      const fee = await superAdminService.upsertBranchGradeFee(
+        {
+          branchId,
+          gradeLevel,
+          monthlyFee: Number(monthlyFee),
+          registrationFee: Number(registrationFee),
+          busFee: Number(busFee),
+        },
+        req.user!.id
+      );
+      res.json({
+        success: true,
+        data: fee,
+        message: 'Fee configuration saved',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deleteBranchGradeFee(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await superAdminService.deleteBranchGradeFee(req.params.id);
+      res.json({ success: true, message: 'Fee configuration removed' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // ─── Monthly profit targets ──────────────────────────────────────────────
+
+  async getMonthlyProfitTargets(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const year = req.query.year ? Number(req.query.year) : undefined;
+      const targets = await superAdminService.getMonthlyProfitTargets(year);
+      res.json({ success: true, data: targets });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async upsertMonthlyProfitTarget(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { ethiopianMonth, targetAmount, year } = req.body;
+      const target = await superAdminService.upsertMonthlyProfitTarget(
+        Number(ethiopianMonth),
+        Number(targetAmount),
+        req.user!.id,
+        year ? Number(year) : undefined
+      );
+      res.json({
+        success: true,
+        data: target,
+        message: 'Profit target saved',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new SuperAdminController();

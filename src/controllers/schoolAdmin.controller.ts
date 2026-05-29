@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { AuthRequest } from '../types';
 import schoolAdminService from '../services/schoolAdmin.service';
+import superAdminService from '../services/superAdmin.service';
 import pool from '../config/database';
 import {
   validateRegistrationForm,
@@ -558,6 +559,18 @@ class SchoolAdminController {
 
   async createPublicPendingApplication(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      const registrationOpen = await superAdminService.isRegistrationOpen();
+      if (!registrationOpen) {
+        res.status(403).json({
+          success: false,
+          error: {
+            code: 'REGISTRATION_CLOSED',
+            message: 'Online registration is currently closed.',
+          },
+        });
+        return;
+      }
+
       // Use same validation and file handling as authenticated route but determine branchId automatically
       const defaultBranchId = await schoolAdminService.getDefaultBranchId();
       if (!defaultBranchId) {

@@ -22,6 +22,7 @@ import payrollRoutes from './routes/payroll.routes';
 import scheduleRoutes from './routes/schedule.routes';
 import sectionAssignmentRoutes from './routes/sectionAssignmentRoutes';
 import gradingRoutes from './routes/grading.routes';
+import publicRoutes from './routes/public.routes';
 
 const app = express();
 
@@ -82,6 +83,7 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/public', publicRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/school-admin', schoolAdminRoutes);
 app.use('/api/finance-clerk', financeClerkRoutes);
