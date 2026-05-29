@@ -337,15 +337,25 @@ export const getChildAttendance = async (req: AuthRequest, res: Response) => {
       params
     );
 
+    const statsRow = statsResult.rows[0] || {};
+    const totalDays = Number(statsRow.total_days || 0);
+    const presentDays = Number(statsRow.present_days || 0);
+    const absentDays = Number(statsRow.absent_days || 0);
+    const lateDays = Number(statsRow.late_days || 0);
+    const excusedDays = Number(statsRow.excused_days || 0);
+    const attendancePercentage = totalDays > 0
+      ? Math.round((presentDays / totalDays) * 1000) / 10
+      : 0;
+
     return sendSuccess(res, {
       records: result.rows,
-      statistics: statsResult.rows[0] || {
-        total_days: 0,
-        present_days: 0,
-        absent_days: 0,
-        late_days: 0,
-        excused_days: 0,
-        attendance_percentage: 0,
+      statistics: {
+        total_days: totalDays,
+        present_days: presentDays,
+        absent_days: absentDays,
+        late_days: lateDays,
+        excused_days: excusedDays,
+        attendance_percentage: attendancePercentage,
       },
     });
   } catch (err: any) {

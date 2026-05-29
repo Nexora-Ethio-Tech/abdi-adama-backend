@@ -29,7 +29,15 @@ export const getAvailableSections = async (
       return;
     }
 
-    const sections = await getEligibleSections(grade as string);
+    let branchId = req.user?.branch_id;
+    if (!branchId && req.user?.user_id) {
+      const userRow = await pool.query('SELECT branch_id FROM users WHERE id = $1', [
+        req.user.user_id
+      ]);
+      branchId = userRow.rows[0]?.branch_id;
+    }
+
+    const sections = await getEligibleSections(grade as string, branchId);
     sendSuccess(res, { sections });
   } catch (error) {
     next(error);
@@ -216,16 +224,32 @@ export const autoDistributeStudents = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { grade } = req.body;
+    const { grade, branchId: bodyBranchId } = req.body;
     const userId = req.user?.user_id;
-    const branchId = req.user?.branch_id;
 
-    if (!grade || !userId || !branchId) {
-      sendError(res, 'Grade, user ID, and branch ID are required', 400);
+    if (!grade || !userId) {
+      sendError(res, 'Grade and user ID are required', 400);
       return;
     }
 
+    let branchId = req.user?.branch_id || bodyBranchId;
+    if (!branchId) {
+      const userRow = await pool.query('SELECT branch_id FROM users WHERE id = $1', [userId]);
+      branchId = userRow.rows[0]?.branch_id;
+    }
+
     const result = await autoDistributeUnassigned(grade, branchId, userId);
+
+    if (result.successful === 0 && result.failed === 0) {
+      sendSuccess(
+        res,
+        result,
+        `No unassigned students found for grade ${grade}. Ensure students have section_id empty and matching grade.`,
+        200
+      );
+      return;
+    }
+
     sendSuccess(
       res,
       result,

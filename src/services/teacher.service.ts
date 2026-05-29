@@ -68,12 +68,18 @@ class TeacherService {
     score: number;
     total: number;
     weight?: string;
+    academicYear?: string;
+    semester?: number;
   }) {
+    const academicYear = data.academicYear || '2025/2026';
+    const semester = data.semester ?? 2;
     const result = await pool.query(
-      `INSERT INTO grades (student_id, course_id, type, score, total, weight)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (student_id, course_id, type, academic_year, semester)
+       DO UPDATE SET score = EXCLUDED.score, total = EXCLUDED.total, weight = EXCLUDED.weight
        RETURNING *`,
-      [data.studentId, data.courseId, data.type, data.score, data.total, data.weight]
+      [data.studentId, data.courseId, data.type, data.score, data.total, data.weight, academicYear, semester]
     );
 
     return result.rows[0];
@@ -86,7 +92,7 @@ class TeacherService {
     score: number;
     total: number;
     weight?: string;
-  }>) {
+  }>, options?: { academicYear?: string; semester?: number }) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -154,14 +160,18 @@ class TeacherService {
         }
       }
 
-      // Bulk insert grades
+      // Bulk upsert grades (scoped by academic year + semester)
       const insertedGrades = [];
+      const academicYear = options?.academicYear || '2025/2026';
+      const semester = options?.semester ?? 2;
       for (const grade of grades) {
         const result = await client.query(
-          `INSERT INTO grades (student_id, course_id, type, score, total, weight)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (student_id, course_id, type, academic_year, semester)
+           DO UPDATE SET score = EXCLUDED.score, total = EXCLUDED.total, weight = EXCLUDED.weight
            RETURNING *`,
-          [grade.studentId, courseId, grade.type, grade.score, grade.total, grade.weight || null]
+          [grade.studentId, courseId, grade.type, grade.score, grade.total, grade.weight || null, academicYear, semester]
         );
         insertedGrades.push(result.rows[0]);
       }
@@ -337,9 +347,8 @@ class TeacherService {
     }
   }
 
-  // Get assigned classes
+  // Get assigned classes (teacher courses with class/section context)
   async getAssignedClasses(teacherId: string) {
-    // Get teacher record
     const teacherResult = await pool.query(
       'SELECT * FROM teachers WHERE user_id = $1',
       [teacherId]
@@ -351,7 +360,31 @@ class TeacherService {
 
     const teacher = teacherResult.rows[0];
 
-    // Get classes where teacher is assigned
+    const coursesResult = await pool.query(
+      `SELECT
+        c.id,
+        c.id AS course_id,
+        c.name AS subject,
+        c.code,
+        cl.id AS class_id,
+        cl.name,
+        cl.section,
+        cl.grade AS grade_level,
+        COUNT(DISTINCT s.id) AS actual_student_count
+      FROM courses c
+      JOIN classes cl ON c.class_id = cl.id
+      LEFT JOIN students s ON s.section_id = cl.id
+        OR (s.section_id IS NULL AND s.branch_id IS NOT DISTINCT FROM cl.branch_id AND (s.grade = cl.name OR cl.grade = s.grade))
+      WHERE c.teacher_id = $1
+      GROUP BY c.id, cl.id
+      ORDER BY cl.name, c.name`,
+      [teacher.id]
+    );
+
+    if (coursesResult.rows.length > 0) {
+      return coursesResult.rows;
+    }
+
     const result = await pool.query(
       `SELECT 
         c.*,

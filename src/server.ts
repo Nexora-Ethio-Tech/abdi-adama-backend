@@ -169,6 +169,10 @@ async function ensureSchemaExtensions(): Promise<void> {
       total       NUMERIC(6,2)  NOT NULL,
       created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     )`,
+    `ALTER TABLE grades ADD COLUMN IF NOT EXISTS academic_year VARCHAR(20) DEFAULT '2025/2026'`,
+    `ALTER TABLE grades ADD COLUMN IF NOT EXISTS semester SMALLINT DEFAULT 2`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_grades_student_course_type_term
+      ON grades (student_id, course_id, type, academic_year, semester)`,
     // Driver Notifications — tracks driver-posted alerts with 3-day auto-purge
     `CREATE TABLE IF NOT EXISTS driver_notifications (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

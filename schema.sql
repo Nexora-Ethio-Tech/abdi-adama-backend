@@ -623,7 +623,7 @@ CREATE TABLE clinic_chat_messages (
     sender_id       UUID           NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     sender_role     chat_sender_role NOT NULL,
     student_name    VARCHAR(150)   NOT NULL,
-    student_id      UUID           REFERENCES students(id),
+    student_id      UUID           REFERENCES students(id) ON DELETE CASCADE,
     text            TEXT           NOT NULL,
     read            BOOLEAN        NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ    NOT NULL DEFAULT NOW()

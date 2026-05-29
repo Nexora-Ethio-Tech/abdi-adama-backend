@@ -751,6 +751,12 @@ class SchoolAdminService {
     if (status) {
       query += ' AND status = $2';
       params.push(status);
+    } else {
+      // Active pipeline only — hide archived/closed applications from the default list
+      query += ` AND status IN (
+        'pending', 'exam-pending', 'exam-passed', 'awaiting-payment',
+        'finance_pending', 'payment-confirmed'
+      )`;
     }
 
     query += ' ORDER BY created_at DESC';
@@ -1058,6 +1064,7 @@ class SchoolAdminService {
         s.id as student_id,
         s.user_id,
         s.grade,
+        s.section_id,
         s.monthly_fee,
         s.bus_fee,
         s.penalty_fee,
@@ -1069,14 +1076,15 @@ class SchoolAdminService {
         u.status,
         u.is_active,
         u.created_at,
-        c.id as class_id,
-        c.name as class_name,
-        c.section as class_section,
-        c.capacity as class_capacity,
-        c.student_count as class_student_count
+        COALESCE(sc.id, gc.id) as class_id,
+        COALESCE(sc.name, gc.name) as class_name,
+        COALESCE(sc.section, gc.section) as class_section,
+        COALESCE(sc.capacity, gc.capacity) as class_capacity,
+        COALESCE(sc.student_count, gc.student_count) as class_student_count
       FROM students s
       JOIN users u ON s.user_id = u.id
-      LEFT JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+      LEFT JOIN classes sc ON s.section_id = sc.id
+      LEFT JOIN classes gc ON s.section_id IS NULL AND s.grade = gc.name AND s.branch_id = gc.branch_id
       WHERE s.branch_id = $1
     `;
 

@@ -23,6 +23,157 @@ const getEnrolledCourseIds = async (studentIdentityId: string): Promise<string[]
 };
 
 /**
+ * Resolve a student row from either students.id or users.id (identity_id).
+ */
+const resolveStudentRecord = async (identityOrStudentId: string) => {
+  const result = await pool.query(
+    `SELECT s.id, s.user_id, s.grade, s.section_id, s.branch_id,
+            u.name AS student_name,
+            cl.name AS class_name,
+            cl.section AS section_name
+     FROM students s
+     JOIN users u ON s.user_id = u.id
+     LEFT JOIN classes cl ON s.section_id = cl.id
+     WHERE s.id::text = $1 OR s.user_id::text = $1
+     LIMIT 1`,
+    [identityOrStudentId]
+  );
+  return result.rows[0] || null;
+};
+
+/**
+ * Returns courses assigned to the student's class/section with teacher info.
+ */
+const fetchStudentCoursesForTerm = async (
+  studentId: string,
+  _sectionId: string | null,
+  _grade: string,
+  _branchId: string | null,
+  subjectId?: string
+) => {
+  let subjectFilter = '';
+  if (subjectId) {
+    subjectFilter = 'AND c.id = $2';
+  }
+
+  const result = await pool.query(
+    `SELECT DISTINCT ON (c.id)
+       c.id,
+       c.id AS subject_id,
+       c.name,
+       c.code,
+       c.progress,
+       tu.name AS teacher,
+       cl.id AS class_id,
+       cl.name AS class_name,
+       cl.section AS section_name
+     FROM students s
+     JOIN classes cl ON (
+       (s.section_id IS NOT NULL AND cl.id = s.section_id)
+       OR (
+         s.section_id IS NULL
+         AND s.branch_id IS NOT DISTINCT FROM cl.branch_id
+         AND (cl.name = s.grade OR cl.name ILIKE 'Grade ' || s.grade || '%' OR cl.grade = s.grade)
+       )
+     )
+     JOIN courses c ON c.class_id = cl.id
+     LEFT JOIN teachers t ON c.teacher_id = t.id
+     LEFT JOIN users tu ON t.user_id = tu.id
+     WHERE s.id = $1
+       ${subjectFilter}
+     ORDER BY c.id, c.name ASC`,
+    subjectId ? [studentId, subjectId] : [studentId]
+  );
+
+  if (result.rows.length > 0) {
+    return result.rows;
+  }
+
+  // Fallback: legacy silo enrollments (identity may be silo id in older datasets)
+  const siloResult = await pool.query(
+    `SELECT
+       c.id,
+       c.id AS subject_id,
+       c.name,
+       c.code,
+       e.progress,
+       i.full_name AS teacher,
+       NULL AS class_id,
+       NULL AS class_name,
+       NULL AS section_name
+     FROM silo_enrollments e
+     JOIN silo_courses c ON c.id = e.course_id
+     LEFT JOIN silo_identities i ON i.id = c.teacher_id
+     WHERE e.student_id::text = $1::text
+       ${subjectId ? 'AND c.id = $2' : ''}
+     ORDER BY c.name ASC`,
+    subjectId ? [studentId, subjectId] : [studentId]
+  );
+  return siloResult.rows;
+};
+
+/**
+ * Returns courses enrolled for a specific academic year and semester.
+ */
+const fetchHistoricalCourses = async (
+  studentId: string,
+  userId: string,
+  year: string,
+  semester: number
+) => {
+  const siloResult = await pool.query(
+    `SELECT
+       c.id,
+       c.name,
+       c.code,
+       i.full_name AS teacher
+     FROM silo_enrollments e
+     JOIN silo_courses c ON c.id = e.course_id
+     LEFT JOIN silo_identities i ON i.id = c.teacher_id
+     WHERE (e.student_id::text = $1 OR e.student_id::text = $2)
+       AND e.academic_year = $3
+       AND e.semester::text = $4::text
+     ORDER BY c.name ASC`,
+    [studentId, userId, year, semester]
+  );
+
+  if (siloResult.rows.length > 0) {
+    return siloResult.rows;
+  }
+
+  const studentRow = await resolveStudentRecord(studentId);
+  if (!studentRow) return [];
+
+  return fetchStudentCoursesForTerm(
+    studentRow.id,
+    studentRow.section_id,
+    studentRow.grade,
+    studentRow.branch_id
+  );
+};
+
+const fetchStudentGradeRows = async (
+  studentId: string,
+  academicYear: string,
+  semester: number,
+  courseIds: string[]
+) => {
+  if (courseIds.length === 0) return [];
+
+  const result = await pool.query(
+    `SELECT g.course_id, g.type, g.score, g.total, g.weight
+     FROM grades g
+     WHERE g.student_id = $1
+       AND g.academic_year = $2
+       AND g.semester = $3
+       AND g.course_id = ANY($4::uuid[])
+       AND g.score IS NOT NULL`,
+    [studentId, academicYear, semester, courseIds]
+  );
+  return result.rows;
+};
+
+/**
  * Verify that a parent is linked to a specific student.
  */
 const verifyParentLink = async (parentUserId: string, studentId: string): Promise<boolean> => {
@@ -262,12 +413,10 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
 export const getGrades = async (req: AuthRequest, res: Response) => {
   let queryIdentityId = req.user?.identity_id;
 
-  // Validate authentication
   if (!queryIdentityId) {
     return sendError(res, 'User identity not found. Please log in again.', 401);
   }
 
-  // ── Support Parent Viewing Child ─────────────────────────────────────────────
   if (req.user?.role === 'Parent' && req.query.student_id) {
     const targetStudentId = req.query.student_id as string;
     const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
@@ -280,28 +429,25 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
   const subjectId = req.query.subject_id as string | undefined;
 
   try {
-    // 1. Get student UUID and grade level
-    const studentRes = await pool.query(
-      `SELECT id, grade FROM students WHERE user_id = $1 LIMIT 1`,
-      [queryIdentityId]
-    );
-    const studentRow = studentRes.rows[0];
-    const studentId = studentRow ? studentRow.id : null;
-    const gradeLevel = studentRow ? studentRow.grade.replace(/\D/g, '') : 'default';
+    const studentRow = await resolveStudentRecord(queryIdentityId);
+    if (!studentRow) {
+      return sendError(res, 'Student profile not found.', 404);
+    }
 
-    // 2. Fetch published grading configs for this grade level (fallback to 'default')
+    const gradeLevel = String(studentRow.grade || '').replace(/\D/g, '') || 'default';
+
     let configRes = await pool.query(
-      `SELECT method_id, label, max_weight 
-       FROM grading_configs 
-       WHERE grade_level = $1 
+      `SELECT method_id, label, max_weight
+       FROM grading_configs
+       WHERE grade_level = $1
        ORDER BY created_at ASC`,
       [gradeLevel]
     );
     if (configRes.rows.length === 0) {
       configRes = await pool.query(
-        `SELECT method_id, label, max_weight 
-         FROM grading_configs 
-         WHERE grade_level = 'default' 
+        `SELECT method_id, label, max_weight
+         FROM grading_configs
+         WHERE grade_level = 'default'
          ORDER BY created_at ASC`
       );
     }
@@ -311,105 +457,83 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
       maxWeight: r.max_weight,
     }));
 
-    // 3. Fetch courses and legacy grades
-    const coursesResult = await pool.query(
-      `SELECT
-         e.id          AS enrollment_id,
-         c.id          AS subject_id,
-         c.name,
-         c.code,
-         i.full_name   AS teacher,
-         e.progress,
-         COALESCE(g.quiz_10,       0) AS quiz_10,
-         COALESCE(g.assignment_10, 0) AS assignment_10,
-         COALESCE(g.mid_30,        0) AS mid_30,
-         COALESCE(g.final_50,      0) AS final_50,
-         COALESCE(g.total,         0) AS total,
-         -- legacy granular marks
-         g.quiz_1, g.quiz_2, g.test_1, g.test_2,
-         g.participation, g.mid_exam, g.final_exam
-       FROM silo_enrollments e
-       JOIN silo_courses c ON c.id = e.course_id
-       LEFT JOIN silo_identities i ON i.id = c.teacher_id
-       LEFT JOIN silo_student_grades g ON g.enrollment_id = e.id
-       WHERE e.student_id    = $1
-         AND e.academic_year = $2
-         AND e.semester::text = $3::text
-         ${subjectId ? 'AND c.id = $4' : ''}
-       ORDER BY c.name`,
+    const courses = await fetchStudentCoursesForTerm(
+      studentRow.id,
+      studentRow.section_id,
+      studentRow.grade,
+      studentRow.branch_id,
       subjectId
-        ? [queryIdentityId, year, semester, subjectId]
-        : [queryIdentityId, year, semester]
     );
 
-    // 4. Fetch actual grades from the new grades table if student exists
+    const courseIds = courses.map((c: any) => c.id);
     let dbGrades: any[] = [];
-    if (studentId) {
-      const gradesRes = await pool.query(
-        `SELECT g.course_id, c.name as course_name, c.code as course_code, g.type, g.score, g.total
-         FROM grades g
-         JOIN courses c ON g.course_id = c.id
-         WHERE g.student_id = $1`,
-        [studentId]
-      );
-      dbGrades = gradesRes.rows;
+    try {
+      dbGrades = await fetchStudentGradeRows(studentRow.id, year, semester, courseIds);
+    } catch (gradeErr: any) {
+      // Backward compatibility if semester columns are not migrated yet
+      if (courseIds.length > 0) {
+        const legacy = await pool.query(
+          `SELECT g.course_id, g.type, g.score, g.total, g.weight
+           FROM grades g
+           WHERE g.student_id = $1
+             AND g.course_id = ANY($2::uuid[])
+             AND g.score IS NOT NULL`,
+          [studentRow.id, courseIds]
+        );
+        dbGrades = legacy.rows;
+      }
     }
 
-    // 5. Merge dynamic grades and configs into each course
-    const mergedCourses = coursesResult.rows.map((course: any) => {
+    const mergedCourses = courses.map((course: any) => {
       const courseGrades: Record<string, number | null> = {};
       let calculatedTotal = 0;
-      let hasDynamicGrade = false;
+      let submittedCount = 0;
 
-      // Map dynamic configs
       for (const method of gradingMethods) {
-        // Look up in actual grades table (by course_id or course name/code for flexibility)
         const match = dbGrades.find(
-          (dg: any) =>
-            (dg.course_id === course.subject_id ||
-             dg.course_code === course.code ||
-             dg.course_name.toLowerCase() === course.name.toLowerCase()) &&
-            dg.type === method.id
+          (dg: any) => dg.course_id === course.id && dg.type === method.id
         );
-
-        if (match) {
-          courseGrades[method.id] = Number(match.score);
-          calculatedTotal += Number(match.score);
-          hasDynamicGrade = true;
+        if (match && match.score !== null && match.score !== undefined) {
+          const score = Number(match.score);
+          courseGrades[method.id] = score;
+          calculatedTotal += score;
+          submittedCount += 1;
         } else {
-          // Fallback to legacy fields if not in actual grades table
-          let fallbackVal: number | null = null;
-          const midId = method.id.toLowerCase();
-          if (midId.includes('mid')) {
-            fallbackVal = Number(course.mid_30 || course.mid_exam || 0);
-          } else if (midId.includes('final')) {
-            fallbackVal = Number(course.final_50 || course.final_exam || 0);
-          } else if (midId.includes('quiz')) {
-            fallbackVal = Number(course.quiz_10 || course.quiz_1 || 0);
-          } else if (midId.includes('assignment')) {
-            fallbackVal = Number(course.assignment_10 || 0);
-          } else if (midId.includes('test')) {
-            fallbackVal = Number(course.test_1 || 0);
-          }
-          courseGrades[method.id] = fallbackVal;
-          if (fallbackVal !== null) {
-            calculatedTotal += fallbackVal;
-          }
+          courseGrades[method.id] = null;
         }
       }
 
-      const totalScore = hasDynamicGrade ? calculatedTotal : Number(course.total);
+      const legacyMid = dbGrades.find((dg: any) => dg.course_id === course.id && String(dg.type).toLowerCase().includes('mid'));
+      const legacyFinal = dbGrades.find((dg: any) => dg.course_id === course.id && String(dg.type).toLowerCase().includes('final'));
 
       return {
-        ...course,
+        id: course.id,
+        subject_id: course.subject_id || course.id,
+        name: course.name,
+        code: course.code,
+        teacher: course.teacher || 'N/A',
+        progress: course.progress ?? 0,
+        class_name: course.class_name || studentRow.class_name || studentRow.grade,
+        section_name: course.section_name || studentRow.section_name || null,
         grades: courseGrades,
-        total: totalScore,
+        quiz_10: courseGrades.quiz ?? courseGrades.quiz_1 ?? null,
+        assignment_10: courseGrades.test ?? courseGrades.assignment ?? null,
+        mid_30: courseGrades.mid ?? (legacyMid ? Number(legacyMid.score) : null),
+        final_50: courseGrades.final ?? (legacyFinal ? Number(legacyFinal.score) : null),
+        total: submittedCount > 0 ? calculatedTotal : null,
       };
     });
 
     return sendSuccess(res, {
       semester,
       year,
+      student: {
+        id: studentRow.id,
+        name: studentRow.student_name,
+        grade: studentRow.grade,
+        class_name: studentRow.class_name,
+        section_name: studentRow.section_name,
+      },
       gradingMethods,
       courses: mergedCourses,
       selected: subjectId ? (mergedCourses[0] ?? null) : null,
@@ -418,7 +542,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
     console.error('[getGrades] Error:', err.message);
     return sendError(res, 'Failed to fetch grades.', 500, err.message);
   }
-}
+};
 
 // ─── GET /api/student/history ─────────────────────────────────────────────────
 /**
@@ -455,49 +579,65 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const params: any[] = [queryIdentityId, year];
-    if (semester !== null) params.push(semester);
+    const studentRow = await resolveStudentRecord(queryIdentityId);
+    if (!studentRow) {
+      return sendError(res, 'Student profile not found.', 404);
+    }
 
-    const result = await pool.query(
-      `SELECT
-         e.academic_year AS year,
-         e.semester,
-         c.name          AS subject,
-         COALESCE(g.total, 0) AS score
-       FROM silo_enrollments e
-       JOIN silo_courses c ON c.id = e.course_id
-       LEFT JOIN silo_student_grades g ON g.enrollment_id = e.id
-       WHERE e.student_id    = $1
-         AND e.academic_year = $2
-         ${semester !== null ? 'AND e.semester::text = $3::text' : ''}
-       ORDER BY e.semester ASC, c.name ASC`,
-      params
+    const courses = await fetchHistoricalCourses(
+      studentRow.id,
+      studentRow.user_id,
+      year,
+      semester ?? 2
     );
+    const courseIds = courses.map((c: any) => c.id);
 
-    // Group by semester and calculate average
-    const grouped: Record<string, any> = {};
-    result.rows.forEach(row => {
-      const key = `${row.year}__${row.semester}`;
-      if (!grouped[key]) {
-        grouped[key] = {
-          year: row.year,
-          semester: `Semester ${row.semester}`,
-          courses: [],
-          _totalScore: 0,
-        };
-      }
-      const score = Number(row.score);
-      grouped[key].courses.push({ name: row.subject, score });
-      grouped[key]._totalScore += score;
+    let gradeRows: any[] = [];
+    const semValue = semester ?? 2;
+    try {
+      gradeRows = await fetchStudentGradeRows(studentRow.id, year, semValue, courseIds);
+    } catch {
+      const legacy = await pool.query(
+        `SELECT g.course_id, g.type, g.score
+         FROM grades g
+         WHERE g.student_id = $1 AND g.course_id = ANY($2::uuid[]) AND g.score IS NOT NULL`,
+        [studentRow.id, courseIds]
+      );
+      gradeRows = legacy.rows;
+    }
+
+    const courseTotals = new Map<string, number>();
+    for (const course of courses) {
+      const rowsForCourse = gradeRows.filter((g: any) => g.course_id === course.id);
+      if (rowsForCourse.length === 0) continue;
+      const total = rowsForCourse.reduce((sum: number, g: any) => sum + Number(g.score || 0), 0);
+      courseTotals.set(course.id, total);
+    }
+
+    const historyCourses = courses.map((c: any) => {
+      const total = courseTotals.get(c.id);
+      return {
+        name: c.name,
+        code: c.code || '',
+        teacher: c.teacher || null,
+        score: total !== undefined ? total.toFixed(1) : null,
+        score_display: total !== undefined ? `${total.toFixed(1)}%` : 'Pending',
+      };
     });
 
-    const history = Object.values(grouped).map(h => {
-      const avg = h.courses.length > 0
-        ? (h._totalScore / h.courses.length).toFixed(1) + '%'
-        : '0%';
-      const { _totalScore, ...rest } = h;
-      return { ...rest, average: avg };
-    });
+    const scoredCourses = historyCourses.filter(c => c.score !== null);
+    const semesterLabel = semester !== null ? `Semester ${semester}` : 'All Semesters';
+    const avg = scoredCourses.length > 0
+      ? (scoredCourses.reduce((sum, c) => sum + parseFloat(String(c.score)), 0) / scoredCourses.length).toFixed(1) + '%'
+      : 'N/A';
+
+    const history = [{
+      year,
+      semester: semesterLabel,
+      courses: historyCourses,
+      average: avg,
+      semester_average: avg,
+    }];
 
     return sendSuccess(res, history);
   } catch (err: any) {

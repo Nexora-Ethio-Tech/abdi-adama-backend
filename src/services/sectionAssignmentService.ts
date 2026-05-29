@@ -18,33 +18,61 @@ export interface SectionInfo {
   available_slots: number;
 }
 
-const normalizeGradeForSectionQuery = (grade: string): string => {
+/** Normalize "Grade 7", "7", "grade 7" → "7" */
+export const normalizeGradeForSectionQuery = (grade: string): string => {
   const trimmed = grade.trim();
-  return trimmed.replace(/^Grade\s+/i, '').trim();
+  const fromLabel = trimmed.match(/grade\s*(\d{1,2})/i);
+  if (fromLabel) return fromLabel[1];
+  const digits = trimmed.match(/(\d{1,2})/);
+  return digits ? digits[1] : trimmed;
 };
+
+const sectionCountSql = 'COALESCE(c.current_count, c.student_count, 0)';
+
+const gradeMatchSql = `(
+  c.grade = $1
+  OR c.name ILIKE 'Grade ' || $1 || '%'
+  OR c.name ILIKE $1 || '%'
+)`;
+
+const hasAvailableSlotSql = `(
+  COALESCE(c.capacity, 0) <= 0
+  OR ${sectionCountSql} < c.capacity
+)`;
 
 /**
  * Get eligible sections for a student's grade level with capacity info.
  */
-export const getEligibleSections = async (grade: string): Promise<SectionInfo[]> => {
+export const getEligibleSections = async (
+  grade: string,
+  branchId?: string | null
+): Promise<SectionInfo[]> => {
   const normalizedGrade = normalizeGradeForSectionQuery(grade);
+  const params: any[] = [normalizedGrade];
+  let branchFilter = '';
+
+  if (branchId) {
+    params.push(branchId);
+    branchFilter = ` AND c.branch_id = $${params.length}`;
+  }
+
   const result = await pool.query(
     `SELECT 
        c.id, 
        c.name, 
        c.section,
        c.capacity, 
-       COALESCE(c.current_count, 0) AS current_count,
-       (c.capacity - COALESCE(c.current_count, 0)) AS available_slots
+       ${sectionCountSql} AS current_count,
+       CASE
+         WHEN COALESCE(c.capacity, 0) <= 0 THEN 999
+         ELSE GREATEST(c.capacity - ${sectionCountSql}, 0)
+       END AS available_slots
      FROM classes c
-     WHERE (
-       c.name ILIKE 'Grade ' || $1 || '%'
-       OR c.name ILIKE $1 || '%'
-     )
-     AND c.capacity > 0
-     AND COALESCE(c.current_count, 0) < c.capacity
-     ORDER BY c.current_count ASC, c.section ASC, c.name ASC`,
-    [normalizedGrade]
+     WHERE ${gradeMatchSql}
+     ${branchFilter}
+     AND ${hasAvailableSlotSql}
+     ORDER BY ${sectionCountSql} ASC, c.section ASC NULLS LAST, c.name ASC`,
+    params
   );
 
   return result.rows.map((row: any) => ({
@@ -53,12 +81,25 @@ export const getEligibleSections = async (grade: string): Promise<SectionInfo[]>
   }));
 };
 
+const syncSectionCounts = async (
+  client: { query: (text: string, params?: any[]) => Promise<any> },
+  sectionId: string
+) => {
+  await client.query(
+    `UPDATE classes
+     SET current_count = (
+       SELECT COUNT(*)::int FROM students WHERE section_id = $1
+     ),
+     student_count = (
+       SELECT COUNT(*)::int FROM students WHERE section_id = $1
+     )
+     WHERE id = $1`,
+    [sectionId]
+  );
+};
+
 /**
  * Assign a student to a section with transaction safety and capacity checks.
- * Logic:
- * - If student already assigned, update previous_section_id
- * - Check target section capacity (must have slots)
- * - Use transaction: update student, increment new section count, decrement old count, audit
  */
 export const assignStudentToSection = async (
   studentId: string,
@@ -68,12 +109,10 @@ export const assignStudentToSection = async (
 ): Promise<AssignmentResult> => {
   const client = await pool.connect();
   try {
-    // Start transaction
     await client.query('BEGIN');
 
-    // 1. Lock student row to prevent concurrent updates
     const studentResult = await client.query(
-      'SELECT id, section_id, grade FROM students WHERE id = $1 FOR UPDATE',
+      'SELECT id, section_id, grade, branch_id FROM students WHERE id = $1 FOR UPDATE',
       [studentId]
     );
     if (studentResult.rows.length === 0) {
@@ -83,9 +122,9 @@ export const assignStudentToSection = async (
     const student = studentResult.rows[0];
     const fromSectionId = student.section_id;
 
-    // 2. Lock and verify target section
     const sectionResult = await client.query(
-      'SELECT id, name, capacity, COALESCE(current_count, 0) AS current_count FROM classes WHERE id = $1 FOR UPDATE',
+      `SELECT id, name, section, capacity, ${sectionCountSql} AS current_count
+       FROM classes c WHERE id = $1 FOR UPDATE`,
       [toSectionId]
     );
     if (sectionResult.rows.length === 0) {
@@ -93,13 +132,15 @@ export const assignStudentToSection = async (
     }
 
     const section = sectionResult.rows[0];
-    if (section.current_count >= section.capacity) {
+    const capacity = Number(section.capacity) || 0;
+    const currentCount = Number(section.current_count) || 0;
+
+    if (capacity > 0 && currentCount >= capacity) {
       throw new Error(
-        `Section "${section.name}" is at capacity (${section.capacity}/${section.capacity}). Cannot assign student.`
+        `Section "${section.name}" is at capacity (${capacity}/${capacity}). Cannot assign student.`
       );
     }
 
-    // 3. Update student record
     await client.query(
       `UPDATE students 
        SET section_id = $1, 
@@ -110,22 +151,11 @@ export const assignStudentToSection = async (
       [toSectionId, fromSectionId, studentId]
     );
 
-    // 4. Update section counts
-    // Increment new section
-    await client.query(
-      'UPDATE classes SET current_count = current_count + 1 WHERE id = $1',
-      [toSectionId]
-    );
-
-    // Decrement old section if exists
+    await syncSectionCounts(client, toSectionId);
     if (fromSectionId) {
-      await client.query(
-        'UPDATE classes SET current_count = GREATEST(current_count - 1, 0) WHERE id = $1',
-        [fromSectionId]
-      );
+      await syncSectionCounts(client, fromSectionId);
     }
 
-    // 5. Log to audit table
     await client.query(
       `INSERT INTO section_assignment_audit 
        (student_id, from_section_id, to_section_id, assigned_by, reason, created_at)
@@ -133,15 +163,18 @@ export const assignStudentToSection = async (
       [studentId, fromSectionId || null, toSectionId, assignedByUserId, reason]
     );
 
-    // Commit transaction
     await client.query('COMMIT');
+
+    const sectionLabel = section.section
+      ? `${section.name} — Section ${section.section}`
+      : section.name;
 
     return {
       success: true,
       studentId,
-      fromSection: fromSectionId ? `Section ${section.name}` : 'Unassigned',
-      toSection: section.name,
-      message: `Student successfully assigned to section "${section.name}"`
+      fromSection: fromSectionId ? `Previous section` : 'Unassigned',
+      toSection: sectionLabel,
+      message: `Student successfully assigned to "${sectionLabel}"`
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -153,46 +186,32 @@ export const assignStudentToSection = async (
 
 /**
  * Auto-assign new students to least-loaded sections in their grade.
- * Randomly shuffles eligible sections then picks the least-loaded.
  */
 export const autoAssignStudent = async (
   studentId: string,
   grade: string,
   assignedByUserId: string
 ): Promise<AssignmentResult> => {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  const normalizedGrade = normalizeGradeForSectionQuery(grade);
 
-    const normalizedGrade = normalizeGradeForSectionQuery(grade);
+  const studentRow = await pool.query(
+    'SELECT branch_id FROM students WHERE id = $1',
+    [studentId]
+  );
+  const branchId = studentRow.rows[0]?.branch_id || null;
 
-    // Get eligible sections sorted by load within the student's grade
-    const sectionsResult = await client.query(
-      `SELECT c.id, c.name, c.capacity, COALESCE(c.current_count, 0) AS current_count
-       FROM classes c
-       WHERE (
-         c.name ILIKE 'Grade ' || $1 || '%'
-         OR c.name ILIKE $1 || '%'
-       )
-       AND c.capacity > COALESCE(c.current_count, 0)
-       ORDER BY c.current_count ASC, RANDOM()
-       LIMIT 1`,
-      [normalizedGrade]
-    );
-
-    if (sectionsResult.rows.length === 0) {
-      throw new Error(`No available sections for grade ${grade}`);
-    }
-
-    const targetSection = sectionsResult.rows[0];
-    await client.query('COMMIT');
-    return assignStudentToSection(studentId, targetSection.id, 'Auto-assigned on enrollment', assignedByUserId);
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
+  const sections = await getEligibleSections(normalizedGrade, branchId);
+  if (sections.length === 0) {
+    throw new Error(`No available sections for grade ${grade}`);
   }
+
+  const targetSection = sections[0];
+  return assignStudentToSection(
+    studentId,
+    targetSection.id,
+    'Auto-assigned on enrollment',
+    assignedByUserId
+  );
 };
 
 /**
@@ -228,45 +247,57 @@ export const bulkAssignStudents = async (
   return results;
 };
 
+const studentGradeMatchSql = `(
+  s.grade = $1
+  OR s.grade ILIKE 'Grade ' || $1
+  OR s.grade ILIKE 'Grade ' || $1 || '%'
+  OR regexp_replace(s.grade, '[^0-9]', '', 'g') = $1
+)`;
+
 /**
  * Auto-distribute unassigned students in a grade fairly across available sections.
- * Uses round-robin to balance load.
  */
 export const autoDistributeUnassigned = async (
   grade: string,
-  branchId: string,
+  branchId: string | null | undefined,
   assignedByUserId: string
 ): Promise<{ successful: number; failed: number; results: AssignmentResult[] }> => {
   const normalizedGrade = normalizeGradeForSectionQuery(grade);
-  
-  // 1. Fetch all unassigned students in this grade
+
+  const params: any[] = [normalizedGrade];
+  let branchFilter = '';
+  if (branchId) {
+    params.push(branchId);
+    branchFilter = ` AND s.branch_id = $${params.length}`;
+  }
+
   const unassignedStudents = await pool.query(
-    `SELECT id, grade FROM students 
-     WHERE section_id IS NULL 
-     AND (grade = $1 OR grade ILIKE 'Grade ' || $1 || '%')
-     AND branch_id = $2
-     ORDER BY created_at ASC`,
-    [normalizedGrade, branchId]
+    `SELECT s.id, s.grade, s.branch_id FROM students s
+     WHERE s.section_id IS NULL 
+     AND ${studentGradeMatchSql}
+     ${branchFilter}
+     ORDER BY s.created_at ASC`,
+    params
   );
 
   if (unassignedStudents.rows.length === 0) {
     return { successful: 0, failed: 0, results: [] };
   }
 
-  // 2. Fetch all available sections in this grade
-  const sections = await getEligibleSections(grade);
-  
+  const effectiveBranchId = branchId || unassignedStudents.rows[0]?.branch_id || null;
+  const sections = await getEligibleSections(grade, effectiveBranchId);
+
   if (sections.length === 0) {
-    throw new Error(`No available sections for grade ${grade}`);
+    throw new Error(
+      `No available sections for grade ${grade}. Create grade sections under Classes with capacity set.`
+    );
   }
 
-  // 3. Round-robin distribute students across sections
   const results: AssignmentResult[] = [];
   let sectionIndex = 0;
 
   for (const student of unassignedStudents.rows) {
     try {
-      // Pick the next section in round-robin fashion
       const targetSection = sections[sectionIndex % sections.length];
       sectionIndex++;
 
@@ -287,8 +318,8 @@ export const autoDistributeUnassigned = async (
     }
   }
 
-  const successful = results.filter(r => r.success).length;
-  const failed = results.filter(r => !r.success).length;
+  const successful = results.filter((r) => r.success).length;
+  const failed = results.filter((r) => !r.success).length;
 
   return { successful, failed, results };
 };
@@ -305,7 +336,6 @@ export const swapStudentSections = async (
   try {
     await client.query('BEGIN');
 
-    // Get both students' current sections
     const studentsResult = await client.query(
       'SELECT id, section_id FROM students WHERE id IN ($1, $2) FOR UPDATE',
       [studentAId, studentBId]
@@ -323,7 +353,6 @@ export const swapStudentSections = async (
       throw new Error('Both students must be assigned to sections to swap');
     }
 
-    // Swap sections
     await client.query('UPDATE students SET section_id = $2, updated_at = NOW() WHERE id = $1', [
       studentAId,
       sectionBId
@@ -333,11 +362,24 @@ export const swapStudentSections = async (
       sectionAId
     ]);
 
-    // Audit both swaps
+    await syncSectionCounts(client, sectionAId);
+    await syncSectionCounts(client, sectionBId);
+
     await client.query(
       `INSERT INTO section_assignment_audit (student_id, from_section_id, to_section_id, assigned_by, reason)
        VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)`,
-      [studentAId, sectionAId, sectionBId, assignedByUserId, 'Swap', studentBId, sectionBId, sectionAId, assignedByUserId, 'Swap']
+      [
+        studentAId,
+        sectionAId,
+        sectionBId,
+        assignedByUserId,
+        'Swap',
+        studentBId,
+        sectionBId,
+        sectionAId,
+        assignedByUserId,
+        'Swap'
+      ]
     );
 
     await client.query('COMMIT');
