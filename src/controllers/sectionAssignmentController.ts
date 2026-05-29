@@ -5,7 +5,8 @@ import {
   autoAssignStudent,
   bulkAssignStudents,
   swapStudentSections,
-  getEligibleSections
+  getEligibleSections,
+  autoDistributeUnassigned
 } from '../services/sectionAssignmentService';
 import { sendSuccess, sendError } from '../shared/responseUtils';
 import pool from '../config/db';
@@ -199,6 +200,38 @@ export const swapStudentsSections = async (
 
     const result = await swapStudentSections(value.studentAId, value.studentBId, userId);
     sendSuccess(res, result, 'Students swapped successfully', 200);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/sections/auto-distribute
+ * Auto-distribute all unassigned students in a grade fairly across available sections
+ * Body: { grade: string }
+ */
+export const autoDistributeStudents = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { grade } = req.body;
+    const userId = req.user?.user_id;
+    const branchId = req.user?.branch_id;
+
+    if (!grade || !userId || !branchId) {
+      sendError(res, 'Grade, user ID, and branch ID are required', 400);
+      return;
+    }
+
+    const result = await autoDistributeUnassigned(grade, branchId, userId);
+    sendSuccess(
+      res,
+      result,
+      `Auto-distributed ${result.successful} students (${result.failed} failed)`,
+      200
+    );
   } catch (error) {
     next(error);
   }

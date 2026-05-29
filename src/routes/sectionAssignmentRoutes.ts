@@ -70,4 +70,17 @@ router.post(
   sectionAssignmentController.bulkAssignToSection
 );
 
+/**
+ * POST /api/sections/auto-distribute
+ * Auto-distribute all unassigned students in a grade fairly across available sections
+ * Body: { grade: string }
+ * Accessible by: School Admin, Super Admin
+ */
+router.post(
+  '/auto-distribute',
+  authenticateToken,
+  authorizeRoles('school-admin', 'super-admin'),
+  sectionAssignmentController.autoDistributeStudents
+);
+
 export default router;

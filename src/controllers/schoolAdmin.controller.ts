@@ -667,10 +667,11 @@ class SchoolAdminController {
   async updateApplicationStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params;
-      const { status } = req.body;
+      const { status, gradeApplying, grade_applying } = req.body;
+      const selectedGrade = gradeApplying || grade_applying;
 
       const reviewerId = req.user?.id;
-      const application = await schoolAdminService.updateApplicationStatus(id, status, reviewerId);
+      const application = await schoolAdminService.updateApplicationStatus(id, status, reviewerId, selectedGrade);
 
       res.json({
         success: true,

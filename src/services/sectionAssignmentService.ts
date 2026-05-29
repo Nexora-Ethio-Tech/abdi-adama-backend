@@ -11,17 +11,23 @@ export interface AssignmentResult {
 export interface SectionInfo {
   id: string;
   name: string;
-  grade: string;
+  section: string | null;
+  grade?: string;
   capacity: number;
   current_count: number;
   available_slots: number;
 }
 
+const normalizeGradeForSectionQuery = (grade: string): string => {
+  const trimmed = grade.trim();
+  return trimmed.replace(/^Grade\s+/i, '').trim();
+};
+
 /**
  * Get eligible sections for a student's grade level with capacity info.
- * Uses grade column for reliable filtering. Falls back to name pattern matching if grade column is NULL.
  */
 export const getEligibleSections = async (grade: string): Promise<SectionInfo[]> => {
+  const normalizedGrade = normalizeGradeForSectionQuery(grade);
   const result = await pool.query(
     `SELECT 
        c.id, 
@@ -32,22 +38,19 @@ export const getEligibleSections = async (grade: string): Promise<SectionInfo[]>
        (c.capacity - COALESCE(c.current_count, 0)) AS available_slots
      FROM classes c
      WHERE (
-       -- Primary: Match using grade column
-       c.grade = $1
-       -- Fallback: Pattern match in name if grade column not populated yet
-       OR (c.grade IS NULL AND (
-         c.name ILIKE 'Grade ' || $1 || '%'
-         OR c.name ILIKE $1 || '%'
-         OR c.name ILIKE $1 || '-%'
-       ))
+       c.name ILIKE 'Grade ' || $1 || '%'
+       OR c.name ILIKE $1 || '%'
      )
      AND c.capacity > 0
      AND COALESCE(c.current_count, 0) < c.capacity
      ORDER BY c.current_count ASC, c.section ASC, c.name ASC`,
-    [grade]
+    [normalizedGrade]
   );
 
-  return result.rows;
+  return result.rows.map((row: any) => ({
+    ...row,
+    grade: normalizedGrade
+  }));
 };
 
 /**
@@ -143,6 +146,7 @@ export const assignStudentToSection = async (
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
+  } finally {
     client.release();
   }
 };
@@ -160,14 +164,20 @@ export const autoAssignStudent = async (
   try {
     await client.query('BEGIN');
 
-    // Get eligible sections sorted by load
+    const normalizedGrade = normalizeGradeForSectionQuery(grade);
+
+    // Get eligible sections sorted by load within the student's grade
     const sectionsResult = await client.query(
       `SELECT c.id, c.name, c.capacity, COALESCE(c.current_count, 0) AS current_count
        FROM classes c
-       WHERE c.capacity > COALESCE(c.current_count, 0)
+       WHERE (
+         c.name ILIKE 'Grade ' || $1 || '%'
+         OR c.name ILIKE $1 || '%'
+       )
+       AND c.capacity > COALESCE(c.current_count, 0)
        ORDER BY c.current_count ASC, RANDOM()
        LIMIT 1`,
-      []
+      [normalizedGrade]
     );
 
     if (sectionsResult.rows.length === 0) {
@@ -216,6 +226,71 @@ export const bulkAssignStudents = async (
   }
 
   return results;
+};
+
+/**
+ * Auto-distribute unassigned students in a grade fairly across available sections.
+ * Uses round-robin to balance load.
+ */
+export const autoDistributeUnassigned = async (
+  grade: string,
+  branchId: string,
+  assignedByUserId: string
+): Promise<{ successful: number; failed: number; results: AssignmentResult[] }> => {
+  const normalizedGrade = normalizeGradeForSectionQuery(grade);
+  
+  // 1. Fetch all unassigned students in this grade
+  const unassignedStudents = await pool.query(
+    `SELECT id, grade FROM students 
+     WHERE section_id IS NULL 
+     AND (grade = $1 OR grade ILIKE 'Grade ' || $1 || '%')
+     AND branch_id = $2
+     ORDER BY created_at ASC`,
+    [normalizedGrade, branchId]
+  );
+
+  if (unassignedStudents.rows.length === 0) {
+    return { successful: 0, failed: 0, results: [] };
+  }
+
+  // 2. Fetch all available sections in this grade
+  const sections = await getEligibleSections(grade);
+  
+  if (sections.length === 0) {
+    throw new Error(`No available sections for grade ${grade}`);
+  }
+
+  // 3. Round-robin distribute students across sections
+  const results: AssignmentResult[] = [];
+  let sectionIndex = 0;
+
+  for (const student of unassignedStudents.rows) {
+    try {
+      // Pick the next section in round-robin fashion
+      const targetSection = sections[sectionIndex % sections.length];
+      sectionIndex++;
+
+      const result = await assignStudentToSection(
+        student.id,
+        targetSection.id,
+        `Auto-distributed to ${targetSection.name}`,
+        assignedByUserId
+      );
+      results.push(result);
+    } catch (error) {
+      results.push({
+        success: false,
+        studentId: student.id,
+        toSection: 'Unknown',
+        message: `Failed: ${(error as any).message}`
+      });
+    }
+  }
+
+  const successful = results.filter(r => r.success).length;
+  const failed = results.filter(r => !r.success).length;
+
+  return { successful, failed, results };
 };
 
 /**
