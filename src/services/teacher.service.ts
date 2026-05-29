@@ -10,6 +10,17 @@ class TeacherService {
     }
   }
 
+  private async assertGradeNotLocked(client: { query: typeof pool.query }, teacherId: string, courseId: string, type: string) {
+    const submissionResult = await client.query(
+      `SELECT 1 FROM grade_submissions 
+       WHERE course_id = $1 AND teacher_id = $2 AND submission_type = $3`,
+      [courseId, teacherId, type]
+    );
+    if (submissionResult.rows[0]) {
+      throw new Error(`Grades for this course and assessment type "${type}" have already been submitted and locked.`);
+    }
+  }
+
   // Mark attendance (bulk)
   async markAttendance(date: string, attendanceRecords: Array<{ studentId: string; status: string }>, recordedBy: string) {
     const client = await pool.connect();
@@ -45,19 +56,34 @@ class TeacherService {
 
     const result = await pool.query(
       `SELECT 
-        sa.id, sa.student_id, sa.date, sa.status,
-        u.name as student_name, u.digital_id,
-        s.grade
-      FROM student_attendance sa
-      JOIN students s ON sa.student_id = s.id
+        s.id as student_id,
+        u.name as student_name,
+        u.digital_id,
+        s.grade,
+        sa.id as attendance_id,
+        sa.status,
+        sa.date
+      FROM students s
       JOIN users u ON s.user_id = u.id
-      JOIN classes c ON s.grade = c.name
-      WHERE c.id = $1 AND sa.date = $2
+      JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+      LEFT JOIN student_attendance sa ON s.id = sa.student_id AND sa.date = $2
+      WHERE c.id = $1
       ORDER BY u.name`,
       [classId, targetDate]
     );
 
-    return result.rows;
+    return result.rows.map((row: any) => ({
+      id: row.attendance_id,
+      student_id: row.student_id,
+      studentId: row.student_id,
+      date: row.date,
+      status: row.status,
+      student_name: row.student_name,
+      studentName: row.student_name,
+      digital_id: row.digital_id,
+      digitalId: row.digital_id,
+      grade: row.grade
+    }));
   }
 
   // Enter grade
@@ -139,6 +165,12 @@ class TeacherService {
         if (lockResult.rows.length > 0) {
           throw new Error(`Grades are locked for ${student.grade}. Contact Vice Principal to unlock.`);
         }
+      }
+
+      // Check if grades are locked for this course and type (already submitted)
+      const uniqueTypes = Array.from(new Set(grades.map(g => g.type)));
+      for (const type of uniqueTypes) {
+        await this.assertGradeNotLocked(client, teacher.id, courseId, type);
       }
 
       // Validate all grades
@@ -224,6 +256,10 @@ class TeacherService {
 
       const grade = gradeResult.rows[0];
 
+      if (grade.is_submitted) {
+        throw new Error('This grade has been submitted and locked, and cannot be updated.');
+      }
+
       // Get teacher record
       const teacherResult = await client.query(
         'SELECT id FROM teachers WHERE user_id = $1',
@@ -296,6 +332,10 @@ class TeacherService {
       }
 
       const grade = gradeResult.rows[0];
+
+      if (grade.is_submitted) {
+        throw new Error('This grade has been submitted and locked, and cannot be deleted.');
+      }
 
       // Get teacher record
       const teacherResult = await client.query(
@@ -400,8 +440,9 @@ class TeacherService {
     const result = await pool.query(
       `INSERT INTO weekly_plans 
        (teacher_id, date, content, objectives, teacher_activity, time_duration,
-        student_activity, teaching_method, teaching_aids, evaluation, remark, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        student_activity, teaching_method, teaching_aids, evaluation, remark, status,
+        course_id, subject, dept_head_id, week_number)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         teacherResult.rows[0].id,
@@ -415,7 +456,11 @@ class TeacherService {
         planData.teachingAids,
         planData.evaluation,
         planData.remark || null,
-        planData.status || 'Pending'
+        planData.status || 'Pending',
+        planData.courseId || null,
+        planData.subject || null,
+        planData.deptHeadId || null,
+        planData.weekNumber || null
       ]
     );
 
@@ -486,8 +531,9 @@ class TeacherService {
        date = $1, content = $2, objectives = $3, teacher_activity = $4,
        time_duration = $5, student_activity = $6, teaching_method = $7,
        teaching_aids = $8, evaluation = $9, remark = $10,
-       status = $11, updated_at = NOW()
-       WHERE id = $12
+       status = $11, course_id = $12, subject = $13, dept_head_id = $14,
+       week_number = $15, updated_at = NOW()
+       WHERE id = $16
        RETURNING *`,
       [
         planData.date,
@@ -501,6 +547,10 @@ class TeacherService {
         planData.evaluation,
         planData.remark || null,
         planData.status || 'Pending',
+        planData.courseId || null,
+        planData.subject || null,
+        planData.deptHeadId || null,
+        planData.weekNumber || null,
         planId
       ]
     );
@@ -809,6 +859,182 @@ class TeacherService {
       pendingPlansCount: parseInt(plansResult.rows[0].count),
       teacherInfo: teacher
     };
+  }
+
+  // Submit all grades for a course and lock them
+  async submitCourseGrades(teacherUserId: string, courseId: string, submissionType: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id, branch_id FROM teachers WHERE user_id = $1',
+        [teacherUserId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+      const teacherId = teacherResult.rows[0].id;
+
+      // 2. Verify teacher owns this course
+      const courseResult = await client.query(
+        'SELECT teacher_id FROM courses WHERE id = $1',
+        [courseId]
+      );
+
+      if (courseResult.rows.length === 0) {
+        throw new Error('Course not found');
+      }
+
+      if (courseResult.rows[0].teacher_id !== teacherId) {
+        throw new Error('You can only submit grades for courses you teach');
+      }
+
+      // 3. Check if already submitted
+      const checkSubResult = await client.query(
+        `SELECT 1 FROM grade_submissions 
+         WHERE course_id = $1 AND teacher_id = $2 AND submission_type = $3`,
+        [courseId, teacherId, submissionType]
+      );
+
+      if (checkSubResult.rows.length > 0) {
+        throw new Error('Grades for this course and type have already been submitted and locked.');
+      }
+
+      // 4. Update all matching grades to is_submitted = true
+      await client.query(
+        `UPDATE grades 
+         SET is_submitted = true, submitted_at = NOW(), submitted_by = $1
+         WHERE course_id = $2 AND type = $3`,
+        [teacherUserId, courseId, submissionType]
+      );
+
+      // 5. Insert into grade_submissions
+      const insertResult = await client.query(
+        `INSERT INTO grade_submissions (course_id, teacher_id, submission_type, submitted_at, submitted_by, is_locked)
+         VALUES ($1, $2, $3, NOW(), $4, TRUE)
+         RETURNING *`,
+        [courseId, teacherId, submissionType, teacherUserId]
+      );
+
+      await client.query('COMMIT');
+      return insertResult.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Get teacher's own grade submissions
+  async getGradeSubmissions(teacherUserId: string) {
+    const teacherResult = await pool.query(
+      'SELECT id FROM teachers WHERE user_id = $1',
+      [teacherUserId]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      throw new Error('Teacher not found');
+    }
+
+    const result = await pool.query(
+      `SELECT gs.*, c.name as course_name, c.code as course_code
+       FROM grade_submissions gs
+       JOIN courses c ON gs.course_id = c.id
+       WHERE gs.teacher_id = $1
+       ORDER BY gs.submitted_at DESC`,
+      [teacherResult.rows[0].id]
+    );
+
+    return result.rows;
+  }
+
+  // Get department heads (teachers where is_dean = true)
+  async getDepartmentHeads(branchId: string) {
+    const result = await pool.query(
+      `SELECT t.id as teacher_id, u.name, t.department
+       FROM teachers t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.branch_id = $1 AND t.is_dean = true AND u.is_active = true
+       ORDER BY u.name`,
+      [branchId]
+    );
+    return result.rows;
+  }
+
+  // Get weekly plans submitted to this teacher (as department head)
+  async getDeptPlans(teacherUserId: string, status?: string) {
+    const teacherResult = await pool.query(
+      'SELECT id FROM teachers WHERE user_id = $1',
+      [teacherUserId]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      throw new Error('Teacher not found');
+    }
+
+    const teacherId = teacherResult.rows[0].id;
+
+    let query = `
+      SELECT wp.*, u.name as teacher_name, c.name as course_name
+      FROM weekly_plans wp
+      JOIN teachers t ON wp.teacher_id = t.id
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN courses c ON wp.course_id = c.id
+      WHERE wp.dept_head_id = $1
+    `;
+    const params: any[] = [teacherId];
+
+    if (status) {
+      query += ' AND wp.status = $2';
+      params.push(status);
+    }
+
+    query += ' ORDER BY wp.date DESC';
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  // Review a weekly plan as department head
+  async reviewDeptPlan(teacherUserId: string, planId: string, reviewData: { status: string; feedback?: string; rating?: number }) {
+    const teacherResult = await pool.query(
+      'SELECT id FROM teachers WHERE user_id = $1',
+      [teacherUserId]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      throw new Error('Teacher not found');
+    }
+
+    const teacherId = teacherResult.rows[0].id;
+
+    // Check if the plan exists and is assigned to this department head
+    const planCheck = await pool.query(
+      'SELECT id, status FROM weekly_plans WHERE id = $1 AND dept_head_id = $2',
+      [planId, teacherId]
+    );
+
+    if (planCheck.rows.length === 0) {
+      throw new Error('Lesson plan not found or not assigned to you for review');
+    }
+
+    const result = await pool.query(
+      `UPDATE weekly_plans SET
+       status = $1,
+       dean_feedback = $2,
+       dean_rating = $3,
+       reviewed_by = $4,
+       updated_at = NOW()
+       WHERE id = $5
+       RETURNING *`,
+      [reviewData.status, reviewData.feedback || null, reviewData.rating || null, teacherId, planId]
+    );
+
+    return result.rows[0];
   }
 }
 

@@ -413,6 +413,48 @@ class VicePrincipalService {
       }
     };
   }
+
+  // Get all grade submissions in a branch
+  async getGradeSubmissions(branchId: string) {
+    const result = await pool.query(
+      `SELECT gs.*, c.name as course_name, c.code as course_code, u.name as teacher_name
+       FROM grade_submissions gs
+       JOIN courses c ON gs.course_id = c.id
+       JOIN teachers t ON gs.teacher_id = t.id
+       JOIN users u ON t.user_id = u.id
+       WHERE t.branch_id = $1
+       ORDER BY gs.submitted_at DESC`,
+      [branchId]
+    );
+    return result.rows;
+  }
+
+  // Get individual student grades for a locked course grade submission
+  async getSubmittedGrades(courseId: string, submissionType: string, branchId: string) {
+    // Verify course belongs to this branch
+    const courseCheck = await pool.query(
+      `SELECT c.id FROM courses c
+       JOIN classes cl ON c.class_id = cl.id
+       WHERE c.id = $1 AND cl.branch_id = $2`,
+      [courseId, branchId]
+    );
+
+    if (courseCheck.rows.length === 0) {
+      throw new Error('Course not found or access denied');
+    }
+
+    const result = await pool.query(
+      `SELECT g.*, u.name as student_name, u.digital_id
+       FROM grades g
+       JOIN students s ON g.student_id = s.id
+       JOIN users u ON s.user_id = u.id
+       WHERE g.course_id = $1 AND g.type = $2 AND g.is_submitted = true
+       ORDER BY u.name`,
+      [courseId, submissionType]
+    );
+
+    return result.rows;
+  }
 }
 
 export default new VicePrincipalService();

@@ -349,7 +349,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
         `SELECT g.course_id, c.name as course_name, c.code as course_code, g.type, g.score, g.total
          FROM grades g
          JOIN courses c ON g.course_id = c.id
-         WHERE g.student_id = $1`,
+         WHERE g.student_id = $1 AND g.is_submitted = true`,
         [studentId]
       );
       dbGrades = gradesRes.rows;
