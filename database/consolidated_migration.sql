@@ -146,7 +146,7 @@ CREATE TABLE users (
   digital_id VARCHAR(20) UNIQUE,
   username VARCHAR(50) UNIQUE,
   name VARCHAR(150) NOT NULL,
-  email VARCHAR(255) NOT NULL UNIQUE,
+  email VARCHAR(255) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   role user_role NOT NULL,
   branch_id UUID REFERENCES branches(id) ON DELETE

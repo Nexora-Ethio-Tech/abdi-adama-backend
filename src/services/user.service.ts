@@ -17,109 +17,92 @@ const EMAIL_ON_CREATE_ROLES = ['school-admin', 'vice-principal', 'auditor'];
 
 class UserService {
   async createUser(userData: CreateUserDTO, createdBy: string): Promise<CreateUserResult> {
-    const client: PoolClient = await pool.connect();
+    const { name, email, role, branchId, password, username, grade, staffProfile } = userData;
+    const userPassword = password || (PIN_BASED_ROLES.includes(role) ? generate4DigitPIN() : generateRandomPassword());
+    const passwordHash = await hashPassword(userPassword);
+    const autoApproveRoles = ['super-admin', 'school-admin'];
+    const initialStatus = autoApproveRoles.includes(role) ? USER_STATUS.APPROVED : USER_STATUS.PENDING;
 
-    try {
-      await client.query('BEGIN');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const client: PoolClient = await pool.connect();
 
-      const { name, email, role, branchId, password, username, grade, staffProfile } = userData;
+      try {
+        await client.query('BEGIN');
 
-      // Proactively check for duplicate email
-      const emailCheck = await client.query(
-        'SELECT id FROM users WHERE email = $1',
-        [email]
-      );
-      if (emailCheck.rows.length > 0) {
-        const error: any = new Error('A user with this email address already exists');
-        error.statusCode = 409;
-        error.code = 'EMAIL_EXISTS';
+        // Emails are not required to be unique in this system; do not block creation.
+
+        const userUsername = username || email.split('@')[0];
+        // Proactively check for duplicate username
+        const usernameCheck = await client.query(
+          'SELECT id FROM users WHERE username = $1',
+          [userUsername]
+        );
+        if (usernameCheck.rows.length > 0) {
+          const error: any = new Error('A user with this username already exists');
+          error.statusCode = 409;
+          error.code = 'USERNAME_EXISTS';
+          throw error;
+        }
+
+        const digitalId = await generateDigitalId(role, branchId || null);
+
+        const userResult = await client.query<User>(
+          `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active, staff_profile)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, staff_profile, created_at`,
+          [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true, staffProfile ? JSON.stringify(staffProfile) : null]
+        );
+
+        const user = userResult.rows[0];
+
+        if (role === 'teacher') {
+          await client.query(
+            `INSERT INTO teachers (user_id, branch_id) VALUES ($1, $2)`,
+            [user.id, branchId]
+          );
+        } else if (role === 'student') {
+          await client.query(
+            `INSERT INTO students (user_id, branch_id, grade, status) VALUES ($1, $2, $3, $4)`,
+            [user.id, branchId, grade || 'Not Assigned', 'Active']
+          );
+        } else if (role === 'parent') {
+          await client.query(
+            `INSERT INTO parents (user_id, branch_id) VALUES ($1, $2)`,
+            [user.id, branchId]
+          );
+        }
+
+        await client.query('COMMIT');
+
+        logger.info(`User created: ${user.email} (${role}) by ${createdBy}`);
+
+        if (EMAIL_ON_CREATE_ROLES.includes(role) && user.email && !user.email.endsWith('@no-reply.local')) {
+          sendWelcomeEmail(user.name, user.email, userPassword, user.role).catch((e) => {
+            logger.error('Failed to send welcome email:', e);
+          });
+        }
+
+        return {
+          user,
+          temporaryPassword: password ? null : userPassword
+        };
+      } catch (error: any) {
+        await client.query('ROLLBACK');
+
+        const isDigitalIdConflict = error?.code === '23505' && String(error?.detail || error?.message || '').includes('digital_id');
+        if (isDigitalIdConflict && attempt < 3) {
+          logger.warn(`Digital ID conflict on attempt ${attempt}, retrying user creation...`);
+          continue;
+        }
+
+        logger.error('Create user error:', error);
         throw error;
+      } finally {
+        client.release();
       }
-
-      const userUsername = username || email.split('@')[0];
-      // Proactively check for duplicate username
-      const usernameCheck = await client.query(
-        'SELECT id FROM users WHERE username = $1',
-        [userUsername]
-      );
-      if (usernameCheck.rows.length > 0) {
-        const error: any = new Error('A user with this username already exists');
-        error.statusCode = 409;
-        error.code = 'USERNAME_EXISTS';
-        throw error;
-      }
-
-      let branchName: string | null = null;
-      if (branchId) {
-        const branchResult = await client.query<{ name: string }>(
-          'SELECT name FROM branches WHERE id = $1',
-          [branchId]
-        );
-        branchName = branchResult.rows[0]?.name || null;
-      }
-
-      const digitalId = await generateDigitalId(role, branchName);
-
-      // Use 4-digit PIN for students, teachers, parents, and staff
-      // Use complex password for admin roles
-      const userPassword = password || (PIN_BASED_ROLES.includes(role) ? generate4DigitPIN() : generateRandomPassword());
-      const passwordHash = await hashPassword(userPassword);
-
-      // New accounts default to 'Pending' (waiting for approval).
-      // Only high-privilege admin accounts are auto-approved.
-      const autoApproveRoles = ['super-admin', 'school-admin'];
-      const initialStatus = autoApproveRoles.includes(role) ? USER_STATUS.APPROVED : USER_STATUS.PENDING;
-
-      const userResult = await client.query<User>(
-        `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active, staff_profile)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, staff_profile, created_at`,
-        [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true, staffProfile ? JSON.stringify(staffProfile) : null]
-      );
-
-      const user = userResult.rows[0];
-
-      if (role === 'teacher') {
-        await client.query(
-          `INSERT INTO teachers (user_id, branch_id) VALUES ($1, $2)`,
-          [user.id, branchId]
-        );
-      } else if (role === 'student') {
-        await client.query(
-          `INSERT INTO students (user_id, branch_id, grade, status) VALUES ($1, $2, $3, $4)`,
-          [user.id, branchId, grade || 'Not Assigned', 'Active']
-        );
-      } else if (role === 'parent') {
-        await client.query(
-          `INSERT INTO parents (user_id, branch_id) VALUES ($1, $2)`,
-          [user.id, branchId]
-        );
-      }
-
-      await client.query('COMMIT');
-
-      logger.info(`User created: ${user.email} (${role}) by ${createdBy}`);
-
-      // Send welcome email only for roles created by super admin (school-admin, vice-principal, auditor).
-      // These users are remote, have real email addresses, and need their credentials delivered digitally.
-      // All other roles are on-site staff whose credentials are handed to them in person.
-      if (EMAIL_ON_CREATE_ROLES.includes(role) && user.email && !user.email.endsWith('@no-reply.local')) {
-        sendWelcomeEmail(user.name, user.email, userPassword, user.role).catch((e) => {
-          logger.error('Failed to send welcome email:', e);
-        });
-      }
-
-      return {
-        user,
-        temporaryPassword: password ? null : userPassword
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      logger.error('Create user error:', error);
-      throw error;
-    } finally {
-      client.release();
     }
+
+    throw new Error('Unable to create user after retrying digital ID generation');
   }
 
   async updateUserStatus(userId: string, status: UserStatus, updatedBy: string): Promise<User> {

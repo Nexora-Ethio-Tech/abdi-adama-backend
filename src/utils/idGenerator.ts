@@ -2,45 +2,80 @@ import pool from '../config/database';
 import { DIGITAL_ID_PREFIX, BRANCH_CODES } from '../config/constants';
 import { UserRole } from '../types';
 
-export const generateDigitalId = async (role: UserRole, branchName: string | null = null): Promise<string> => {
+const existsDigitalId = async (digitalId: string): Promise<boolean> => {
+  const res = await pool.query('SELECT 1 FROM users WHERE digital_id = $1 LIMIT 1', [digitalId]);
+  return res.rows.length > 0;
+};
+
+export const generateDigitalId = async (role: UserRole, branchId: string | null = null): Promise<string> => {
   const prefix = DIGITAL_ID_PREFIX[role];
-  
+
   if (!prefix) {
     throw new Error('Invalid role for digital ID generation');
   }
+
+  // Helper to build IDs with a numeric sequence and check uniqueness.
+  const buildAndEnsureUnique = async (build: (seq: number) => string, startSeq = 1) => {
+    let seq = startSeq;
+    let candidate = build(seq);
+    // Loop until we find a candidate that does not exist.
+    // Note: this reduces collisions but doesn't fully eliminate race conditions under heavy concurrency.
+    // For strong guarantees consider a DB sequence or INSERT ... ON CONFLICT flow.
+    while (await existsDigitalId(candidate)) {
+      seq += 1;
+      candidate = build(seq);
+    }
+    return candidate;
+  };
 
   if (role === UserRole.SUPER_ADMIN) {
     const result = await pool.query(
       `SELECT digital_id FROM users WHERE role = $1 ORDER BY created_at DESC, digital_id DESC LIMIT 1`,
       [role]
     );
-    
-    let sequence = 1;
+
+    let startSeq = 1;
     if (result.rows.length > 0 && result.rows[0].digital_id) {
       const lastId = result.rows[0].digital_id;
-      const lastSequence = parseInt(lastId.split('-')[1]);
-      sequence = lastSequence + 1;
+      const match = lastId.match(/(\d+)$/);
+      const lastSequence = match ? parseInt(match[1], 10) : NaN;
+      startSeq = Number.isFinite(lastSequence) ? lastSequence + 1 : 1;
     }
-    
-    return `${prefix}-${String(sequence).padStart(3, '0')}`;
+
+    return await buildAndEnsureUnique((s) => `${prefix}-${String(s).padStart(3, '0')}`, startSeq);
   }
 
-  const branchCode = branchName ? (BRANCH_CODES[branchName] || 'XX') : 'XX';
-  
-  const result = await pool.query(
-    `SELECT digital_id FROM users WHERE role = $1 AND branch_id = (
-      SELECT id FROM branches WHERE name = $2
-    ) ORDER BY created_at DESC, digital_id DESC LIMIT 1`,
-    [role, branchName]
-  );
-  
-  let sequence = 1;
+  let branchCode = 'XX';
+  let branchLookupId = branchId;
+
+  if (branchId) {
+    const branchResult = await pool.query<{ name: string; code: string | null }>(
+      'SELECT name, code FROM branches WHERE id = $1 LIMIT 1',
+      [branchId]
+    );
+    const branch = branchResult.rows[0];
+    branchCode = branch?.code || (branch?.name ? BRANCH_CODES[branch.name] : undefined) || 'XX';
+  } else {
+    branchLookupId = null;
+  }
+
+  const result = branchLookupId
+    ? await pool.query(
+        `SELECT digital_id FROM users WHERE role = $1 AND branch_id = $2 ORDER BY created_at DESC, digital_id DESC LIMIT 1`,
+        [role, branchLookupId]
+      )
+    : await pool.query(
+        `SELECT digital_id FROM users WHERE role = $1 ORDER BY created_at DESC, digital_id DESC LIMIT 1`,
+        [role]
+      );
+
+  let startSeq = 1;
   if (result.rows.length > 0 && result.rows[0].digital_id) {
     const lastId = result.rows[0].digital_id;
-    const parts = lastId.split('-');
-    const lastSequence = parseInt(parts[parts.length - 1]);
-    sequence = lastSequence + 1;
+    const match = lastId.match(/(\d+)$/);
+    const lastSequence = match ? parseInt(match[1], 10) : NaN;
+    startSeq = Number.isFinite(lastSequence) ? lastSequence + 1 : 1;
   }
-  
-  return `${prefix}-${branchCode}-${String(sequence).padStart(4, '0')}`;
+
+  return await buildAndEnsureUnique((s) => `${prefix}-${branchCode}-${String(s).padStart(4, '0')}`, startSeq);
 };
