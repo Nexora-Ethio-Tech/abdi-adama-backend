@@ -121,6 +121,11 @@ class SchoolAdminService {
 
   // Update User (Edit student/teacher/parent details)
   async updateUser(userId: string, branchId: string, updateData: any) {
+    const normalizeGradeForStorage = (grade: string) => {
+      const match = String(grade || '').trim().match(/(\d{1,2})/);
+      return match ? `Grade ${match[1]}` : String(grade || '').trim();
+    };
+
     // Verify user belongs to School Admin's branch
     const userCheck = await pool.query(
       `SELECT id, role FROM users 
@@ -181,7 +186,7 @@ class SchoolAdminService {
 
       if (updateData.grade) {
         studentUpdates.push(`grade = $${studentParamCount}`);
-        studentValues.push(updateData.grade);
+        studentValues.push(normalizeGradeForStorage(updateData.grade));
         studentParamCount++;
       }
 
@@ -755,28 +760,24 @@ class SchoolAdminService {
   }
 
 
-  async updateApplicationStatus(applicationId: string, status: string, reviewerId?: string) {
-    // If being passed to finance, record reviewer
-    if ((status === 'finance_pending' || status === 'awaiting-payment') && reviewerId) {
-      const result = await pool.query(
-        `UPDATE pending_applications 
-         SET status = $1, reviewed_by = $2, updated_at = NOW()
-         WHERE id = $3
-         RETURNING *`,
-        [status, reviewerId, applicationId]
-      );
-      if (result.rows.length === 0) throw new Error('Application not found');
-      return result.rows[0];
+  async updateApplicationStatus(applicationId: string, status: string, reviewerId?: string, gradeApplying?: string) {
+    const params: any[] = [status];
+    let query = `UPDATE pending_applications SET status = $1`;
+
+    if (typeof gradeApplying === 'string' && gradeApplying.trim().length > 0) {
+      query += `, grade_applying = $${params.length + 1}`;
+      params.push(gradeApplying.trim());
     }
 
-    const result = await pool.query(
-      `UPDATE pending_applications 
-       SET status = $1, updated_at = NOW()
-       WHERE id = $2
-       RETURNING *`,
-      [status, applicationId]
-    );
+    if ((status === 'finance_pending' || status === 'awaiting-payment') && reviewerId) {
+      query += `, reviewed_by = $${params.length + 1}`;
+      params.push(reviewerId);
+    }
 
+    query += `, updated_at = NOW() WHERE id = $${params.length + 1} RETURNING *`;
+    params.push(applicationId);
+
+    const result = await pool.query(query, params);
     if (result.rows.length === 0) {
       throw new Error('Application not found');
     }
