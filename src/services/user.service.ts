@@ -84,7 +84,7 @@ class UserService {
 
         return {
           user,
-          temporaryPassword: password ? null : userPassword
+          temporaryPassword: userPassword
         };
       } catch (error: any) {
         await client.query('ROLLBACK');

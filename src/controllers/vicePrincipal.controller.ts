@@ -210,6 +210,41 @@ class VicePrincipalController {
       next(error);
     }
   }
+
+  // Grade submissions review
+  async getGradeSubmissions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const submissions = await vicePrincipalService.getGradeSubmissions(branchId!);
+
+      res.json({
+        success: true,
+        data: submissions
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getSubmittedGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { courseId, submissionType } = req.params;
+
+      const grades = await vicePrincipalService.getSubmittedGrades(
+        courseId,
+        submissionType,
+        branchId!
+      );
+
+      res.json({
+        success: true,
+        data: grades
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new VicePrincipalController();

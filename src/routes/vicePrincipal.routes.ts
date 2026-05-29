@@ -38,6 +38,10 @@ router.patch('/weekly-plans/:id/review', validate(reviewPlanSchema), vicePrincip
 router.get('/grade-locks', vicePrincipalController.getGradeLocks);
 router.post('/grade-locks', validate(gradeLockSchema), vicePrincipalController.toggleGradeLock);
 
+// Grade submissions reviews
+router.get('/grade-submissions', vicePrincipalController.getGradeSubmissions);
+router.get('/grades/:courseId/:submissionType', vicePrincipalController.getSubmittedGrades);
+
 router.get('/teachers', vicePrincipalController.getBranchTeachers);
 router.get('/attendance-summary', vicePrincipalController.getAttendanceSummary);
 router.get('/academic-performance', vicePrincipalController.getAcademicPerformance);

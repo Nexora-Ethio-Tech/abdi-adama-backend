@@ -516,10 +516,30 @@ class SuperAdminController {
 
   // ─── Monthly profit targets ──────────────────────────────────────────────
 
+  async getBranchProfitSummary(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.query.branchId as string;
+      const ethiopianMonth = Number(req.query.ethiopianMonth);
+      const year = req.query.year ? Number(req.query.year) : undefined;
+      if (!branchId || !ethiopianMonth) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'branchId and ethiopianMonth are required.' },
+        });
+        return;
+      }
+      const summary = await superAdminService.getBranchProfitSummary(branchId, ethiopianMonth, year);
+      res.json({ success: true, data: summary });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getMonthlyProfitTargets(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const year = req.query.year ? Number(req.query.year) : undefined;
-      const targets = await superAdminService.getMonthlyProfitTargets(year);
+      const branchId = req.query.branchId as string | undefined;
+      const targets = await superAdminService.getMonthlyProfitTargets(branchId, year);
       res.json({ success: true, data: targets });
     } catch (error) {
       next(error);
@@ -528,8 +548,9 @@ class SuperAdminController {
 
   async upsertMonthlyProfitTarget(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { ethiopianMonth, targetAmount, year } = req.body;
+      const { branchId, ethiopianMonth, targetAmount, year } = req.body;
       const target = await superAdminService.upsertMonthlyProfitTarget(
+        branchId,
         Number(ethiopianMonth),
         Number(targetAmount),
         req.user!.id,

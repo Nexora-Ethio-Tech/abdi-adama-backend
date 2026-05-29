@@ -467,6 +467,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
 
     const courseIds = courses.map((c: any) => c.id);
     let dbGrades: any[] = [];
+<<<<<<< HEAD
     try {
       dbGrades = await fetchStudentGradeRows(studentRow.id, year, semester, courseIds);
     } catch (gradeErr: any) {
@@ -482,6 +483,17 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
         );
         dbGrades = legacy.rows;
       }
+=======
+    if (studentId) {
+      const gradesRes = await pool.query(
+        `SELECT g.course_id, c.name as course_name, c.code as course_code, g.type, g.score, g.total
+         FROM grades g
+         JOIN courses c ON g.course_id = c.id
+         WHERE g.student_id = $1 AND g.is_submitted = true`,
+        [studentId]
+      );
+      dbGrades = gradesRes.rows;
+>>>>>>> 94fc7954a4ffa77f605e2cd3b06065243ae66303
     }
 
     const mergedCourses = courses.map((course: any) => {

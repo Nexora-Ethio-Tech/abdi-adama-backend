@@ -20,7 +20,6 @@ router.post('/public/applications',
 
 router.use(authenticate);
 router.use(requireBranchId);
-router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
 
 // Validation schemas
 const createClassSchema = Joi.object({
@@ -71,6 +70,28 @@ const updateEventSchema = Joi.object({
   description: Joi.string().max(1000).allow('', null)
 }).min(1);
 
+// ============================================================
+// APPLICATIONS ROUTES - Accessible by School Admin & Finance Clerk
+// ============================================================
+
+// Student Applications (accessible to both school-admin and finance-clerk for admissions processing)
+// Note: Multer handles multipart/form-data parsing, Joi validator skipped since controller does comprehensive validation
+router.post('/applications',
+  roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]),
+  uploadTranscript.single('transcript'),
+  handleUploadError,
+  schoolAdminController.createPendingApplication
+);
+router.get('/applications', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getPendingApplications);
+router.get('/applications/:id/transcript', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getApplicationTranscript);
+router.patch('/applications/:id/status', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.updateApplicationStatus);
+
+// ============================================================
+// SCHOOL ADMIN ONLY ROUTES
+// ============================================================
+
+router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
+
 // User Management (existing)
 router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
 router.get('/users', schoolAdminController.getBranchUsers);
@@ -110,17 +131,6 @@ router.get('/courses', schoolAdminController.getCourses);
 // Schedule Management
 router.post('/schedules', validate(createScheduleSchema), schoolAdminController.createSchedule);
 router.get('/schedules', schoolAdminController.getSchedules);
-
-// Student Applications
-// Note: Multer handles multipart/form-data parsing, Joi validator skipped since controller does comprehensive validation
-router.post('/applications',
-  uploadTranscript.single('transcript'),
-  handleUploadError,
-  schoolAdminController.createPendingApplication
-);
-router.get('/applications', schoolAdminController.getPendingApplications);
-router.get('/applications/:id/transcript', schoolAdminController.getApplicationTranscript);
-router.patch('/applications/:id/status', schoolAdminController.updateApplicationStatus);
 
 // Financial Policies
 router.post('/financial-policies', validate(financialPolicySchema), schoolAdminController.setFinancialPolicy);

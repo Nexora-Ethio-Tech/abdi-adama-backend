@@ -309,6 +309,109 @@ class TeacherController {
       next(error);
     }
   }
+
+  // Submit grades for a course
+  async submitCourseGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const { courseId, submissionType } = req.body;
+
+      if (!courseId || !submissionType) {
+        res.status(400).json({ success: false, message: 'courseId and submissionType are required' });
+        return;
+      }
+
+      const submission = await teacherService.submitCourseGrades(teacherUserId, courseId, submissionType);
+
+      res.status(201).json({
+        success: true,
+        data: submission,
+        message: 'Course grades submitted and locked successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get own grade submissions
+  async getGradeSubmissions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const submissions = await teacherService.getGradeSubmissions(teacherUserId);
+
+      res.json({
+        success: true,
+        data: submissions
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get department heads
+  async getDepartmentHeads(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      if (!branchId) {
+        res.status(400).json({ success: false, message: 'User branch not found' });
+        return;
+      }
+
+      const heads = await teacherService.getDepartmentHeads(branchId);
+
+      res.json({
+        success: true,
+        data: heads
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get weekly plans submitted to this teacher for review (as department head)
+  async getDeptPlans(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const { status } = req.query;
+
+      const plans = await teacherService.getDeptPlans(teacherUserId, status as string);
+
+      res.json({
+        success: true,
+        data: plans
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Review a weekly plan
+  async reviewDeptPlan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const { id } = req.params;
+      const { status, feedback, rating } = req.body;
+
+      if (!status) {
+        res.status(400).json({ success: false, message: 'status is required' });
+        return;
+      }
+
+      const plan = await teacherService.reviewDeptPlan(teacherUserId, id, {
+        status,
+        feedback,
+        rating
+      });
+
+      res.json({
+        success: true,
+        data: plan,
+        message: 'Lesson plan reviewed successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new TeacherController();

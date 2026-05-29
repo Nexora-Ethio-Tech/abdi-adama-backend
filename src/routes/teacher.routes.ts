@@ -64,7 +64,11 @@ const weeklyPlanSchema = Joi.object({
   teachingAids: Joi.string().required(),
   evaluation: Joi.string().required(),
   remark: Joi.string().allow(''),
-  status: Joi.string().valid('Draft', 'Pending')
+  status: Joi.string().valid('Draft', 'Pending'),
+  courseId: Joi.string().uuid().allow(null, '').optional(),
+  subject: Joi.string().allow(null, '').optional(),
+  deptHeadId: Joi.string().uuid().allow(null, '').optional(),
+  weekNumber: Joi.number().integer().optional()
 });
 
 const communicationLogSchema = Joi.object({
@@ -84,6 +88,11 @@ const communicationLogSchema = Joi.object({
 // Routes
 router.post('/attendance', validate(markAttendanceSchema), teacherController.markAttendance);
 router.get('/attendance/:classId', teacherController.getAttendance);
+
+// Grade locking & submissions
+router.post('/grades/submit-course', teacherController.submitCourseGrades);
+router.get('/grade-submissions', teacherController.getGradeSubmissions);
+
 router.post('/grades', validate(enterGradeSchema), teacherController.enterGrades);
 router.post('/grades/bulk', validate(bulkEnterGradesSchema), teacherController.bulkEnterGrades);
 router.get('/grades/:courseId', teacherController.getGrades);
@@ -91,9 +100,17 @@ router.patch('/grades/:id', validate(updateGradeSchema), teacherController.updat
 router.delete('/grades/:id', teacherController.deleteGrade);
 router.get('/classes', teacherController.getAssignedClasses);
 router.get('/students/:classId', teacherController.getStudentRoster);
+
+// Weekly plans & department heads review
+router.get('/department-heads', teacherController.getDepartmentHeads);
 router.post('/weekly-plans', validate(weeklyPlanSchema), teacherController.submitWeeklyPlan);
 router.get('/weekly-plans', teacherController.getMyPlans);
 router.patch('/weekly-plans/:id', validate(weeklyPlanSchema), teacherController.updatePlan);
+
+// Department tasks review (for department heads)
+router.get('/dept-plans', teacherController.getDeptPlans);
+router.patch('/dept-plans/:id/review', teacherController.reviewDeptPlan);
+
 router.post('/communication-logs', validate(communicationLogSchema), teacherController.submitCommunicationLog);
 router.get('/communication-logs/:studentId', teacherController.getCommunicationLogs);
 router.get('/students/:studentId/grades', teacherController.getStudentGrades);
