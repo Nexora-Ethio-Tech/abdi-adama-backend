@@ -116,6 +116,13 @@ router.get('/communication-logs/:studentId', teacherController.getCommunicationL
 router.get('/students/:studentId/grades', teacherController.getStudentGrades);
 router.get('/schedule', teacherController.getSchedule);
 router.get('/dashboard', teacherController.getDashboard);
+
+// Exam Management - Teacher
 router.post('/exams', examController.createExam);
+router.get('/exams', examController.getTeacherExams);
+router.get('/exams/:id', examController.getTeacherExamById);
+router.patch('/exams/:id', examController.updateTeacherExam);
+router.post('/exams/:id/publish', examController.publishTeacherExam);
+router.delete('/exams/:id', examController.deleteTeacherExam);
 
 export default router;
