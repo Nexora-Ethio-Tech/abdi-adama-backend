@@ -78,6 +78,14 @@ class AuditorService {
 
   // View financial reports
   async getFinancialReport(branchId: string, startDate: string, endDate: string) {
+    const transactionsResult = await pool.query(
+      `SELECT ft.*
+       FROM finance_transactions ft
+       WHERE ft.branch_id = $1 AND ft.date BETWEEN $2 AND $3
+       ORDER BY ft.date DESC, ft.created_at DESC`,
+      [branchId, startDate, endDate]
+    );
+
     const summaryResult = await pool.query(
       `SELECT 
          COUNT(*) as total_transactions,
@@ -117,6 +125,7 @@ class AuditorService {
         totalTransactions: parseInt(summaryResult.rows[0].total_transactions),
         totalCollected: parseFloat(summaryResult.rows[0].total_collected)
       },
+      transactions: transactionsResult.rows,
       byType: byTypeResult.rows,
       dailyBreakdown: dailyResult.rows
     };
