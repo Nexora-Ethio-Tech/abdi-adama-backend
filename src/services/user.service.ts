@@ -21,7 +21,11 @@ class UserService {
     const userPassword = password || (PIN_BASED_ROLES.includes(role) ? generate4DigitPIN() : generateRandomPassword());
     const passwordHash = await hashPassword(userPassword);
     const autoApproveRoles = ['super-admin', 'school-admin'];
-    const initialStatus = autoApproveRoles.includes(role) ? USER_STATUS.APPROVED : USER_STATUS.PENDING;
+    const initialStatus = autoApproveRoles.includes(role)
+      ? USER_STATUS.APPROVED
+      : role === 'student'
+        ? 'Active'
+        : USER_STATUS.PENDING;
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       const client: PoolClient = await pool.connect();

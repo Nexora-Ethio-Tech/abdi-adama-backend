@@ -893,6 +893,12 @@ class SchoolAdminService {
         ]
       );
 
+      await client.query(
+        `UPDATE users SET status = 'Active', updated_at = NOW() WHERE id = $1`,
+        [studentCreate.user.id]
+      );
+      studentCreate.user.status = 'Active';
+
       await client.query('COMMIT');
 
       // ── Send admission credentials email to the student's real email ─────────
@@ -977,9 +983,12 @@ class SchoolAdminService {
       [branchId]
     );
 
-    // Total teachers
+    // Total teachers (branch teachers table, excluding revoked accounts)
     const teachersResult = await pool.query(
-      'SELECT COUNT(*) as count FROM teachers WHERE branch_id = $1',
+      `SELECT COUNT(*) AS count
+       FROM teachers t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.branch_id = $1 AND u.status != 'Revoked'`,
       [branchId]
     );
 
@@ -989,10 +998,13 @@ class SchoolAdminService {
       [branchId]
     );
 
-    // Pending applications
+    // Pending applications — active admission pipeline (matches Pending Applications tab)
     const applicationsResult = await pool.query(
-      `SELECT COUNT(*) as count FROM pending_applications 
-       WHERE branch_id = $1 AND status = 'pending'`,
+      `SELECT COUNT(*) AS count FROM pending_applications
+       WHERE branch_id = $1
+         AND status IN (
+           'pending', 'exam-pending', 'exam-passed', 'awaiting-payment', 'finance_pending'
+         )`,
       [branchId]
     );
 
@@ -1006,10 +1018,10 @@ class SchoolAdminService {
 
     return {
       studentsByGrade: studentsResult.rows,
-      totalStudents: studentsResult.rows.reduce((sum, row) => sum + parseInt(row.count), 0),
-      totalTeachers: parseInt(teachersResult.rows[0].count),
-      totalClasses: parseInt(classesResult.rows[0].count),
-      pendingApplications: parseInt(applicationsResult.rows[0].count),
+      totalStudents: studentsResult.rows.reduce((sum, row) => sum + parseInt(row.count, 10), 0),
+      totalTeachers: parseInt(teachersResult.rows[0]?.count || '0', 10),
+      totalClasses: parseInt(classesResult.rows[0]?.count || '0', 10),
+      pendingApplications: parseInt(applicationsResult.rows[0]?.count || '0', 10),
       activeAcademicYear: academicYearResult.rows[0] || null
     };
   }
@@ -1075,7 +1087,7 @@ class SchoolAdminService {
         u.digital_id,
         u.name,
         u.email,
-        u.status,
+        COALESCE(s.status, 'Active') AS status,
         u.is_active,
         u.created_at,
         COALESCE(sc.id, gc.id) as class_id,
@@ -1101,7 +1113,7 @@ class SchoolAdminService {
 
     if (status) {
       paramCount++;
-      query += ` AND u.status = $${paramCount}`;
+      query += ` AND COALESCE(s.status, 'Active') = $${paramCount}`;
       params.push(status);
     }
 
@@ -1151,6 +1163,120 @@ class SchoolAdminService {
     }
 
     return result.rows[0];
+  }
+
+  /** Full admission dossier for an enrolled student (students.id). */
+  async getStudentAdmissionRecord(studentRecordId: string, branchId: string) {
+    const studentResult = await pool.query(
+      `SELECT
+        s.id AS student_id,
+        s.user_id,
+        s.grade,
+        s.section_id,
+        s.branch_id,
+        s.status AS student_status,
+        s.created_at AS enrolled_at,
+        u.digital_id,
+        u.name,
+        u.email,
+        u.status,
+        u.is_active,
+        sc.name AS section_name,
+        sc.section AS section_label
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN classes sc ON s.section_id = sc.id
+      WHERE s.id = $1 AND s.branch_id = $2`,
+      [studentRecordId, branchId]
+    );
+
+    if (studentResult.rows.length === 0) {
+      throw new Error('Student not found in your branch');
+    }
+
+    const student = studentResult.rows[0];
+
+    const appResult = await pool.query(
+      `SELECT
+        id, branch_id, applicant_name, applicant_email, applicant_phone, digital_id, dob, gender,
+        parent_name, parent_phone, address, previous_school, grade_applying, last_grade_completed,
+        blood_group, allergies, chronic_conditions, current_medications,
+        transcript_mime_type, transcript_file_name, transcript_file_size,
+        status, notes, exam_date, exam_time, exam_location, exam_subjects, exam_notes,
+        registration_fee_status, finance_status, finance_approved_at, payment_amount, payment_reference,
+        student_user_id, parent_user_id, registration_completed_at, credentials_generated_at,
+        created_at, updated_at
+      FROM pending_applications
+      WHERE branch_id = $1
+        AND (
+          student_user_id = $2
+          OR ($3::text IS NOT NULL AND digital_id IS NOT NULL AND digital_id = $3)
+          OR ($4::text IS NOT NULL AND applicant_email IS NOT NULL AND LOWER(applicant_email) = LOWER($4))
+        )
+      ORDER BY registration_completed_at DESC NULLS LAST, created_at DESC
+      LIMIT 1`,
+      [branchId, student.user_id, student.digital_id, student.email]
+    );
+
+    const application = appResult.rows[0] || null;
+    const documents: Array<{
+      id: string;
+      type: string;
+      file_name: string;
+      file_size: number | null;
+      mime_type: string | null;
+      uploaded_at: string | null;
+      source: string;
+    }> = [];
+
+    if (application?.transcript_file_name) {
+      documents.push({
+        id: application.id,
+        type: 'transcript',
+        file_name: application.transcript_file_name,
+        file_size: application.transcript_file_size ?? null,
+        mime_type: application.transcript_mime_type ?? null,
+        uploaded_at: application.created_at ?? null,
+        source: 'application'
+      });
+    }
+
+    if (application) {
+      try {
+        const extras = await pool.query(
+          `SELECT id, file_name, file_size, file_mime_type, uploaded_at
+           FROM application_transcripts
+           WHERE application_id = $1
+           ORDER BY uploaded_at ASC`,
+          [application.id]
+        );
+        for (const row of extras.rows) {
+          const alreadyListed =
+            application.transcript_file_name &&
+            row.file_name === application.transcript_file_name;
+          if (!alreadyListed) {
+            documents.push({
+              id: row.id,
+              type: 'attachment',
+              file_name: row.file_name,
+              file_size: row.file_size ?? null,
+              mime_type: row.file_mime_type ?? null,
+              uploaded_at: row.uploaded_at ?? null,
+              source: 'application_transcripts'
+            });
+          }
+        }
+      } catch {
+        // application_transcripts may not exist in older databases
+      }
+    }
+
+    return {
+      student,
+      application,
+      documents,
+      hasApplication: !!application
+    };
   }
 
   // ============================================================
