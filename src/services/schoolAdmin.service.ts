@@ -869,13 +869,9 @@ class SchoolAdminService {
              payment_reference         = $5,
              student_user_id           = $6,
              parent_user_id            = $7,
-             student_id_generated      = $8,
-             student_password_temp     = $9,
-             parent_id_generated       = $10,
-             parent_password_temp      = $11,
              credentials_generated_at  = NOW(),
              updated_at                = NOW()
-         WHERE id = $12
+         WHERE id = $8
          RETURNING *`,
         [
           'payment-confirmed',
@@ -885,10 +881,6 @@ class SchoolAdminService {
           payment.reference || null,
           studentCreate.user.id,
           parentCreate.user.id,
-          studentCreate.user.digital_id,
-          studentCreate.temporaryPassword,
-          parentCreate.user.digital_id,
-          parentCreate.temporaryPassword,
           applicationId,
         ]
       );
@@ -1384,6 +1376,18 @@ class SchoolAdminService {
       // Optionally: Create student enrollment record if needed
       // This depends on the specific enrollment tracking system you're using
 
+      // Get digital IDs for student and parent
+      let studentDigitalId = '';
+      let parentDigitalId = '';
+      if (app.student_user_id) {
+        const studRes = await client.query('SELECT digital_id FROM users WHERE id = $1', [app.student_user_id]);
+        if (studRes.rows.length > 0) studentDigitalId = studRes.rows[0].digital_id;
+      }
+      if (app.parent_user_id) {
+        const parRes = await client.query('SELECT digital_id FROM users WHERE id = $1', [app.parent_user_id]);
+        if (parRes.rows.length > 0) parentDigitalId = parRes.rows[0].digital_id;
+      }
+
       await client.query('COMMIT');
 
       return {
@@ -1391,8 +1395,8 @@ class SchoolAdminService {
         application: updateResult.rows[0],
         message: 'Student registration finalized successfully',
         registrationDetails: {
-          studentId: updateResult.rows[0].student_id_generated,
-          parentId: updateResult.rows[0].parent_id_generated,
+          studentId: studentDigitalId,
+          parentId: parentDigitalId,
           classId,
           sectionId,
           applicantName: updateResult.rows[0].applicant_name,

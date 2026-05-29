@@ -33,7 +33,7 @@ const pool = new Pool({
   try {
     const res = await pool.query(\`
       SELECT column_name FROM information_schema.columns 
-      WHERE table_name='pending_applications' AND column_name='student_id_generated'
+      WHERE table_name='pending_applications' AND column_name='student_user_id'
     \`);
     
     if (res.rows.length > 0) {
