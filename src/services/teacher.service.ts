@@ -1,6 +1,15 @@
 import pool from '../config/database';
 
 class TeacherService {
+  private async assertGradesNotGloballyLocked(client: { query: typeof pool.query }) {
+    const globalLockResult = await client.query(
+      `SELECT value FROM system_settings WHERE key = 'grades_locked'`
+    );
+    if (globalLockResult.rows[0]?.value === 'true') {
+      throw new Error('Grade entry is globally locked by administration.');
+    }
+  }
+
   // Mark attendance (bulk)
   async markAttendance(date: string, attendanceRecords: Array<{ studentId: string; status: string }>, recordedBy: string) {
     const client = await pool.connect();
@@ -117,6 +126,8 @@ class TeacherService {
         [studentIds]
       );
 
+      await this.assertGradesNotGloballyLocked(client);
+
       // Check if any grade level is locked
       for (const student of studentsResult.rows) {
         const lockResult = await client.query(
@@ -228,7 +239,8 @@ class TeacherService {
         throw new Error('You can only update grades for courses you teach');
       }
 
-      // Check if grades are locked for this grade level
+      await this.assertGradesNotGloballyLocked(client);
+
       const lockResult = await client.query(
         `SELECT is_locked FROM grade_locks 
          WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
@@ -300,7 +312,8 @@ class TeacherService {
         throw new Error('You can only delete grades for courses you teach');
       }
 
-      // Check if grades are locked for this grade level
+      await this.assertGradesNotGloballyLocked(client);
+
       const lockResult = await client.query(
         `SELECT is_locked FROM grade_locks 
          WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,

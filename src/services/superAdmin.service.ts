@@ -469,17 +469,196 @@ class SuperAdminService {
     };
   }
 
-  // ─── SMTP / Email Settings Management ───────────────────────────────────
+  // ─── System Settings (branding, contact, global flags) ─────────────────
+
+  private static readonly SYSTEM_SETTING_KEYS = [
+    'school_name_oromic', 'school_name_amharic', 'school_name_english',
+    'school_motto_oromic', 'school_motto_amharic', 'school_motto_english',
+    'system_email', 'phone', 'address',
+    'grades_locked', 'registration_open', 'active_academic_year_id',
+  ] as const;
+
+  private static readonly PUBLIC_SETTING_KEYS = [
+    'school_name_oromic', 'school_name_amharic', 'school_name_english',
+    'school_motto_oromic', 'school_motto_amharic', 'school_motto_english',
+    'system_email', 'phone', 'address',
+    'grades_locked', 'registration_open',
+  ] as const;
+
+  async getSystemSettings(): Promise<Record<string, string>> {
+    const result = await pool.query(`SELECT key, value FROM system_settings ORDER BY key`);
+    const settings: Record<string, string> = {};
+    for (const row of result.rows) {
+      settings[row.key] = row.value;
+    }
+    return settings;
+  }
+
+  async getPublicSystemSettings(): Promise<Record<string, string>> {
+    const result = await pool.query(
+      `SELECT key, value FROM system_settings WHERE key = ANY($1)`,
+      [SuperAdminService.PUBLIC_SETTING_KEYS]
+    );
+    const settings: Record<string, string> = {};
+    for (const row of result.rows) {
+      settings[row.key] = row.value;
+    }
+    return settings;
+  }
+
+  async updateSystemSettings(
+    data: Record<string, string>,
+    userId: string
+  ): Promise<Record<string, string>> {
+    for (const key of SuperAdminService.SYSTEM_SETTING_KEYS) {
+      const value = data[key];
+      if (value === undefined || value === null) continue;
+
+      await pool.query(
+        `INSERT INTO system_settings (key, value, updated_by, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (key) DO UPDATE
+         SET value = $2, updated_by = $3, updated_at = NOW()`,
+        [key, String(value), userId]
+      );
+    }
+    return this.getSystemSettings();
+  }
+
+  async isRegistrationOpen(): Promise<boolean> {
+    const result = await pool.query(
+      `SELECT value FROM system_settings WHERE key = 'registration_open'`
+    );
+    if (result.rows.length === 0) return true;
+    return result.rows[0].value !== 'false';
+  }
+
+  async isGradesGloballyLocked(): Promise<boolean> {
+    const result = await pool.query(
+      `SELECT value FROM system_settings WHERE key = 'grades_locked'`
+    );
+    if (result.rows.length === 0) return false;
+    return result.rows[0].value === 'true';
+  }
+
+  // ─── Branch fee structure ───────────────────────────────────────────────
+
+  async getBranchGradeFees() {
+    const result = await pool.query(
+      `SELECT f.*, b.name AS branch_name
+       FROM branch_grade_fees f
+       JOIN branches b ON b.id = f.branch_id
+       ORDER BY b.name, f.grade_level`
+    );
+    return result.rows;
+  }
+
+  async upsertBranchGradeFee(
+    data: {
+      branchId: string;
+      gradeLevel: string;
+      monthlyFee: number;
+      registrationFee: number;
+      busFee: number;
+    },
+    userId: string
+  ) {
+    const result = await pool.query(
+      `INSERT INTO branch_grade_fees (branch_id, grade_level, monthly_fee, registration_fee, bus_fee, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (branch_id, grade_level) DO UPDATE
+       SET monthly_fee = EXCLUDED.monthly_fee,
+           registration_fee = EXCLUDED.registration_fee,
+           bus_fee = EXCLUDED.bus_fee,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = NOW()
+       RETURNING *`,
+      [
+        data.branchId,
+        data.gradeLevel,
+        data.monthlyFee,
+        data.registrationFee,
+        data.busFee,
+        userId,
+      ]
+    );
+    return result.rows[0];
+  }
+
+  async deleteBranchGradeFee(id: string) {
+    const result = await pool.query(
+      `DELETE FROM branch_grade_fees WHERE id = $1 RETURNING id`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      throw new Error('Fee configuration not found');
+    }
+    return { id };
+  }
+
+  // ─── Monthly profit targets ───────────────────────────────────────────────
+
+  private static readonly ETHIOPIAN_TO_GREGORIAN_MONTH: Record<number, number> = {
+    1: 9, 2: 10, 3: 11, 4: 12, 5: 1, 6: 2, 7: 3, 8: 4, 9: 5, 10: 6, 11: 7, 12: 8, 13: 9,
+  };
+
+  async getMonthlyProfitTargets(year?: number) {
+    const targetYear = year ?? new Date().getFullYear();
+    const targetsResult = await pool.query(
+      `SELECT * FROM monthly_profit_targets WHERE target_year = $1 ORDER BY ethiopian_month`,
+      [targetYear]
+    );
+
+    const rows = [];
+    for (const row of targetsResult.rows) {
+      const gregMonth = SuperAdminService.ETHIOPIAN_TO_GREGORIAN_MONTH[row.ethiopian_month] ?? 1;
+      let gregYear = targetYear;
+      if (row.ethiopian_month >= 5) {
+        gregYear = targetYear + 1;
+      }
+      const actualResult = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS total
+         FROM finance_transactions
+         WHERE EXTRACT(MONTH FROM date) = $1 AND EXTRACT(YEAR FROM date) = $2`,
+        [gregMonth, gregYear]
+      );
+      rows.push({
+        ...row,
+        actual_amount: Number(actualResult.rows[0].total),
+      });
+    }
+    return rows;
+  }
+
+  async upsertMonthlyProfitTarget(
+    ethiopianMonth: number,
+    targetAmount: number,
+    userId: string,
+    year?: number
+  ) {
+    const targetYear = year ?? new Date().getFullYear();
+    const result = await pool.query(
+      `INSERT INTO monthly_profit_targets (ethiopian_month, target_year, target_amount, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (ethiopian_month, target_year) DO UPDATE
+       SET target_amount = EXCLUDED.target_amount,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = NOW()
+       RETURNING *`,
+      [ethiopianMonth, targetYear, targetAmount, userId]
+    );
+    return result.rows[0];
+  }
+
+  // ─── SMTP / Email Settings Management (email_config table) ──────────────
 
   async getSmtpSettings() {
     const SMTP_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_from'];
     const result = await pool.query(
-      `SELECT key, value, updated_by, updated_at FROM finance_settings WHERE key = ANY($1) ORDER BY key`,
+      `SELECT key, value, updated_by, updated_at FROM email_config WHERE key = ANY($1) ORDER BY key`,
       [SMTP_KEYS]
     );
 
-    // Return a clean object — smtp_pass is intentionally excluded from GET
-    // so the password is never sent to the frontend
     const settings: Record<string, string> = {
       smtp_host: '',
       smtp_port: '587',
@@ -507,42 +686,37 @@ class SuperAdminService {
     const updated: string[] = [];
 
     for (const key of ALLOWED_KEYS) {
-      const value = (data as any)[key];
+      const value = (data as Record<string, string | undefined>)[key];
       if (value === undefined || value === null) continue;
 
-      // Get old value for audit
       const currentResult = await pool.query(
-        `SELECT value FROM finance_settings WHERE key = $1`, [key]
+        `SELECT value FROM email_config WHERE key = $1`,
+        [key]
       );
       const oldValue = currentResult.rows[0]?.value ?? null;
 
-      // Upsert
       await pool.query(
-        `INSERT INTO finance_settings (key, value, updated_by, updated_at)
+        `INSERT INTO email_config (key, value, updated_by, updated_at)
          VALUES ($1, $2, $3, NOW())
          ON CONFLICT (key) DO UPDATE
          SET value = $2, updated_by = $3, updated_at = NOW()`,
         [key, value, userId]
       );
 
-      // Audit — mask the password value
       const auditValue = key === 'smtp_pass' ? '••••••••' : value;
-      const auditOld   = key === 'smtp_pass' ? '••••••••' : oldValue;
+      const auditOld = key === 'smtp_pass' ? '••••••••' : oldValue;
       await pool.query(
-        `INSERT INTO finance_settings_audit (setting_key, old_value, new_value, changed_by, changed_by_name)
+        `INSERT INTO email_config_audit (config_key, old_value, new_value, changed_by, changed_by_name)
          VALUES ($1, $2, $3, $4, $5)`,
         [key, auditOld, auditValue, userId, userName]
       );
 
-      // Apply to process.env immediately so the running server uses the new values
-      // without needing a restart
-      process.env[key.toUpperCase()] = value;
-      if (key === 'smtp_from') process.env['SMTP_FROM'] = value;
+      const envKey = key === 'smtp_from' ? 'SMTP_FROM' : key.toUpperCase();
+      process.env[envKey] = value;
 
       updated.push(key);
     }
 
-    // Invalidate the singleton transporter so next email uses the new config
     const emailService = require('../utils/emailService');
     if (typeof emailService.resetTransporter === 'function') {
       emailService.resetTransporter();
