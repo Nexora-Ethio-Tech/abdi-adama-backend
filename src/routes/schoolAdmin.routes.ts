@@ -140,6 +140,7 @@ router.get('/financial-policies', schoolAdminController.getFinancialPolicies);
 router.get('/dashboard', schoolAdminController.getDashboard);
 router.get('/teachers', schoolAdminController.getBranchTeachers);
 router.get('/students', schoolAdminController.getBranchStudents);
+router.get('/students/:id/admission-record', schoolAdminController.getStudentAdmissionRecord);
 router.get('/students/:id', schoolAdminController.getStudentById);
 
 // Grading Configurations

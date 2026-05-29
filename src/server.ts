@@ -241,6 +241,10 @@ async function ensureSchemaExtensions(): Promise<void> {
       PRIMARY KEY (student_id, month)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_student_collections_month ON student_collections(month)`,
+    // Enrolled students: sync users.status to Active (students table already uses Active)
+    `UPDATE users u SET status = 'Active', updated_at = NOW()
+     FROM students s
+     WHERE s.user_id = u.id AND u.role = 'student' AND u.status = 'Pending'`,
   ];
 
   for (const sql of migrations) {

@@ -820,6 +820,27 @@ class SchoolAdminController {
     }
   }
 
+  // Get student admission record (application + documents)
+  async getStudentAdmissionRecord(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+
+      const record = await schoolAdminService.getStudentAdmissionRecord(id, branchId!);
+
+      res.json({
+        success: true,
+        data: record
+      });
+    } catch (error: any) {
+      if (error.message === 'Student not found in your branch') {
+        res.status(404).json({ success: false, message: error.message });
+        return;
+      }
+      next(error);
+    }
+  }
+
   // ============================================================
   // DASHBOARD FEATURES
   // ============================================================
