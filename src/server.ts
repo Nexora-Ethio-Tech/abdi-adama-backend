@@ -126,6 +126,45 @@ async function ensureSchemaExtensions(): Promise<void> {
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_profile JSONB`,
     // Library book code column (used for human-friendly Book ID like BK-1234)
     `ALTER TABLE library_books ADD COLUMN IF NOT EXISTS book_code VARCHAR(50)`,
+    // Grading configurations table
+    `CREATE TABLE IF NOT EXISTS grading_configs (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      grade_level VARCHAR(20)  NOT NULL,
+      method_id   VARCHAR(30)  NOT NULL,
+      label       VARCHAR(50)  NOT NULL,
+      max_weight  INT          NOT NULL,
+      created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      UNIQUE(grade_level, method_id)
+    )`,
+    // Seed default grading configs if table is empty
+    `INSERT INTO grading_configs (grade_level, method_id, label, max_weight)
+     SELECT grade_level, method_id, label, max_weight FROM (VALUES
+       ('default', 'mid',        'Mid-Exam',       30),
+       ('default', 'final',      'Final-Exam',     50),
+       ('default', 'quiz',       'Quiz',           10),
+       ('default', 'assignment', 'Assignment',     10),
+       ('10',      'mid',        'Mid-Exam',       30),
+       ('10',      'final',      'Final-Exam',     40),
+       ('10',      'quiz',       'Quiz',           10),
+       ('10',      'classwork',  'Class-Work',     10),
+       ('10',      'activity',   'Class Activity', 10),
+       ('9',       'mid',        'Mid-Exam',       25),
+       ('9',       'final',      'Final-Exam',     50),
+       ('9',       'homework',   'Home-Work',      15),
+       ('9',       'test',       'Test',           10)
+     ) AS v(grade_level, method_id, label, max_weight)
+     WHERE NOT EXISTS (SELECT 1 FROM grading_configs)`,
+    // Grades table
+    `CREATE TABLE IF NOT EXISTS grades (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      student_id  UUID          NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      course_id   UUID          NOT NULL REFERENCES courses(id)  ON DELETE CASCADE,
+      type        VARCHAR(30)   NOT NULL,
+      weight      VARCHAR(10),
+      score       NUMERIC(6,2),
+      total       NUMERIC(6,2)  NOT NULL,
+      created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    )`,
     // Driver Notifications — tracks driver-posted alerts with 3-day auto-purge
     `CREATE TABLE IF NOT EXISTS driver_notifications (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

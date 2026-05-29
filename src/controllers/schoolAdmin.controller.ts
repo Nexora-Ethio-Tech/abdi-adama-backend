@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { AuthRequest } from '../types';
 import schoolAdminService from '../services/schoolAdmin.service';
+import pool from '../config/database';
 import {
   validateRegistrationForm,
   validateAndFormatPhoneNumber,
@@ -1012,6 +1013,74 @@ class SchoolAdminController {
       });
     } catch (error) {
       next(error);
+    }
+  }
+
+  async getGradingConfigs(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await pool.query(
+        'SELECT grade_level, method_id, label, max_weight FROM grading_configs ORDER BY grade_level, created_at'
+      );
+      
+      const configsMap: Record<string, Array<{ id: string; label: string; maxWeight: number }>> = {};
+      for (const row of result.rows) {
+        const grade = row.grade_level;
+        if (!configsMap[grade]) {
+          configsMap[grade] = [];
+        }
+        configsMap[grade].push({
+          id: row.method_id,
+          label: row.label,
+          maxWeight: row.max_weight
+        });
+      }
+      
+      res.json({
+        success: true,
+        data: configsMap
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async publishGradingConfigs(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    const client = await pool.connect();
+    try {
+      const { gradeLevel, configs } = req.body;
+      if (!gradeLevel || !Array.isArray(configs)) {
+        res.status(400).json({ success: false, message: 'Invalid payload' });
+        return;
+      }
+      
+      await client.query('BEGIN');
+      
+      await client.query(
+        'DELETE FROM grading_configs WHERE grade_level = $1',
+        [gradeLevel]
+      );
+      
+      for (const config of configs) {
+        await client.query(
+          `INSERT INTO grading_configs (grade_level, method_id, label, max_weight)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (grade_level, method_id)
+           DO UPDATE SET label = $3, max_weight = $4`,
+          [gradeLevel, config.id, config.label, config.maxWeight]
+        );
+      }
+      
+      await client.query('COMMIT');
+      
+      res.json({
+        success: true,
+        message: `Grading configurations for Grade ${gradeLevel} published successfully.`
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      next(error);
+    } finally {
+      client.release();
     }
   }
 }

@@ -20,6 +20,8 @@ import libraryRoutes from './routes/libraryRoutes';
 import loanRoutes from './routes/loan.routes';
 import payrollRoutes from './routes/payroll.routes';
 import scheduleRoutes from './routes/schedule.routes';
+import sectionAssignmentRoutes from './routes/sectionAssignmentRoutes';
+import gradingRoutes from './routes/grading.routes';
 
 const app = express();
 
@@ -95,6 +97,8 @@ app.use('/api/library', libraryRoutes);
 app.use('/api/loans', loanRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/schedule', scheduleRoutes);
+app.use('/api/sections', sectionAssignmentRoutes);
+app.use('/api/grading-configs', gradingRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({

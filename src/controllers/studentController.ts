@@ -233,7 +233,6 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
       ...stats,
       totalCourses: totalCourses,
       averageGrade: 87,
-      attendanceRate: 96,
       upcomingExams: deadlineResult.rows.length
     };
 
@@ -281,6 +280,38 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
   const subjectId = req.query.subject_id as string | undefined;
 
   try {
+    // 1. Get student UUID and grade level
+    const studentRes = await pool.query(
+      `SELECT id, grade FROM students WHERE user_id = $1 LIMIT 1`,
+      [queryIdentityId]
+    );
+    const studentRow = studentRes.rows[0];
+    const studentId = studentRow ? studentRow.id : null;
+    const gradeLevel = studentRow ? studentRow.grade.replace(/\D/g, '') : 'default';
+
+    // 2. Fetch published grading configs for this grade level (fallback to 'default')
+    let configRes = await pool.query(
+      `SELECT method_id, label, max_weight 
+       FROM grading_configs 
+       WHERE grade_level = $1 
+       ORDER BY created_at ASC`,
+      [gradeLevel]
+    );
+    if (configRes.rows.length === 0) {
+      configRes = await pool.query(
+        `SELECT method_id, label, max_weight 
+         FROM grading_configs 
+         WHERE grade_level = 'default' 
+         ORDER BY created_at ASC`
+      );
+    }
+    const gradingMethods = configRes.rows.map((r: any) => ({
+      id: r.method_id,
+      label: r.label,
+      maxWeight: r.max_weight,
+    }));
+
+    // 3. Fetch courses and legacy grades
     const coursesResult = await pool.query(
       `SELECT
          e.id          AS enrollment_id,
@@ -294,12 +325,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
          COALESCE(g.mid_30,        0) AS mid_30,
          COALESCE(g.final_50,      0) AS final_50,
          COALESCE(g.total,         0) AS total,
-         10  AS max_quiz,
-         10  AS max_assignment,
-         30  AS max_mid,
-         50  AS max_final,
-         100 AS max_total,
-         -- legacy granular marks (backward compatibility)
+         -- legacy granular marks
          g.quiz_1, g.quiz_2, g.test_1, g.test_2,
          g.participation, g.mid_exam, g.final_exam
        FROM silo_enrollments e
@@ -310,23 +336,89 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
          AND e.academic_year = $2
          AND e.semester::text = $3::text
          ${subjectId ? 'AND c.id = $4' : ''}
-        ORDER BY c.name`,
+       ORDER BY c.name`,
       subjectId
         ? [queryIdentityId, year, semester, subjectId]
         : [queryIdentityId, year, semester]
     );
 
+    // 4. Fetch actual grades from the new grades table if student exists
+    let dbGrades: any[] = [];
+    if (studentId) {
+      const gradesRes = await pool.query(
+        `SELECT g.course_id, c.name as course_name, c.code as course_code, g.type, g.score, g.total
+         FROM grades g
+         JOIN courses c ON g.course_id = c.id
+         WHERE g.student_id = $1`,
+        [studentId]
+      );
+      dbGrades = gradesRes.rows;
+    }
+
+    // 5. Merge dynamic grades and configs into each course
+    const mergedCourses = coursesResult.rows.map((course: any) => {
+      const courseGrades: Record<string, number | null> = {};
+      let calculatedTotal = 0;
+      let hasDynamicGrade = false;
+
+      // Map dynamic configs
+      for (const method of gradingMethods) {
+        // Look up in actual grades table (by course_id or course name/code for flexibility)
+        const match = dbGrades.find(
+          (dg: any) =>
+            (dg.course_id === course.subject_id ||
+             dg.course_code === course.code ||
+             dg.course_name.toLowerCase() === course.name.toLowerCase()) &&
+            dg.type === method.id
+        );
+
+        if (match) {
+          courseGrades[method.id] = Number(match.score);
+          calculatedTotal += Number(match.score);
+          hasDynamicGrade = true;
+        } else {
+          // Fallback to legacy fields if not in actual grades table
+          let fallbackVal: number | null = null;
+          const midId = method.id.toLowerCase();
+          if (midId.includes('mid')) {
+            fallbackVal = Number(course.mid_30 || course.mid_exam || 0);
+          } else if (midId.includes('final')) {
+            fallbackVal = Number(course.final_50 || course.final_exam || 0);
+          } else if (midId.includes('quiz')) {
+            fallbackVal = Number(course.quiz_10 || course.quiz_1 || 0);
+          } else if (midId.includes('assignment')) {
+            fallbackVal = Number(course.assignment_10 || 0);
+          } else if (midId.includes('test')) {
+            fallbackVal = Number(course.test_1 || 0);
+          }
+          courseGrades[method.id] = fallbackVal;
+          if (fallbackVal !== null) {
+            calculatedTotal += fallbackVal;
+          }
+        }
+      }
+
+      const totalScore = hasDynamicGrade ? calculatedTotal : Number(course.total);
+
+      return {
+        ...course,
+        grades: courseGrades,
+        total: totalScore,
+      };
+    });
+
     return sendSuccess(res, {
       semester,
       year,
-      courses: coursesResult.rows,
-      selected: subjectId ? (coursesResult.rows[0] ?? null) : null,
+      gradingMethods,
+      courses: mergedCourses,
+      selected: subjectId ? (mergedCourses[0] ?? null) : null,
     });
   } catch (err: any) {
     console.error('[getGrades] Error:', err.message);
     return sendError(res, 'Failed to fetch grades.', 500, err.message);
   }
-};
+}
 
 // ─── GET /api/student/history ─────────────────────────────────────────────────
 /**

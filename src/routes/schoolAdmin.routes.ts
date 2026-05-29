@@ -132,6 +132,10 @@ router.get('/teachers', schoolAdminController.getBranchTeachers);
 router.get('/students', schoolAdminController.getBranchStudents);
 router.get('/students/:id', schoolAdminController.getStudentById);
 
+// Grading Configurations
+router.get('/grading-configs', schoolAdminController.getGradingConfigs);
+router.post('/grading-configs', schoolAdminController.publishGradingConfigs);
+
 // ============================================================
 // DASHBOARD FEATURES
 // ============================================================

@@ -308,6 +308,22 @@ class SchoolAdminService {
     section?: string;
     branchId: string;
   }) {
+    // Extract grade from class name
+    // Handles: "Grade 10-A", "Grade 10", "10-A", "10", etc.
+    const extractGrade = (name: string): string | null => {
+      // Try pattern "Grade 10-A" or "Grade 10"
+      const match1 = name.match(/Grade\s+(\d{1,2})/i);
+      if (match1) return match1[1];
+      
+      // Try pattern starting with digits "10-A" or "10"
+      const match2 = name.match(/^(\d{1,2})/);
+      if (match2) return match2[1];
+      
+      return null;
+    };
+
+    const extractedGrade = extractGrade(data.name);
+
     const existing = await pool.query(
       `SELECT *
        FROM classes
@@ -322,20 +338,21 @@ class SchoolAdminService {
         `UPDATE classes
          SET name = $1,
              section = $2,
-             capacity = COALESCE($3, capacity)
-         WHERE id = $4
+             grade = $3,
+             capacity = COALESCE($4, capacity)
+         WHERE id = $5
          RETURNING *`,
-        [data.name, data.section || null, data.capacity ?? null, classId]
+        [data.name, data.section || null, extractedGrade, data.capacity ?? null, classId]
       );
 
       return result.rows[0];
     }
 
     const result = await pool.query(
-      `INSERT INTO classes (name, capacity, section, branch_id, student_count)
-       VALUES ($1, $2, $3, $4, 0)
+      `INSERT INTO classes (name, capacity, section, grade, branch_id, student_count)
+       VALUES ($1, $2, $3, $4, $5, 0)
        RETURNING *`,
-      [data.name, data.capacity || 0, data.section || null, data.branchId]
+      [data.name, data.capacity || 0, data.section || null, extractedGrade, data.branchId]
     );
 
     return result.rows[0];

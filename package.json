@@ -12,6 +12,7 @@
     "seed:demo-students": "ts-node src/scripts/seedGradeStudentsAndRoutes.ts",
     "seed:payroll": "ts-node src/scripts/seedPayrollData.ts",
     "seed:schedule": "ts-node src/scripts/seedScheduleData.ts",
+    "migrate:section-assignment": "ts-node src/scripts/migrateSectionAssignment.ts",
     "test": "jest --runInBand --detectOpenHandles",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
