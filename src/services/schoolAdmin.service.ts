@@ -314,11 +314,11 @@ class SchoolAdminService {
       // Try pattern "Grade 10-A" or "Grade 10"
       const match1 = name.match(/Grade\s+(\d{1,2})/i);
       if (match1) return match1[1];
-      
+
       // Try pattern starting with digits "10-A" or "10"
       const match2 = name.match(/^(\d{1,2})/);
       if (match2) return match2[1];
-      
+
       return null;
     };
 

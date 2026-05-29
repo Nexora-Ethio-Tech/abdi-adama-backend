@@ -46,7 +46,7 @@ export const getEligibleSections = async (grade: string): Promise<SectionInfo[]>
      ORDER BY c.current_count ASC, c.section ASC, c.name ASC`,
     [grade]
   );
-  
+
   return result.rows;
 };
 
