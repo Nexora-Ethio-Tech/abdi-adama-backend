@@ -41,7 +41,8 @@ const updateFeeStatusSchema = Joi.object({
   monthlyFee: Joi.number().min(0),
   busFee: Joi.number().min(0),
   penaltyFee: Joi.number().min(0),
-  feeNotes: Joi.string().allow('')
+  feeNotes: Joi.string().allow(''),
+  requestedAidAmount: Joi.number().min(0).optional()
 });
 
 // Role Guard segments

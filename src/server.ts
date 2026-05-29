@@ -16,6 +16,14 @@ async function ensureSchemaExtensions(): Promise<void> {
     // Classes — capacity & section columns (from schema_additions.sql)
     `ALTER TABLE classes ADD COLUMN IF NOT EXISTS capacity INT DEFAULT 0`,
     `ALTER TABLE classes ADD COLUMN IF NOT EXISTS section VARCHAR(10)`,
+    `ALTER TABLE students ADD COLUMN IF NOT EXISTS requested_aid_amount NUMERIC(12,2)`,
+    // Loans — allow pending/approved workflow (fixes loans_status_check on older DBs)
+    `ALTER TABLE loans ADD COLUMN IF NOT EXISTS audited_by UUID REFERENCES users(id) ON DELETE SET NULL`,
+    `ALTER TABLE loans ADD COLUMN IF NOT EXISTS audited_at TIMESTAMPTZ`,
+    `ALTER TABLE loans ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`,
+    `ALTER TABLE loans ADD COLUMN IF NOT EXISTS rejection_reason TEXT`,
+    `ALTER TABLE loans DROP CONSTRAINT IF EXISTS loans_status_check`,
+    `ALTER TABLE loans ADD CONSTRAINT loans_status_check CHECK (status IN ('pending', 'approved', 'active', 'completed', 'rejected', 'cancelled'))`,
     // Pending applications — new columns used by academic application workflow
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_name VARCHAR(200)`,
     `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_email VARCHAR(255)`,
@@ -257,6 +265,7 @@ async function ensureSchemaExtensions(): Promise<void> {
     };
 
     await runSchemaFile('payroll_schema.sql', 'Payroll');
+    await runSchemaFile('loan_workflow_migration.sql', 'Loan workflow');
     await runSchemaFile('schedule_schema.sql', 'Schedule Builder');
     await runSchemaFile('email_smtp_migration.sql', 'Email / SMTP');
     await runSchemaFile('finance_transactions_schema.sql', 'Finance Transactions');

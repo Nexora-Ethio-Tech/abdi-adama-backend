@@ -260,7 +260,7 @@ class FinanceClerkService {
     let query = `
       SELECT 
         s.id, s.grade, s.monthly_fee, s.bus_fee, s.penalty_fee,
-        s.fee_status, s.fee_approval_status, s.fee_notes,
+        s.fee_status, s.fee_approval_status, s.fee_notes, s.requested_aid_amount,
         u.name, u.email, u.digital_id
       FROM students s
       JOIN users u ON s.user_id = u.id
@@ -632,6 +632,7 @@ class FinanceClerkService {
     busFee?: number;
     penaltyFee?: number;
     feeNotes?: string;
+    requestedAidAmount?: number;
   }) {
     const fields: string[] = [];
     const values: any[] = [];
@@ -671,6 +672,12 @@ class FinanceClerkService {
       paramCount++;
       fields.push(`fee_notes = $${paramCount}`);
       values.push(data.feeNotes);
+    }
+
+    if (data.requestedAidAmount !== undefined) {
+      paramCount++;
+      fields.push(`requested_aid_amount = $${paramCount}`);
+      values.push(data.requestedAidAmount);
     }
 
     paramCount++;

@@ -40,7 +40,7 @@ class AuditorService {
     let query = `
       SELECT 
         s.id, s.grade, s.monthly_fee, s.bus_fee, s.penalty_fee,
-        s.fee_status, s.fee_approval_status, s.fee_notes,
+        s.fee_status, s.fee_approval_status, s.fee_notes, s.requested_aid_amount,
         u.name, u.email, u.digital_id
       FROM students s
       JOIN users u ON s.user_id = u.id
@@ -61,12 +61,21 @@ class AuditorService {
 
   // Approve/Reject fee reduction (ONLY write permission)
   async updateFeeReductionStatus(studentId: string, branchId: string, status: string, _auditorId: string) {
+    const normalized = String(status).toLowerCase();
+    if (!['pending', 'approved', 'rejected'].includes(normalized)) {
+      throw new Error('Invalid fee approval status. Use pending, approved, or rejected.');
+    }
+
+    const feeStatus = normalized === 'rejected' ? 'standard' : 'reduced';
+
     const result = await pool.query(
       `UPDATE students 
-       SET fee_approval_status = $1, updated_at = NOW()
-       WHERE id = $2 AND branch_id = $3
-       RETURNING id, grade, monthly_fee, bus_fee, penalty_fee, fee_status, fee_approval_status, fee_notes`,
-      [status, studentId, branchId]
+       SET fee_approval_status = $1,
+           fee_status = $2,
+           updated_at = NOW()
+       WHERE id = $3 AND branch_id = $4
+       RETURNING id, grade, monthly_fee, bus_fee, penalty_fee, fee_status, fee_approval_status, fee_notes, requested_aid_amount`,
+      [normalized, feeStatus, studentId, branchId]
     );
 
     if (result.rows.length === 0) {
