@@ -1004,9 +1004,9 @@ class SchoolAdminController {
       const { id } = req.params;
       const branchId = req.user!.branch_id;
       const promotionData = req.body;
-      
+
       const result = await schoolAdminService.promoteTeacher(id, branchId!, promotionData);
-      
+
       res.json({
         success: true,
         data: result,
@@ -1022,7 +1022,7 @@ class SchoolAdminController {
       const result = await pool.query(
         'SELECT grade_level, method_id, label, max_weight FROM grading_configs ORDER BY grade_level, created_at'
       );
-      
+
       const configsMap: Record<string, Array<{ id: string; label: string; maxWeight: number }>> = {};
       for (const row of result.rows) {
         const grade = row.grade_level;
@@ -1035,7 +1035,7 @@ class SchoolAdminController {
           maxWeight: row.max_weight
         });
       }
-      
+
       res.json({
         success: true,
         data: configsMap
@@ -1053,14 +1053,14 @@ class SchoolAdminController {
         res.status(400).json({ success: false, message: 'Invalid payload' });
         return;
       }
-      
+
       await client.query('BEGIN');
-      
+
       await client.query(
         'DELETE FROM grading_configs WHERE grade_level = $1',
         [gradeLevel]
       );
-      
+
       for (const config of configs) {
         await client.query(
           `INSERT INTO grading_configs (grade_level, method_id, label, max_weight)
@@ -1070,9 +1070,9 @@ class SchoolAdminController {
           [gradeLevel, config.id, config.label, config.maxWeight]
         );
       }
-      
+
       await client.query('COMMIT');
-      
+
       res.json({
         success: true,
         message: `Grading configurations for Grade ${gradeLevel} published successfully.`
