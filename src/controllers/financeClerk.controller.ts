@@ -251,14 +251,15 @@ class FinanceClerkController {
   async updateFeeStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params;
-      const { feeStatus, monthlyFee, busFee, penaltyFee, feeNotes } = req.body;
+      const { feeStatus, monthlyFee, busFee, penaltyFee, feeNotes, requestedAidAmount } = req.body;
 
       const student = await financeClerkService.updateFeeStatus(id, {
         feeStatus,
         monthlyFee,
         busFee,
         penaltyFee,
-        feeNotes
+        feeNotes,
+        requestedAidAmount
       });
 
       res.json({

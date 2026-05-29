@@ -13,7 +13,7 @@ router.use(roleGuard([UserRole.AUDITOR]));
 
 // Validation schemas
 const feeReductionStatusSchema = Joi.object({
-  status: Joi.string().valid('Pending', 'Approved', 'Rejected').required()
+  status: Joi.string().valid('pending', 'approved', 'rejected', 'Pending', 'Approved', 'Rejected').required()
 });
 
 // View payments (READ ONLY)
