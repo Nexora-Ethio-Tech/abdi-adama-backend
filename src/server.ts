@@ -265,6 +265,7 @@ async function ensureSchemaExtensions(): Promise<void> {
     await runSchemaFile('schedule_schema.sql', 'Schedule Builder');
     await runSchemaFile('email_smtp_migration.sql', 'Email / SMTP');
     await runSchemaFile('system_settings_migration.sql', 'System settings');
+    await runSchemaFile('profit_targets_branch_migration.sql', 'Profit targets per branch');
     await runSchemaFile('finance_transactions_schema.sql', 'Finance Transactions');
     // Migration to remove UNIQUE constraint on users.email so duplicate emails are allowed
     await runSchemaFile('remove_email_unique.sql', 'Remove email UNIQUE constraint');

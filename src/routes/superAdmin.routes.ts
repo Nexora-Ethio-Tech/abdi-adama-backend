@@ -115,11 +115,13 @@ router.post('/branch-grade-fees', validate(branchGradeFeeSchema), superAdminCont
 router.delete('/branch-grade-fees/:id', superAdminController.deleteBranchGradeFee);
 
 const profitTargetSchema = Joi.object({
+  branchId: Joi.string().uuid().required(),
   ethiopianMonth: Joi.number().integer().min(1).max(13).required(),
-  targetAmount: Joi.number().min(0).required(),
+  targetAmount: Joi.number().required(),
   year: Joi.number().integer().min(2000).max(2100).optional(),
 });
 
+router.get('/profit-targets/branch-summary', superAdminController.getBranchProfitSummary);
 router.get('/profit-targets', superAdminController.getMonthlyProfitTargets);
 router.post('/profit-targets', validate(profitTargetSchema), superAdminController.upsertMonthlyProfitTarget);
 

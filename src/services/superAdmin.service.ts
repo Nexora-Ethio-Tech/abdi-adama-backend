@@ -596,41 +596,165 @@ class SuperAdminService {
     return { id };
   }
 
-  // ─── Monthly profit targets ───────────────────────────────────────────────
+  // ─── Monthly profit targets (per branch) ─────────────────────────────────
 
   private static readonly ETHIOPIAN_TO_GREGORIAN_MONTH: Record<number, number> = {
     1: 9, 2: 10, 3: 11, 4: 12, 5: 1, 6: 2, 7: 3, 8: 4, 9: 5, 10: 6, 11: 7, 12: 8, 13: 9,
   };
 
-  async getMonthlyProfitTargets(year?: number) {
+  private static readonly GREGORIAN_MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+
+  private resolveEthiopianGregorianPeriod(ethiopianMonth: number, targetYear: number) {
+    const gregMonth = SuperAdminService.ETHIOPIAN_TO_GREGORIAN_MONTH[ethiopianMonth] ?? 1;
+    let gregYear = targetYear;
+    if (ethiopianMonth >= 5) {
+      gregYear = targetYear + 1;
+    }
+    const monthName = SuperAdminService.GREGORIAN_MONTH_NAMES[gregMonth - 1] ?? 'January';
+    return { gregMonth, gregYear, monthName };
+  }
+
+  private async getBranchPeriodFinancials(
+    branchId: string,
+    ethiopianMonth: number,
+    targetYear: number
+  ) {
+    const { gregMonth, gregYear, monthName } = this.resolveEthiopianGregorianPeriod(
+      ethiopianMonth,
+      targetYear
+    );
+
+    const studentResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(ft.amount), 0) AS ft_total,
+         COUNT(ft.id)::int AS ft_count,
+         COALESCE((
+           SELECT SUM(p.total_amount)
+           FROM payments p
+           WHERE p.branch_id = $1
+             AND EXTRACT(MONTH FROM COALESCE(p.date, p.created_at::date)) = $2
+             AND EXTRACT(YEAR FROM COALESCE(p.date, p.created_at::date)) = $3
+         ), 0) AS payments_total
+       FROM finance_transactions ft
+       WHERE ft.branch_id = $1
+         AND EXTRACT(MONTH FROM ft.date) = $2
+         AND EXTRACT(YEAR FROM ft.date) = $3`,
+      [branchId, gregMonth, gregYear]
+    );
+
+    const ftTotal = Number(studentResult.rows[0]?.ft_total ?? 0);
+    const paymentsTotal = Number(studentResult.rows[0]?.payments_total ?? 0);
+    const studentIncome = ftTotal > 0 ? ftTotal : paymentsTotal;
+    const txCount = Number(studentResult.rows[0]?.ft_count ?? 0);
+
+    const payrollResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(total_net), 0) AS total_net,
+         COALESCE(SUM(total_pension_employer), 0) AS total_pension_employer,
+         MAX(status) AS run_status
+       FROM payroll_runs
+       WHERE branch_id = $1
+         AND year = $2
+         AND month = $3
+         AND status IN ('finalized', 'exported', 'draft')`,
+      [branchId, gregYear, monthName]
+    );
+
+    const staffPayout =
+      Number(payrollResult.rows[0]?.total_net ?? 0) +
+      Number(payrollResult.rows[0]?.total_pension_employer ?? 0);
+    const payrollStatus = payrollResult.rows[0]?.run_status ?? null;
+    const netProfit = studentIncome - staffPayout;
+
+    return {
+      gregMonth,
+      gregYear,
+      monthName,
+      student_income: studentIncome,
+      student_transaction_count: txCount,
+      staff_payout: staffPayout,
+      payroll_status: payrollStatus,
+      suggested_target: Math.max(netProfit, 0),
+      actual_net_profit: netProfit,
+    };
+  }
+
+  async getBranchProfitSummary(
+    branchId: string,
+    ethiopianMonth: number,
+    year?: number
+  ) {
     const targetYear = year ?? new Date().getFullYear();
+    const branchResult = await pool.query(`SELECT id, name FROM branches WHERE id = $1`, [branchId]);
+    if (branchResult.rows.length === 0) {
+      throw new Error('Branch not found');
+    }
+
+    const finances = await this.getBranchPeriodFinancials(branchId, ethiopianMonth, targetYear);
+
+    const targetResult = await pool.query(
+      `SELECT * FROM monthly_profit_targets
+       WHERE branch_id = $1 AND ethiopian_month = $2 AND target_year = $3`,
+      [branchId, ethiopianMonth, targetYear]
+    );
+
+    return {
+      branch_id: branchId,
+      branch_name: branchResult.rows[0].name,
+      ethiopian_month: ethiopianMonth,
+      target_year: targetYear,
+      ...finances,
+      saved_target: targetResult.rows[0]
+        ? Number(targetResult.rows[0].target_amount)
+        : null,
+    };
+  }
+
+  async getMonthlyProfitTargets(branchId?: string, year?: number) {
+    const targetYear = year ?? new Date().getFullYear();
+    const params: Array<string | number> = [targetYear];
+    let branchFilter = '';
+    if (branchId) {
+      branchFilter = ' AND t.branch_id = $2';
+      params.push(branchId);
+    }
+
     const targetsResult = await pool.query(
-      `SELECT * FROM monthly_profit_targets WHERE target_year = $1 ORDER BY ethiopian_month`,
-      [targetYear]
+      `SELECT t.*, b.name AS branch_name
+       FROM monthly_profit_targets t
+       LEFT JOIN branches b ON b.id = t.branch_id
+       WHERE t.target_year = $1
+         AND t.branch_id IS NOT NULL
+         ${branchFilter}
+       ORDER BY b.name, t.ethiopian_month`,
+      params
     );
 
     const rows = [];
     for (const row of targetsResult.rows) {
-      const gregMonth = SuperAdminService.ETHIOPIAN_TO_GREGORIAN_MONTH[row.ethiopian_month] ?? 1;
-      let gregYear = targetYear;
-      if (row.ethiopian_month >= 5) {
-        gregYear = targetYear + 1;
-      }
-      const actualResult = await pool.query(
-        `SELECT COALESCE(SUM(amount), 0) AS total
-         FROM finance_transactions
-         WHERE EXTRACT(MONTH FROM date) = $1 AND EXTRACT(YEAR FROM date) = $2`,
-        [gregMonth, gregYear]
+      if (!row.branch_id) continue;
+      const finances = await this.getBranchPeriodFinancials(
+        row.branch_id,
+        row.ethiopian_month,
+        targetYear
       );
       rows.push({
         ...row,
-        actual_amount: Number(actualResult.rows[0].total),
+        branch_name: row.branch_name,
+        student_income: finances.student_income,
+        staff_payout: finances.staff_payout,
+        actual_net_profit: finances.actual_net_profit,
+        actual_amount: finances.actual_net_profit,
       });
     }
     return rows;
   }
 
   async upsertMonthlyProfitTarget(
+    branchId: string,
     ethiopianMonth: number,
     targetAmount: number,
     userId: string,
@@ -638,14 +762,15 @@ class SuperAdminService {
   ) {
     const targetYear = year ?? new Date().getFullYear();
     const result = await pool.query(
-      `INSERT INTO monthly_profit_targets (ethiopian_month, target_year, target_amount, updated_by, updated_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (ethiopian_month, target_year) DO UPDATE
+      `INSERT INTO monthly_profit_targets (branch_id, ethiopian_month, target_year, target_amount, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (branch_id, ethiopian_month, target_year)
+       DO UPDATE
        SET target_amount = EXCLUDED.target_amount,
            updated_by = EXCLUDED.updated_by,
            updated_at = NOW()
        RETURNING *`,
-      [ethiopianMonth, targetYear, targetAmount, userId]
+      [branchId, ethiopianMonth, targetYear, targetAmount, userId]
     );
     return result.rows[0];
   }
