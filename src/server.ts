@@ -276,10 +276,15 @@ async function ensureSchemaExtensions(): Promise<void> {
 
     const runSchemaFile = async (fileName: string, label: string) => {
       const schemaPath = path.join(__dirname, '../database', fileName);
+      logger.debug(`Checking schema file for ${label} at path: ${schemaPath}`);
       if (fs.existsSync(schemaPath)) {
         const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-        await pool.query(schemaSql);
-        logger.info(`✅ ${label} database schema verified and updated`);
+        try {
+          await pool.query(schemaSql);
+          logger.info(`✅ ${label} database schema verified and updated`);
+        } catch (fileErr: any) {
+          logger.error(`❌ Failed to apply schema file for ${label} at ${schemaPath}: ${fileErr.message}`);
+        }
       } else {
         logger.warn(`⚠️ ${label} schema file not found at: ${schemaPath}`);
       }
@@ -292,6 +297,7 @@ async function ensureSchemaExtensions(): Promise<void> {
     await runSchemaFile('system_settings_migration.sql', 'System settings');
     await runSchemaFile('profit_targets_branch_migration.sql', 'Profit targets per branch');
     await runSchemaFile('finance_transactions_schema.sql', 'Finance Transactions');
+    await runSchemaFile('asset_adjustments.sql', 'Asset adjustments (audit)');
     // Migration to remove UNIQUE constraint on users.email so duplicate emails are allowed
     await runSchemaFile('remove_email_unique.sql', 'Remove email UNIQUE constraint');
   } catch (err: any) {
