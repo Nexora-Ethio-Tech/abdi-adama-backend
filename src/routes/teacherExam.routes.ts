@@ -211,17 +211,33 @@ router.post('/:id/results', authenticate, async (req: Request, res: Response) =>
   try {
     const { id } = req.params;
     const { studentId, marksObtained } = req.body;
-
     if (marksObtained === undefined || studentId === undefined) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-
     const result = await teacherExamService.saveExamResult(id, studentId, marksObtained);
-
     res.status(201).json({ success: true, data: result });
   } catch (error) {
     logger.error('Error saving exam result:', error);
     res.status(500).json({ error: 'Failed to save result' });
+  }
+});
+
+/**
+ * Issue reset PIN for a terminated student
+ * POST /api/exams/:id/issue-reset-pin
+ */
+router.post('/:id/issue-reset-pin', roleGuard([UserRole.TEACHER, UserRole.SCHOOL_ADMIN]), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { studentId, pin } = req.body;
+    const userId = (req as any).user?.id;
+    if (!studentId || !pin) return res.status(400).json({ error: 'studentId and pin are required' });
+    if (pin.length < 4 || pin.length > 10) return res.status(400).json({ error: 'PIN must be 4-10 characters' });
+    const result = await teacherExamService.issueResetPin(id, studentId, userId, pin);
+    res.json({ success: true, data: result, message: 'Reset PIN issued successfully' });
+  } catch (error) {
+    logger.error('Error issuing reset PIN:', error);
+    res.status(500).json({ error: 'Failed to issue reset PIN' });
   }
 });
 

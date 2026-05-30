@@ -5,114 +5,40 @@ import { authenticateToken, authorizeRoles } from '../middleware/authMiddleware'
 
 const router = Router();
 
-// All student routes require a valid JWT
-// Student-only routes also enforce role with authorizeRoles('Student')
-
-// ── Profile ─────────────────────────────────────────────────────────────────
-// Returns full_name (for "Welcome back!" greeting) + section + grade
+// ── Profile ───────────────────────────────────────────────────────────────────
 router.get('/profile', authenticateToken, studentController.getOwnProfile);
 
-// ── Dashboard (Today's Schedule + Deadlines + Teacher of the Month) ──────────
-router.get(
-  '/dashboard',
-  authenticateToken,
-  authorizeRoles('Student'),
-  studentController.getDashboard
-);
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+router.get('/dashboard', authenticateToken, authorizeRoles('Student'), studentController.getDashboard);
+router.get('/schedule', authenticateToken, authorizeRoles('Student'), studentController.getSchedule);
 
-router.get(
-  '/schedule',
-  authenticateToken,
-  authorizeRoles('Student'),
-  studentController.getSchedule
-);
+// ── Grades / History ──────────────────────────────────────────────────────────
+router.get('/grades', authenticateToken, authorizeRoles('Student', 'Parent'), studentController.getGrades);
+router.get('/history', authenticateToken, authorizeRoles('Student', 'Parent'), studentController.getHistory);
 
-// ── Grades (filterable by semester + subject_id) ──────────────────────────────
-// ?semester=1|2  &  ?subject_id=<uuid>
-// Parent role is also allowed — the controller verifies the parent-child link
-router.get(
-  '/grades',
-  authenticateToken,
-  authorizeRoles('Student', 'Parent'),
-  studentController.getGrades
-);
+// ── Exams (student-facing) ────────────────────────────────────────────────────
+router.get('/exams', authenticateToken, authorizeRoles('Student', 'Parent'), examController.listAvailableExams);
+router.get('/exams/:examId', authenticateToken, authorizeRoles('Student', 'Parent'), examController.getExamDetails);
 
-// ── Academic History (filterable by year + semester) ─────────────────────────
-// ?year=2024/2025  &  ?semester=1|2
-// Parent role is also allowed — the controller verifies the parent-child link
-router.get(
-  '/history',
-  authenticateToken,
-  authorizeRoles('Student', 'Parent'),
-  studentController.getHistory
-);
+router.post('/exams/:examId/start', authenticateToken, authorizeRoles('Student', 'Parent'), examController.startExamSession);
+router.post('/exams/:examId/answer', authenticateToken, authorizeRoles('Student', 'Parent'), examController.saveExamAnswer);
+router.post('/exams/:examId/submit', authenticateToken, authorizeRoles('Student', 'Parent'), examController.submitExam);
+router.post('/exams/:examId/verify-password', authenticateToken, authorizeRoles('Student', 'Parent'), examController.verifyExamPassword);
 
-router.get(
-  '/exams',
-  authenticateToken,
-  authorizeRoles('Student', 'Parent'),
-  examController.listAvailableExams
-);
+// Anti-cheat: violation reporting & termination
+router.post('/exams/:examId/violation', authenticateToken, authorizeRoles('Student', 'Parent'), examController.reportViolation);
+router.post('/exams/:examId/terminate', authenticateToken, authorizeRoles('Student', 'Parent'), examController.terminateExam);
 
-router.get(
-  '/exams/:examId',
-  authenticateToken,
-  authorizeRoles('Student', 'Parent'),
-  examController.getExamDetails
-);
+// Teacher-issued reset PIN validation
+router.post('/exams/:examId/reset-pin', authenticateToken, authorizeRoles('Student', 'Parent'), examController.validateResetPin);
 
-router.post(
-  '/exams/:examId/answer',
-  authenticateToken,
-  authorizeRoles('Student', 'Parent'),
-  examController.saveExamAnswer
-);
-
-router.post(
-  '/exams/:examId/verify-password',
-  authenticateToken,
-  authorizeRoles('Student', 'Parent'),
-  examController.verifyExamPassword
-);
-
-router.post(
-  '/exams/:examId/start',
-  authenticateToken,
-  authorizeRoles('Student', 'Parent'),
-  examController.startExamSession
-);
-
-router.post(
-  '/exams/:examId/submit',
-  authenticateToken,
-  authorizeRoles('Student', 'Parent'),
-  examController.submitExam
-);
-
-// ── Courses (current semester) ────────────────────────────────────────────────
-router.get(
-  '/courses',
-  authenticateToken,
-  authorizeRoles('Student', 'Parent'),
-  studentController.getCurrentCourses
-);
-
-// ── Backward-compatible endpoints ─────────────────────────────────────────────
+// ── Courses ───────────────────────────────────────────────────────────────────
+router.get('/courses', authenticateToken, authorizeRoles('Student', 'Parent'), studentController.getCurrentCourses);
 router.get('/current-courses', authenticateToken, studentController.getCurrentCourses);
 router.get('/academic-history', authenticateToken, studentController.getAcademicHistory);
 
-router.get(
-  '/teacher-of-week',
-  authenticateToken,
-  authorizeRoles('Student'),
-  studentController.getTeacherOfWeek
-);
-
-router.post(
-  '/teacher-of-week/vote',
-  authenticateToken,
-  authorizeRoles('Student'),
-  studentController.submitTeacherOfWeekVote
-);
+// ── Teacher of the Week ───────────────────────────────────────────────────────
+router.get('/teacher-of-week', authenticateToken, authorizeRoles('Student'), studentController.getTeacherOfWeek);
+router.post('/teacher-of-week/vote', authenticateToken, authorizeRoles('Student'), studentController.submitTeacherOfWeekVote);
 
 export default router;

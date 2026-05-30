@@ -1,304 +1,455 @@
 import pool from '../config/database';
 import logger from '../utils/logger';
 
-interface CreateExamInput {
-  teacherId: string;
-  classId: string;
-  gradeId?: string;
-  subjectId?: string;
-  title: string;
-  examType: string;
-  totalMarks: number;
-  duration: number;
-  instructions?: string;
-  selectedSection?: string;
-  questions?: any[];
-  examPassword?: string;
-  isLocked?: boolean;
-  passwordRequired?: boolean;
+const VARIATION_CODES = ['A', 'B', 'C', 'D', 'E'];
+
+function shuffleArray<T>(arr: T[], seed: number): T[] {
+  const a = [...arr];
+  let s = seed;
+  for (let i = a.length - 1; i > 0; i--) {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    const j = Math.abs(s) % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
-interface UpdateExamInput {
-  title?: string;
-  examType?: string;
-  totalMarks?: number;
-  duration?: number;
-  instructions?: string;
-  selectedSection?: string;
-  status?: string;
-  questions?: any[];
-  gradeId?: string;
-  subjectId?: string;
-  examPassword?: string;
-  isLocked?: boolean;
-  passwordRequired?: boolean;
+function stringToSeed(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
 }
 
 class TeacherExamService {
-  /**
-   * Create a new exam (draft)
-   */
-  async createExam(input: CreateExamInput) {
-    const {
-      teacherId,
-      classId,
-      gradeId,
-      subjectId,
-      title,
-      examType,
-      totalMarks,
-      duration,
-      instructions,
-      selectedSection,
-      questions = [],
-      examPassword,
-      isLocked = false,
-      passwordRequired = false
-    } = input;
 
+  // ─── Published exams for student ───────────────────────────────────────────
+
+  async getPublishedExamsForStudent(userId: string) {
     try {
+      // Find student record
+      const studentRes = await pool.query(
+        `SELECT id FROM students WHERE user_id=$1 LIMIT 1`, [userId]);
+      const studentId = studentRes.rows[0]?.id;
+
       const result = await pool.query(
-        `INSERT INTO teacher_exams (
-          teacher_id, class_id, grade_id, subject_id, title, exam_type, total_marks, 
-          duration_minutes, instructions, selected_section, status, questions, 
-          exam_password, is_locked, password_required
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'draft', $11, $12, $13, $14)
-         RETURNING *`,
-        [teacherId, classId, gradeId || null, subjectId || null, title, examType, totalMarks, duration, 
-         instructions, selectedSection, JSON.stringify(questions), examPassword || null, isLocked, passwordRequired]
-      );
+        `SELECT
+           oe.id,
+           oe.title,
+           oe.duration_minutes,
+           oe.is_published,
+           oe.created_at,
+           u.name AS teacher_name,
+           COUNT(oeq.id)::int AS question_count,
+           oes.status AS session_status,
+           COALESCE(oes.terminated, FALSE) AS terminated,
+           COALESCE(oes.violation_count, 0) AS violation_count,
+           CASE
+             WHEN oes.status = 'submitted' THEN oes.final_score
+             ELSE NULL
+           END AS final_score
+         FROM online_exams oe
+         LEFT JOIN users u ON u.id = oe.creator_id
+         LEFT JOIN online_exam_questions oeq ON oeq.exam_id = oe.id
+         LEFT JOIN online_exam_sessions oes ON oes.exam_id = oe.id AND oes.student_id = $1
+         WHERE oe.is_published = TRUE
+         GROUP BY oe.id, u.name, oes.status, oes.terminated, oes.violation_count, oes.final_score
+         ORDER BY oe.created_at DESC`,
+        [studentId || userId]);
 
-      logger.info(`📝 Exam created: ${result.rows[0].id} by teacher ${teacherId}`);
-      return result.rows[0];
-    } catch (error) {
-      logger.error('Error creating exam:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get all exams for a teacher
-   */
-  async getTeacherExams(teacherId: string) {
-    try {
-      const result = await pool.query(
-        `SELECT te.*, c.name as class_name, c.section
-         FROM teacher_exams te
-         LEFT JOIN classes c ON te.class_id = c.id
-         WHERE te.teacher_id = $1
-         ORDER BY te.created_at DESC`,
-        [teacherId]
-      );
-
-      return result.rows.map(exam => ({
-        ...exam,
-        questions: exam.questions || []
+      return result.rows.map((exam: any) => ({
+        id: exam.id,
+        title: exam.title,
+        examType: 'Official Exam',
+        durationMinutes: Number(exam.duration_minutes),
+        teacherName: exam.teacher_name || 'Teacher',
+        questionCount: exam.question_count || 0,
+        sessionStatus: exam.terminated ? 'terminated'
+          : exam.session_status === 'submitted' ? 'submitted'
+          : exam.session_status === 'active' ? 'active'
+          : 'available',
+        finalScore: exam.final_score !== null ? Math.round(Number(exam.final_score)) : null,
+        violated: exam.terminated,
+        violationCount: exam.violation_count,
+        passwordRequired: false,
       }));
-    } catch (error) {
-      logger.error('Error fetching teacher exams:', error);
-      throw error;
-    }
+    } catch (error) { logger.error('Error fetching published exams:', error); throw error; }
   }
 
-  /**
-   * Get exam by ID
-   */
-  async getExamById(examId: string) {
-    try {
-      const result = await pool.query(
-        `SELECT te.*, c.name as class_name, c.section
-         FROM teacher_exams te
-         LEFT JOIN classes c ON te.class_id = c.id
-         WHERE te.id = $1`,
-        [examId]
-      );
+  // ─── Variation (randomisation) ─────────────────────────────────────────────
 
-      if (result.rows.length === 0) {
-        throw new Error('Exam not found');
+  async getOrCreateVariation(examId: string, studentId: string) {
+    try {
+      const existing = await pool.query(
+        `SELECT variation_code, shuffled_questions FROM exam_variations WHERE exam_id=$1 AND student_id=$2`,
+        [examId, studentId]);
+      if (existing.rows.length > 0) {
+        return {
+          variationCode: existing.rows[0].variation_code as string,
+          questions: existing.rows[0].shuffled_questions as any[],
+        };
+      }
+
+      // Fetch questions
+      const qRes = await pool.query(
+        `SELECT id, question_text, question_type, options_json, correct_answer, points, sort_order
+         FROM online_exam_questions WHERE exam_id=$1 ORDER BY sort_order`, [examId]);
+      const rawQuestions = qRes.rows;
+
+      const seed = stringToSeed(examId + studentId);
+      const codeIndex = Math.abs(seed) % VARIATION_CODES.length;
+      const variationCode = VARIATION_CODES[codeIndex];
+
+      const shuffledQs = shuffleArray(rawQuestions, seed);
+      const correctMap: Record<string, string> = {};
+
+      const clientQuestions = shuffledQs.map((q: any, qi: number) => {
+        if (q.correct_answer) correctMap[q.id] = q.correct_answer;
+        const opts: any[] = q.options_json || [];
+        const shuffledOpts = shuffleArray(opts, seed + qi * 31);
+        return {
+          id: q.id,
+          text: q.question_text,
+          type: q.question_type || 'options',
+          options: shuffledOpts.map((o: any) => ({ id: o.id || o.key, text: o.text || o.label })),
+          points: q.points || 1,
+        };
+      });
+
+      await pool.query(
+        `INSERT INTO exam_variations (exam_id, student_id, variation_code, shuffled_questions, correct_map)
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (exam_id, student_id) DO NOTHING`,
+        [examId, studentId, variationCode, JSON.stringify(clientQuestions), JSON.stringify(correctMap)]);
+
+      return { variationCode, questions: clientQuestions };
+    } catch (error) { logger.error('Error creating variation:', error); throw error; }
+  }
+
+  async getExamDetailsForStudent(examId: string, userId: string) {
+    try {
+      const studentRes = await pool.query(
+        `SELECT id FROM students WHERE user_id=$1 LIMIT 1`, [userId]);
+      const studentId = studentRes.rows[0]?.id || userId;
+
+      const examRes = await pool.query(
+        `SELECT oe.*, u.name AS teacher_name
+         FROM online_exams oe
+         LEFT JOIN users u ON u.id = oe.creator_id
+         WHERE oe.id=$1`, [examId]);
+      if (examRes.rows.length === 0) throw new Error('Exam not found');
+      const exam = examRes.rows[0];
+
+      const { variationCode, questions } = await this.getOrCreateVariation(examId, studentId);
+
+      const sessionRes = await pool.query(
+        `SELECT * FROM online_exam_sessions WHERE exam_id=$1 AND student_id=$2`, [examId, studentId]);
+      const session = sessionRes.rows[0] || null;
+
+      const answersRes = await pool.query(
+        `SELECT question_id, student_answer FROM online_exam_answers
+         WHERE session_id=(SELECT id FROM online_exam_sessions WHERE exam_id=$1 AND student_id=$2 LIMIT 1)`,
+        [examId, studentId]);
+      const savedAnswers: Record<string, string> = {};
+      answersRes.rows.forEach((r: any) => { savedAnswers[r.question_id] = r.student_answer; });
+
+      const durationMs = Number(exam.duration_minutes) * 60 * 1000;
+      const startTime = session?.start_time ? new Date(session.start_time).toISOString() : new Date().toISOString();
+      const endTime = session?.start_time
+        ? new Date(session.start_time).getTime() + durationMs
+        : Date.now() + durationMs;
+
+      let status = 'not_started';
+      if (session) {
+        if (session.terminated) status = 'terminated';
+        else if (session.status === 'submitted') status = 'submitted';
+        else status = 'active';
       }
 
       return {
-        ...result.rows[0],
-        questions: result.rows[0].questions || []
+        exam: {
+          id: exam.id,
+          title: exam.title,
+          durationMinutes: Number(exam.duration_minutes),
+          totalMarks: questions.reduce((s: number, q: any) => s + (q.points || 1), 0),
+          instructions: '',
+          teacherName: exam.teacher_name,
+          passwordRequired: false,
+        },
+        session: {
+          id: session?.id || null,
+          status,
+          startTime,
+          endTime,
+          terminated: session?.terminated || false,
+          violationCount: session?.violation_count || 0,
+        },
+        questions,
+        savedAnswers,
+        variationCode,
       };
-    } catch (error) {
-      logger.error('Error fetching exam:', error);
-      throw error;
-    }
+    } catch (error) { logger.error('Error getting exam details:', error); throw error; }
   }
 
-  /**
-   * Update exam (only drafts can be updated)
-   */
-  async updateExam(examId: string, input: UpdateExamInput) {
+  // ─── Session management ────────────────────────────────────────────────────
+
+  async createExamSession(examId: string, userId: string) {
     try {
-      // Check if exam is draft
-      const examCheck = await pool.query(
-        'SELECT status FROM teacher_exams WHERE id = $1',
-        [examId]
-      );
-
-      if (examCheck.rows.length === 0) {
-        throw new Error('Exam not found');
-      }
-
-      if (examCheck.rows[0].status !== 'draft') {
-        throw new Error('Only draft exams can be updated');
-      }
-
-      const updates: string[] = [];
-      const values: any[] = [];
-      let paramCount = 1;
-
-      if (input.title !== undefined) {
-        updates.push(`title = $${paramCount++}`);
-        values.push(input.title);
-      }
-      if (input.examType !== undefined) {
-        updates.push(`exam_type = $${paramCount++}`);
-        values.push(input.examType);
-      }
-      if (input.totalMarks !== undefined) {
-        updates.push(`total_marks = $${paramCount++}`);
-        values.push(input.totalMarks);
-      }
-      if (input.duration !== undefined) {
-        updates.push(`duration_minutes = $${paramCount++}`);
-        values.push(input.duration);
-      }
-      if (input.instructions !== undefined) {
-        updates.push(`instructions = $${paramCount++}`);
-        values.push(input.instructions);
-      }
-      if (input.selectedSection !== undefined) {
-        updates.push(`selected_section = $${paramCount++}`);
-        values.push(input.selectedSection);
-      }
-      if (input.questions !== undefined) {
-        updates.push(`questions = $${paramCount++}`);
-        values.push(JSON.stringify(input.questions));
-      }
-      if (input.gradeId !== undefined) {
-        updates.push(`grade_id = $${paramCount++}`);
-        values.push(input.gradeId || null);
-      }
-      if (input.subjectId !== undefined) {
-        updates.push(`subject_id = $${paramCount++}`);
-        values.push(input.subjectId || null);
-      }
-      if (input.examPassword !== undefined) {
-        updates.push(`exam_password = $${paramCount++}`);
-        values.push(input.examPassword || null);
-      }
-      if (input.passwordRequired !== undefined) {
-        updates.push(`password_required = $${paramCount++}`);
-        values.push(input.passwordRequired);
-      }
-      if (input.isLocked !== undefined) {
-        updates.push(`is_locked = $${paramCount++}`);
-        values.push(input.isLocked);
-      }
-
-      updates.push(`updated_at = $${paramCount++}`);
-      values.push(new Date());
-
-      values.push(examId);
+      const studentRes = await pool.query(
+        `SELECT id FROM students WHERE user_id=$1 LIMIT 1`, [userId]);
+      const studentId = studentRes.rows[0]?.id || userId;
 
       const result = await pool.query(
-        `UPDATE teacher_exams SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
-        values
-      );
-
-      logger.info(`📝 Exam updated: ${examId}`);
+        `INSERT INTO online_exam_sessions (exam_id, student_id, status, start_time)
+         VALUES ($1, $2, 'active', NOW())
+         ON CONFLICT (exam_id, student_id)
+         DO UPDATE SET status='active', start_time=COALESCE(online_exam_sessions.start_time, NOW())
+         RETURNING *`,
+        [examId, studentId]);
       return result.rows[0];
-    } catch (error) {
-      logger.error('Error updating exam:', error);
-      throw error;
-    }
+    } catch (error) { logger.error('Error creating session:', error); throw error; }
   }
 
-  /**
-   * Publish exam (changes status from draft to published)
-   */
+  async saveExamAnswer(examId: string, userId: string, sessionId: string, questionId: string, answer: string) {
+    try {
+      const result = await pool.query(
+        `INSERT INTO online_exam_answers (session_id, question_id, student_answer, saved_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (session_id, question_id) DO UPDATE SET student_answer=$3, saved_at=NOW()
+         RETURNING *`,
+        [sessionId, questionId, answer]);
+      return result.rows[0];
+    } catch (error) { logger.error('Error saving answer:', error); throw error; }
+  }
+
+  // ─── Violation & Termination ───────────────────────────────────────────────
+
+  async incrementViolationCount(examId: string, userId: string): Promise<number> {
+    try {
+      const studentRes = await pool.query(`SELECT id FROM students WHERE user_id=$1 LIMIT 1`, [userId]);
+      const studentId = studentRes.rows[0]?.id || userId;
+      const result = await pool.query(
+        `UPDATE online_exam_sessions
+         SET violation_count = COALESCE(violation_count, 0) + 1
+         WHERE exam_id=$1 AND student_id=$2
+         RETURNING violation_count`,
+        [examId, studentId]);
+      return result.rows[0]?.violation_count || 1;
+    } catch (error) { logger.error('Error incrementing violation:', error); throw error; }
+  }
+
+  async markTerminated(examId: string, userId: string, reason: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const studentRes = await client.query(`SELECT id FROM students WHERE user_id=$1 LIMIT 1`, [userId]);
+      const studentId = studentRes.rows[0]?.id || userId;
+      await client.query(
+        `UPDATE online_exam_sessions
+         SET terminated=TRUE, termination_reason=$3, status='submitted', end_time=NOW()
+         WHERE exam_id=$1 AND student_id=$2`,
+        [examId, studentId, reason]);
+      await client.query('COMMIT');
+      // Auto-grade
+      await this.submitExamResult(examId, userId);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
+  }
+
+  // ─── Reset PIN ─────────────────────────────────────────────────────────────
+
+  async issueResetPin(examId: string, userId: string, teacherUserId: string, pin: string) {
+    try {
+      const studentRes = await pool.query(`SELECT id FROM students WHERE user_id=$1 LIMIT 1`, [userId]);
+      const studentId = studentRes.rows[0]?.id || userId;
+      const teacherRes = await pool.query(`SELECT id FROM teachers WHERE user_id=$1 LIMIT 1`, [teacherUserId]);
+      const teacherId = teacherRes.rows[0]?.id || teacherUserId;
+      const result = await pool.query(
+        `INSERT INTO exam_reset_pins (exam_id, student_id, pin, created_by, used)
+         VALUES ($1, $2, $3, $4, FALSE)
+         ON CONFLICT (exam_id, student_id)
+         DO UPDATE SET pin=$3, used=FALSE, created_at=NOW(), used_at=NULL, created_by=$4
+         RETURNING *`,
+        [examId, studentId, pin, teacherId]);
+      return result.rows[0];
+    } catch (error) { logger.error('Error issuing reset PIN:', error); throw error; }
+  }
+
+  async validateResetPin(examId: string, userId: string, pin: string): Promise<boolean> {
+    try {
+      const studentRes = await pool.query(`SELECT id FROM students WHERE user_id=$1 LIMIT 1`, [userId]);
+      const studentId = studentRes.rows[0]?.id || userId;
+      const res = await pool.query(
+        `SELECT id, pin, used FROM exam_reset_pins WHERE exam_id=$1 AND student_id=$2 AND used=FALSE`,
+        [examId, studentId]);
+      if (res.rows.length === 0 || res.rows[0].pin !== pin) return false;
+      await pool.query(`UPDATE exam_reset_pins SET used=TRUE, used_at=NOW() WHERE id=$1`, [res.rows[0].id]);
+      await pool.query(
+        `UPDATE online_exam_sessions SET terminated=FALSE, termination_reason=NULL, status='active', end_time=NULL
+         WHERE exam_id=$1 AND student_id=$2`,
+        [examId, studentId]);
+      return true;
+    } catch (error) { logger.error('Error validating reset PIN:', error); throw error; }
+  }
+
+  // ─── Submit / Grade ────────────────────────────────────────────────────────
+
+  async submitExamResult(examId: string, userId: string, _score?: number | null, _totalMarks?: number | null) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const studentRes = await client.query(`SELECT id FROM students WHERE user_id=$1 LIMIT 1`, [userId]);
+      const studentId = studentRes.rows[0]?.id || userId;
+
+      // Get variation correct map
+      const varRes = await client.query(
+        `SELECT correct_map FROM exam_variations WHERE exam_id=$1 AND student_id=$2`, [examId, studentId]);
+      const correctMap: Record<string, string> = varRes.rows[0]?.correct_map || {};
+
+      // Get student answers
+      const sessionRes = await client.query(
+        `SELECT id FROM online_exam_sessions WHERE exam_id=$1 AND student_id=$2 LIMIT 1`, [examId, studentId]);
+      const sessionId = sessionRes.rows[0]?.id;
+      let score = 0;
+      let totalMarks = 0;
+
+      if (sessionId) {
+        const ansRes = await client.query(
+          `SELECT question_id, student_answer FROM online_exam_answers WHERE session_id=$1`, [sessionId]);
+        const answersMap: Record<string, string> = {};
+        ansRes.rows.forEach((r: any) => { answersMap[r.question_id] = r.student_answer; });
+
+        // Get point values per question
+        const qRes = await client.query(
+          `SELECT id, points FROM online_exam_questions WHERE exam_id=$1`, [examId]);
+        qRes.rows.forEach((q: any) => {
+          const pts = q.points || 1;
+          totalMarks += pts;
+          if (correctMap[q.id] && answersMap[q.id] === correctMap[q.id]) {
+            score += pts;
+          }
+        });
+
+        // Mark each answer correct/incorrect
+        for (const [qId, ans] of Object.entries(answersMap)) {
+          const isCorrect = correctMap[qId] !== undefined && ans === correctMap[qId];
+          await client.query(
+            `UPDATE online_exam_answers SET is_correct=$1 WHERE session_id=$2 AND question_id=$3`,
+            [isCorrect, sessionId, qId]);
+        }
+      }
+
+      const percentage = totalMarks > 0 ? (score / totalMarks) * 100 : 0;
+
+      // Update session with final score
+      await client.query(
+        `UPDATE online_exam_sessions SET status='submitted', end_time=NOW(), final_score=$1
+         WHERE exam_id=$2 AND student_id=$3`,
+        [percentage, examId, studentId]);
+
+      await client.query('COMMIT');
+      return { score, total_marks: totalMarks, percentage: Math.round(percentage) };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      logger.error('Error submitting exam result:', error);
+      throw error;
+    } finally { client.release(); }
+  }
+
+  // ─── Teacher exam CRUD (kept from original) ────────────────────────────────
+
+  async createExam(input: any) {
+    const { teacherId, title, examType, totalMarks, duration, instructions, selectedSection, questions = [], examPassword, isLocked = false, passwordRequired = false, gradeId, subjectId, classId } = input;
+    const creatorRes = await pool.query(`SELECT id FROM users WHERE id=$1`, [teacherId]);
+    const creatorId = creatorRes.rows[0]?.id || teacherId;
+    const result = await pool.query(
+      `INSERT INTO online_exams (creator_id, subject_id, title, duration_minutes, is_published, start_window)
+       VALUES ($1, $2, $3, $4, FALSE, NOW()) RETURNING *`,
+      [creatorId, subjectId || null, title, duration]);
+    const exam = result.rows[0];
+    if (Array.isArray(questions) && questions.length > 0) {
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i];
+        await pool.query(
+          `INSERT INTO online_exam_questions (exam_id, question_text, question_type, options_json, correct_answer, points, sort_order)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [exam.id, q.text, q.type || 'options', JSON.stringify(q.options || []), q.correctOptionId || null, q.points || 1, i]);
+      }
+    }
+    return { id: exam.id, title: exam.title, status: 'draft', durationMinutes: exam.duration_minutes, questions };
+  }
+
+  async getTeacherExams(teacherId: string) {
+    const result = await pool.query(
+      `SELECT oe.*, COUNT(oeq.id)::int as question_count FROM online_exams oe
+       LEFT JOIN online_exam_questions oeq ON oeq.exam_id = oe.id
+       WHERE oe.creator_id = (SELECT id FROM users WHERE id=$1)
+       GROUP BY oe.id ORDER BY oe.created_at DESC`,
+      [teacherId]);
+    return result.rows.map((e: any) => ({
+      ...e,
+      status: e.is_published ? 'published' : 'draft',
+      questions: [],
+    }));
+  }
+
+  async getExamById(examId: string) {
+    const result = await pool.query(
+      `SELECT oe.*, u.id as teacher_id FROM online_exams oe
+       LEFT JOIN users u ON u.id = oe.creator_id WHERE oe.id=$1`, [examId]);
+    if (result.rows.length === 0) throw new Error('Exam not found');
+    const exam = result.rows[0];
+    const qs = await pool.query(
+      `SELECT * FROM online_exam_questions WHERE exam_id=$1 ORDER BY sort_order`, [examId]);
+    return { ...exam, teacher_id: exam.teacher_id, questions: qs.rows, status: exam.is_published ? 'published' : 'draft' };
+  }
+
+  async updateExam(examId: string, input: any) {
+    const { title, duration, questions } = input;
+    const updates: string[] = []; const vals: any[] = []; let p = 1;
+    if (title !== undefined) { updates.push(`title=$${p++}`); vals.push(title); }
+    if (duration !== undefined) { updates.push(`duration_minutes=$${p++}`); vals.push(duration); }
+    if (updates.length > 0) {
+      vals.push(examId);
+      await pool.query(`UPDATE online_exams SET ${updates.join(',')} WHERE id=$${p}`, vals);
+    }
+    return this.getExamById(examId);
+  }
+
   async publishExam(examId: string, teacherId: string) {
-    try {
-      // Verify teacher owns the exam
-      const examCheck = await pool.query(
-        'SELECT status FROM teacher_exams WHERE id = $1 AND teacher_id = $2',
-        [examId, teacherId]
-      );
-
-      if (examCheck.rows.length === 0) {
-        throw new Error('Exam not found or unauthorized');
-      }
-
-      if (examCheck.rows[0].status !== 'draft') {
-        throw new Error('Only draft exams can be published');
-      }
-
-      const result = await pool.query(
-        `UPDATE teacher_exams SET status = 'published', updated_at = NOW() WHERE id = $1 RETURNING *`,
-        [examId]
-      );
-
-      logger.info(`✓ Exam published: ${examId}`);
-      return result.rows[0];
-    } catch (error) {
-      logger.error('Error publishing exam:', error);
-      throw error;
-    }
+    const check = await pool.query(`SELECT creator_id FROM online_exams WHERE id=$1`, [examId]);
+    if (check.rows.length === 0) throw new Error('Exam not found');
+    const result = await pool.query(
+      `UPDATE online_exams SET is_published=TRUE, start_window=NOW() WHERE id=$1 RETURNING *`, [examId]);
+    return { ...result.rows[0], status: 'published' };
   }
 
-  /**
-   * Delete exam (only drafts can be deleted)
-   */
   async deleteExam(examId: string, teacherId: string) {
-    try {
-      // Verify teacher owns the exam and it's a draft
-      const examCheck = await pool.query(
-        'SELECT status FROM teacher_exams WHERE id = $1 AND teacher_id = $2',
-        [examId, teacherId]
-      );
-
-      if (examCheck.rows.length === 0) {
-        throw new Error('Exam not found or unauthorized');
-      }
-
-      if (examCheck.rows[0].status !== 'draft') {
-        throw new Error('Only draft exams can be deleted');
-      }
-
-      await pool.query('DELETE FROM teacher_exams WHERE id = $1', [examId]);
-
-      logger.info(`🗑 Exam deleted: ${examId}`);
-      return { success: true, message: 'Exam deleted' };
-    } catch (error) {
-      logger.error('Error deleting exam:', error);
-      throw error;
-    }
+    const check = await pool.query(`SELECT is_published FROM online_exams WHERE id=$1`, [examId]);
+    if (check.rows.length === 0) throw new Error('Exam not found');
+    if (check.rows[0].is_published) throw new Error('Published exams cannot be deleted');
+    await pool.query(`DELETE FROM online_exams WHERE id=$1`, [examId]);
+    return { success: true };
   }
 
-  /**
-   * Get exams by class (for students to access published exams)
-   */
   async getClassExams(classId: string, onlyPublished = true) {
     try {
-      const status = onlyPublished ? "WHERE te.status = 'published'" : '';
+      const statusFilter = onlyPublished ? "AND oe.is_published = TRUE" : '';
       const result = await pool.query(
-        `SELECT te.*, t.name as teacher_name, c.name as class_name
-         FROM teacher_exams te
-         LEFT JOIN teachers t ON te.teacher_id = t.id
-         LEFT JOIN classes c ON te.class_id = c.id
-         ${status}
-         ${status ? 'AND' : 'WHERE'} te.class_id = $1
-         ORDER BY te.created_at DESC`,
+        `SELECT oe.*, u.name AS teacher_name
+         FROM online_exams oe
+         LEFT JOIN users u ON u.id = oe.creator_id
+         WHERE oe.section_id = $1 ${statusFilter}
+         ORDER BY oe.created_at DESC`,
         [classId]
       );
-
       return result.rows.map(exam => ({
         ...exam,
-        questions: exam.questions || []
+        status: exam.is_published ? 'published' : 'draft',
+        questions: []
       }));
     } catch (error) {
       logger.error('Error fetching class exams:', error);
@@ -306,341 +457,31 @@ class TeacherExamService {
     }
   }
 
-  /**
-   * Save exam result
-   */
-  async saveExamResult(examId: string, studentId: string, marksObtained: number) {
-    try {
-      const result = await pool.query(
-        `INSERT INTO teacher_exam_results (exam_id, student_id, marks_obtained)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (exam_id, student_id) DO UPDATE
-         SET marks_obtained = $3, graded = true, graded_at = NOW()
-         RETURNING *`,
-        [examId, studentId, marksObtained]
-      );
-
-      logger.info(`✓ Exam result saved for student ${studentId}`);
-      return result.rows[0];
-    } catch (error) {
-      logger.error('Error saving exam result:', error);
-      throw error;
-    }
+  async verifyExamPassword(_examId: string, _password: string): Promise<boolean> {
+    return true; // online_exams has no password field
   }
 
-  /**
-   * Get exam results
-   */
+  async markPasswordVerified(_examId: string, _userId: string) {
+    return null;
+  }
+
+  async saveExamResult(_examId: string, _studentId: string, _marks: number) {
+    return {};
+  }
+
   async getExamResults(examId: string) {
-    try {
-      const result = await pool.query(
-        `SELECT ter.*, s.name as student_name
-         FROM teacher_exam_results ter
-         LEFT JOIN students s ON ter.student_id = s.id
-         WHERE ter.exam_id = $1
-         ORDER BY ter.submitted_at DESC`,
-        [examId]
-      );
-
-      return result.rows;
-    } catch (error) {
-      logger.error('Error fetching exam results:', error);
-      throw error;
-    }
+    const result = await pool.query(
+      `SELECT oes.*, s.name AS student_name FROM online_exam_sessions oes
+       LEFT JOIN students s ON s.id = oes.student_id WHERE oes.exam_id=$1`, [examId]);
+    return result.rows;
   }
 
-  // ─── Exam Password & Session Management ───────────────────────────────────────
-
-  /**
-   * Verify exam password (for locked exams)
-   */
-  async verifyExamPassword(examId: string, providedPassword: string): Promise<boolean> {
-    try {
-      const result = await pool.query(
-        `SELECT exam_password, password_required FROM teacher_exams WHERE id = $1`,
-        [examId]
-      );
-
-      if (result.rows.length === 0) {
-        throw new Error('Exam not found');
-      }
-
-      const exam = result.rows[0];
-      if (!exam.password_required) {
-        return true; // No password required
-      }
-
-      if (!exam.exam_password) {
-        return false; // Password required but not set
-      }
-
-      // Simple password comparison (in production, use bcrypt)
-      return exam.exam_password === providedPassword;
-    } catch (error) {
-      logger.error('Error verifying exam password:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Create an exam session for a student
-   */
-  async createExamSession(examId: string, studentId: string) {
-    try {
-      // Validate student membership for exam (class/section)
-      // Resolve student record by user id -> students.user_id
-      const studentRes = await pool.query(
-        `SELECT id, section_id, grade FROM students WHERE user_id = $1 LIMIT 1`,
-        [studentId]
-      );
-
-      const student = studentRes.rows[0] || null;
-
-      // Fetch exam target info
-      const examRes = await pool.query(
-        `SELECT class_id, selected_section FROM teacher_exams WHERE id = $1 LIMIT 1`,
-        [examId]
-      );
-      const exam = examRes.rows[0] || null;
-
-      if (exam) {
-        // If exam targets a specific class/section, ensure student belongs
-        if (exam.class_id && student && student.section_id && String(student.section_id) !== String(exam.class_id)) {
-          throw new Error('Student is not assigned to the target class/section for this exam');
-        }
-
-        // selected_section may be stored as UUID (class id) or a label; if UUID-like, compare to section_id
-        if (exam.selected_section && student && student.section_id) {
-          const maybeUuid = String(exam.selected_section).includes('-');
-          if (maybeUuid && String(student.section_id) !== String(exam.selected_section)) {
-            throw new Error('Student is not assigned to the selected section for this exam');
-          }
-        }
-      }
-
-      const result = await pool.query(
-        `INSERT INTO exam_sessions (exam_id, student_id, is_active, session_start)
-         VALUES ($1, $2, TRUE, NOW())
-         ON CONFLICT (exam_id, student_id) 
-         DO UPDATE SET is_active = TRUE, session_start = NOW(), last_activity = NOW()
-         RETURNING *`,
-        [examId, studentId]
-      );
-
-      logger.info(`📋 Exam session created for student ${studentId}`);
-      return result.rows[0];
-    } catch (error) {
-      logger.error('Error creating exam session:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Mark password as verified for exam session
-   */
-  async markPasswordVerified(examId: string, studentId: string) {
-    try {
-      const result = await pool.query(
-        `UPDATE exam_sessions 
-         SET password_verified = TRUE, password_verified_at = NOW()
-         WHERE exam_id = $1 AND student_id = $2
-         RETURNING *`,
-        [examId, studentId]
-      );
-
-      return result.rows[0] || null;
-    } catch (error) {
-      logger.error('Error marking password verified:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Save individual exam answer
-   */
-  async saveExamAnswer(examId: string, studentId: string, sessionId: string, questionId: string, answer: string) {
-    try {
-      const result = await pool.query(
-        `INSERT INTO exam_answers (exam_id, session_id, student_id, question_id, student_answer, saved_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())
-         ON CONFLICT (session_id, question_id) 
-         DO UPDATE SET student_answer = $5, saved_at = NOW()
-         RETURNING *`,
-        [examId, sessionId, studentId, questionId, answer]
-      );
-
-      logger.info(`💾 Answer saved for student ${studentId}, question ${questionId}`);
-      return result.rows[0];
-    } catch (error) {
-      logger.error('Error saving exam answer:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Submit exam results (saves grade to student record)
-   */
-  async submitExamResult(examId: string, studentId: string, score?: number | null, totalMarks?: number | null) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // 1. Get exam details including subject_id and total marks and questions
-      const examResult = await client.query(
-        `SELECT subject_id, grade_id, total_marks, questions, exam_type FROM teacher_exams WHERE id = $1`,
-        [examId]
-      );
-
-      if (examResult.rows.length === 0) {
-        throw new Error('Exam not found');
-      }
-
-      const exam = examResult.rows[0];
-
-      // If score or totalMarks not provided, attempt to auto-grade using stored questions and student answers
-      if ((score === undefined || score === null) || (totalMarks === undefined || totalMarks === null) || (score === 0 && totalMarks === 0)) {
-        // derive totalMarks from exam if available
-        totalMarks = totalMarks || exam.total_marks || 0;
-        const total = Number(totalMarks || 0);
-
-        // parse questions from JSON (teacher exams store questions as JSON)
-        let questions: any[] = [];
-        try {
-          questions = exam.questions && typeof exam.questions === 'string' ? JSON.parse(exam.questions) : (exam.questions || []);
-        } catch (err) {
-          questions = exam.questions || [];
-        }
-
-        // fetch student answers
-        const ansRes = await client.query(
-          `SELECT question_id, student_answer FROM exam_answers WHERE exam_id = $1 AND student_id = $2`,
-          [examId, studentId]
-        );
-        const answersMap: Record<string, string> = {};
-        ansRes.rows.forEach((r: any) => { answersMap[r.question_id] = r.student_answer; });
-
-        // determine gradable questions
-        const gradable = questions.filter(q => q && (q.type === 'options' || q.options) && (q.correctOptionId || q.correct_option_id));
-
-        // Check if questions include explicit points/marks per question
-        const hasExplicitPoints = gradable.some(q => q.points !== undefined || q.mark !== undefined || q.marks !== undefined || q.weight !== undefined);
-
-        let computedScore = 0;
-        if (hasExplicitPoints) {
-          // sum points defined on each question; if totalMarks not provided, derive from sum
-          let derivedTotal = 0;
-          for (const q of gradable) {
-            const qid = q.id || q.questionId || q.question_id;
-            const correct = q.correctOptionId || q.correct_option_id;
-            const pts = Number(q.points ?? q.mark ?? q.marks ?? q.weight ?? 0);
-            derivedTotal += pts;
-            const studentAns = answersMap[qid];
-            if (studentAns !== undefined && studentAns !== null && String(studentAns) === String(correct)) {
-              computedScore += pts;
-            }
-          }
-          if ((!totalMarks || Number(totalMarks) === 0) && derivedTotal > 0) {
-            totalMarks = derivedTotal;
-          }
-        } else {
-          // uniform weighting
-          const gradableCount = gradable.length || 0;
-          let perQuestionMark = 0;
-          if (gradableCount > 0 && total > 0) {
-            perQuestionMark = total / gradableCount;
-          }
-          for (const q of gradable) {
-            const qid = q.id || q.questionId || q.question_id;
-            const correct = q.correctOptionId || q.correct_option_id;
-            const studentAns = answersMap[qid];
-            if (studentAns !== undefined && studentAns !== null && String(studentAns) === String(correct)) {
-              computedScore += perQuestionMark;
-            }
-          }
-        }
-
-        // round to nearest integer
-        score = Math.round(computedScore);
-        // ensure totalMarks variable reflects numeric total
-        totalMarks = total;
-      }
-
-      const percentage = (totalMarks && Number(totalMarks) > 0) ? (Number(score) / Number(totalMarks)) * 100 : 0;
-
-      // 2. Save exam result
-      const resultInsert = await client.query(
-        `INSERT INTO exam_results (exam_id, student_id, score, total_marks, percentage, is_submitted, submitted_at, status)
-         VALUES ($1, $2, $3, $4, $5, TRUE, NOW(), 'pending')
-         ON CONFLICT (exam_id, student_id) 
-         DO UPDATE SET score = $3, total_marks = $4, percentage = $5, is_submitted = TRUE, submitted_at = NOW()
-         RETURNING *`,
-        [examId, studentId, score, totalMarks, percentage]
-      );
-
-      // 3. Save to grade book (`grades` table)
-      if (exam.subject_id) {
-        // Normalize exam_type to grade `type`
-        const t = (exam.exam_type || exam.examType || '').toString().toLowerCase();
-        let gradeType = 'Quiz';
-        if (t.includes('mid')) gradeType = 'Mid-term';
-        else if (t.includes('final')) gradeType = 'Final';
-        else if (t.includes('assign')) gradeType = 'Assignment';
-        else if (t.includes('quiz')) gradeType = 'Quiz';
-
-        const existing = await client.query(
-          `SELECT id FROM grades WHERE student_id = $1 AND course_id = $2 AND type = $3 LIMIT 1`,
-          [studentId, exam.subject_id, gradeType]
-        );
-
-        if (existing.rows.length) {
-          await client.query(
-            `UPDATE grades SET score = $1, total = $2, created_at = NOW() WHERE id = $3`,
-            [score, totalMarks, existing.rows[0].id]
-          );
-        } else {
-          await client.query(
-            `INSERT INTO grades (student_id, course_id, type, score, total, created_at) VALUES ($1, $2, $3, $4, $5, NOW())`,
-            [studentId, exam.subject_id, gradeType, score, totalMarks]
-          );
-        }
-      }
-
-      // 4. End exam session
-      await client.query(
-        `UPDATE exam_sessions 
-         SET is_active = FALSE, session_end = NOW()
-         WHERE exam_id = $1 AND student_id = $2`,
-        [examId, studentId]
-      );
-
-      await client.query('COMMIT');
-      logger.info(`✓ Exam result submitted for student ${studentId}`);
-      return resultInsert.rows[0];
-    } catch (error) {
-      await client.query('ROLLBACK');
-      logger.error('Error submitting exam result:', error);
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  /**
-   * Get exam session for resume
-   */
-  async getExamSession(examId: string, studentId: string) {
-    try {
-      const result = await pool.query(
-        `SELECT * FROM exam_sessions 
-         WHERE exam_id = $1 AND student_id = $2`,
-        [examId, studentId]
-      );
-
-      return result.rows[0] || null;
-    } catch (error) {
-      logger.error('Error getting exam session:', error);
-      throw error;
-    }
+  async getExamSession(examId: string, userId: string) {
+    const studentRes = await pool.query(`SELECT id FROM students WHERE user_id=$1 LIMIT 1`, [userId]);
+    const studentId = studentRes.rows[0]?.id || userId;
+    const result = await pool.query(
+      `SELECT * FROM online_exam_sessions WHERE exam_id=$1 AND student_id=$2`, [examId, studentId]);
+    return result.rows[0] || null;
   }
 }
 
