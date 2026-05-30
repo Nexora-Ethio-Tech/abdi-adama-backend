@@ -908,16 +908,22 @@ class FinanceClerkService {
     );
   }
 
-  // Reject an application and remove pending application record
-  async rejectApplication(applicationId: string, financeUserId: string) {
+  // Reject an application: return it to school admin with a reason (do not delete)
+  async rejectApplication(applicationId: string, financeUserId: string, reason?: string) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // Ensure application exists and belongs to branch of finance user? For now just attempt delete
       const res = await client.query(
-        `DELETE FROM pending_applications WHERE id = $1 RETURNING *`,
-        [applicationId]
+        `UPDATE pending_applications
+         SET status = $1,
+             finance_removal_reason = $2,
+             finance_removed_by = $3,
+             finance_removed_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $4
+         RETURNING *`,
+        ['pending', reason || null, financeUserId, applicationId]
       );
 
       if (res.rows.length === 0) {

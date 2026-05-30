@@ -298,8 +298,27 @@ async function ensureSchemaExtensions(): Promise<void> {
     await runSchemaFile('profit_targets_branch_migration.sql', 'Profit targets per branch');
     await runSchemaFile('finance_transactions_schema.sql', 'Finance Transactions');
     await runSchemaFile('asset_adjustments.sql', 'Asset adjustments (audit)');
+    await runSchemaFile('pending_applications_finance_removal.sql', 'Pending applications - finance removal columns');
     // Migration to remove UNIQUE constraint on users.email so duplicate emails are allowed
     await runSchemaFile('remove_email_unique.sql', 'Remove email UNIQUE constraint');
+    // Also apply any important migrations from the migrations/ folder (one-off schema updates)
+    const runMigrationFile = async (fileName: string, label: string) => {
+      const migrationPath = path.join(__dirname, '../migrations', fileName);
+      logger.debug(`Checking migration file for ${label} at path: ${migrationPath}`);
+      if (fs.existsSync(migrationPath)) {
+        const migrationSql = fs.readFileSync(migrationPath, 'utf8');
+        try {
+          await pool.query(migrationSql);
+          logger.info(`✅ ${label} migration applied`);
+        } catch (migErr: any) {
+          logger.error(`❌ Failed to apply migration file for ${label} at ${migrationPath}: ${migErr.message}`);
+        }
+      } else {
+        logger.warn(`⚠️ ${label} migration file not found at: ${migrationPath}`);
+      }
+    };
+
+    await runMigrationFile('001_add_section_to_students.sql', 'Section assignment (students.section_id)');
   } catch (err: any) {
     logger.error('❌ Failed to run schema migrations:', err);
   }

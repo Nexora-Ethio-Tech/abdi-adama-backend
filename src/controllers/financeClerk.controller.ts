@@ -92,10 +92,11 @@ class FinanceClerkController {
     try {
       const { id } = req.params;
       const financeUserId = req.user!.id;
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : undefined;
 
-      const result = await financeClerkService.rejectApplication(id, financeUserId);
+      const result = await financeClerkService.rejectApplication(id, financeUserId, reason);
 
-      res.status(200).json({ success: true, data: result, message: 'Application rejected and removed' });
+      res.status(200).json({ success: true, data: result, message: 'Application returned to school admin' });
     } catch (error) {
       next(error);
     }

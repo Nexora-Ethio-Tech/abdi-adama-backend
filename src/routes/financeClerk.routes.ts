@@ -73,7 +73,9 @@ router.get('/overdue-payments', clerkOnly, financeClerkController.getOverduePaym
 router.get('/reports/daily', clerkOnly, financeClerkController.getDailyReport);
 router.get('/applications', clerkOnly, financeClerkController.getPendingApplications);
 router.patch('/applications/:id/approve', clerkOnly, financeClerkController.approveApplication);
-// Reject application (delete pending application)
+// Reject / Return application to school admin with reason
+router.patch('/applications/:id/remove', clerkOnly, financeClerkController.rejectApplication);
+// Legacy: allow delete route (will now mark as returned instead of deleting)
 router.delete('/applications/:id', clerkOnly, financeClerkController.rejectApplication);
 
 // Shared Employee Payroll Profiles & Attendance Management

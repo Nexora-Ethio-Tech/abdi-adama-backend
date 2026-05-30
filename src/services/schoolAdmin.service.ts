@@ -740,13 +740,13 @@ class SchoolAdminService {
 
   async getPendingApplications(branchId: string, status?: string) {
     let query = `
-      SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, digital_id, dob, gender,
-             parent_name, parent_phone, address, previous_school, grade_applying,
-             blood_group, allergies, chronic_conditions, current_medications, 
-             transcript_mime_type, transcript_file_name, transcript_file_size, 
-             status, notes, created_at, updated_at, created_by, finance_status, finance_user_id, 
-             finance_approved_at, payment_amount, payment_reference, student_user_id, parent_user_id, 
-             registration_completed_at
+            SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, digital_id, dob, gender,
+              parent_name, parent_phone, address, previous_school, grade_applying,
+              blood_group, allergies, chronic_conditions, current_medications, 
+              transcript_mime_type, transcript_file_name, transcript_file_size, 
+              status, notes, finance_removal_reason, finance_removed_by, finance_removed_at, created_at, updated_at, created_by, finance_status, finance_user_id, 
+              finance_approved_at, payment_amount, payment_reference, student_user_id, parent_user_id, 
+              registration_completed_at
       FROM pending_applications WHERE branch_id = $1`;
     const params: any[] = [branchId];
 
@@ -757,7 +757,7 @@ class SchoolAdminService {
       // Active pipeline only — hide archived/closed applications from the default list
       query += ` AND status IN (
         'pending', 'exam-pending', 'exam-passed', 'awaiting-payment',
-        'finance_pending', 'payment-confirmed'
+        'payment-confirmed'
       )`;
     }
 
@@ -777,7 +777,7 @@ class SchoolAdminService {
       params.push(gradeApplying.trim());
     }
 
-    if ((status === 'finance_pending' || status === 'awaiting-payment') && reviewerId) {
+    if (status === 'awaiting-payment' && reviewerId) {
       query += `, reviewed_by = $${params.length + 1}`;
       params.push(reviewerId);
     }
@@ -796,13 +796,13 @@ class SchoolAdminService {
   // Finance: get applications assigned for finance review
   async getApplicationsForFinance(branchId: string, status?: string) {
     let query = `
-      SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, digital_id, dob, gender,
-             parent_name, parent_phone, address, previous_school, grade_applying,
-             blood_group, allergies, chronic_conditions, current_medications, 
-             transcript_mime_type, transcript_file_name, transcript_file_size, 
-             status, notes, created_at, updated_at, created_by, finance_status, finance_user_id, 
-             finance_approved_at, payment_amount, payment_reference, student_user_id, parent_user_id, 
-             registration_completed_at
+            SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, digital_id, dob, gender,
+              parent_name, parent_phone, address, previous_school, grade_applying,
+              blood_group, allergies, chronic_conditions, current_medications, 
+              transcript_mime_type, transcript_file_name, transcript_file_size, 
+              status, notes, finance_removal_reason, finance_removed_by, finance_removed_at, created_at, updated_at, created_by, finance_status, finance_user_id, 
+              finance_approved_at, payment_amount, payment_reference, student_user_id, parent_user_id, 
+              registration_completed_at
       FROM pending_applications WHERE branch_id = $1`;
     const params: any[] = [branchId];
 
@@ -810,8 +810,8 @@ class SchoolAdminService {
       query += ' AND status = $2';
       params.push(status);
     } else {
-      // default to common awaiting-payment/finance_pending statuses
-      query += " AND status IN ('finance_pending','awaiting-payment')";
+      // default to common awaiting-payment status
+      query += " AND status IN ('awaiting-payment')";
     }
 
     query += ' ORDER BY created_at DESC';
@@ -1003,7 +1003,7 @@ class SchoolAdminService {
       `SELECT COUNT(*) AS count FROM pending_applications
        WHERE branch_id = $1
          AND status IN (
-           'pending', 'exam-pending', 'exam-passed', 'awaiting-payment', 'finance_pending'
+           'pending', 'exam-pending', 'exam-passed', 'awaiting-payment'
          )`,
       [branchId]
     );
