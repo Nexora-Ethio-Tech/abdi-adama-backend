@@ -125,4 +125,9 @@ router.patch('/exams/:id', examController.updateTeacherExam);
 router.post('/exams/:id/publish', examController.publishTeacherExam);
 router.delete('/exams/:id', examController.deleteTeacherExam);
 
+// Grades and Courses for Exam Creation
+router.get('/exam-grades', teacherController.getAllGrades);
+router.get('/exam-grades/:gradeId/courses', teacherController.getCoursesByGrade);
+router.get('/exam-courses', teacherController.getTeacherCourses);
+
 export default router;

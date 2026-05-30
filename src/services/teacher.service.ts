@@ -1069,6 +1069,91 @@ class TeacherService {
 
     return result.rows[0];
   }
+
+  // ─── Exam Grade & Subject Management ───────────────────────────────────────
+
+  /**
+   * Get all unique grade levels from classes and students
+   */
+  async getAllGrades() {
+    try {
+      const result = await pool.query(
+        `SELECT DISTINCT 
+          CASE 
+            WHEN c.name LIKE 'Grade %' THEN c.name
+            ELSE 'Grade ' || s.grade
+          END as id,
+          CASE 
+            WHEN c.name LIKE 'Grade %' THEN c.name
+            ELSE 'Grade ' || s.grade
+          END as name,
+          CASE 
+            WHEN s.grade ~ '^[0-9]+$' THEN CAST(s.grade as INTEGER)
+            ELSE CAST(SUBSTRING(c.name, 7) as INTEGER)
+          END as level
+         FROM students s
+         LEFT JOIN classes c ON s.grade = c.name OR s.grade = SUBSTRING(c.name, 7)
+         WHERE s.grade IS NOT NULL
+         ORDER BY level ASC`
+      );
+      return result.rows;
+    } catch (error) {
+      console.error('Error fetching grades:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all courses/subjects for a specific grade
+   */
+  async getCoursesByGrade(gradeOrClassName: string) {
+    try {
+      const result = await pool.query(
+        `SELECT DISTINCT c.id, c.name, c.code, cl.name as class_name
+         FROM courses c
+         LEFT JOIN classes cl ON c.class_id = cl.id
+         WHERE c.class_id IN (
+           SELECT id FROM classes 
+           WHERE name = $1 OR name = 'Grade ' || $1 OR name LIKE $1 || '%'
+         )
+         ORDER BY c.name ASC`,
+        [gradeOrClassName]
+      );
+      return result.rows;
+    } catch (error) {
+      console.error('Error fetching courses by grade:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all courses taught by a specific teacher
+   */
+  async getTeacherCourses(teacherId: string) {
+    try {
+      const teacherResult = await pool.query(
+        'SELECT id FROM teachers WHERE user_id = $1',
+        [teacherId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+
+      const result = await pool.query(
+        `SELECT DISTINCT c.id, c.name, c.code, cl.id as class_id, cl.name as class_name, cl.grade as grade_level
+         FROM courses c
+         LEFT JOIN classes cl ON c.class_id = cl.id
+         WHERE c.teacher_id = $1
+         ORDER BY cl.name ASC, c.name ASC`,
+        [teacherResult.rows[0].id]
+      );
+      return result.rows;
+    } catch (error) {
+      console.error('Error fetching teacher courses:', error);
+      throw error;
+    }
+  }
 }
 
 export default new TeacherService();
