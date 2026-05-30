@@ -1,6 +1,7 @@
 import pool from '../config/database';
 import schoolAdminService from './schoolAdmin.service';
 import { generateCredentials } from '../utils/credentialGenerator';
+import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
 
 class FinanceClerkService {
   private async getRegistrationDueForMonth(client: any, studentId: string, branchId: string, targetMonth: string): Promise<number> {
@@ -23,15 +24,43 @@ class FinanceClerkService {
     return Number(reg.amount || 0);
   }
 
+  private async getFinanceSettingNumber(key: string, defaultValue = 0): Promise<number> {
+    const result = await pool.query(`SELECT value FROM finance_settings WHERE key = $1 LIMIT 1`, [key]);
+    const value = Number(result.rows[0]?.value);
+    return Number.isFinite(value) && value > 0 ? value : defaultValue;
+  }
+
+  private getEthiopianMonthLength(year: number, month: number) {
+    return month === 13 ? (year % 4 === 3 ? 6 : 5) : 30;
+  }
+
+  private getPaymentDueDateForMonth(month: string, deadlineDay: number) {
+    const [year, monthIndex] = month.split('-').map(Number);
+    const firstOfMonth = new Date(year, monthIndex - 1, 1);
+    const ethDate = gregorianToEthiopian(firstOfMonth);
+    const day = Math.min(Math.max(1, deadlineDay), this.getEthiopianMonthLength(ethDate.year, ethDate.month));
+    return ethiopianToGregorianDate({ year: ethDate.year, month: ethDate.month, day });
+  }
+
+  private async getPenaltyDueForMonth(client: any, student: any, month: string, now = new Date()) {
+    const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
+    const defaultPenalty = Number(student.penalty_fee || 0) || penaltyRate;
+    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+    const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
+    return now > dueDate ? defaultPenalty : 0;
+  }
+
   private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string) {
     const feeTypes = ['monthly', 'bus', 'penalty', 'registration'];
     let outstandingTotal = 0;
+
+    const penaltyDue = await this.getPenaltyDueForMonth(client, student, month);
 
     for (const ft of feeTypes) {
       let due = 0;
       if (ft === 'monthly') due = Number(student.monthly_fee || 0);
       else if (ft === 'bus') due = Number(student.bus_fee || 0);
-      else if (ft === 'penalty') due = Number(student.penalty_fee || 0);
+      else if (ft === 'penalty') due = penaltyDue;
       else if (ft === 'registration') due = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
 
       const paidRes = await client.query(
@@ -88,7 +117,7 @@ class FinanceClerkService {
         let dueForType = 0;
         if (feeType === 'monthly') dueForType = Number(student.monthly_fee || 0);
         else if (feeType === 'bus') dueForType = Number(student.bus_fee || 0);
-        else if (feeType === 'penalty') dueForType = Number(student.penalty_fee || 0);
+        else if (feeType === 'penalty') dueForType = await this.getPenaltyDueForMonth(client, student, data.month);
         else if (feeType === 'registration') {
           dueForType = await this.getRegistrationDueForMonth(client, data.studentId, data.branchId, data.month);
         } else {
@@ -149,9 +178,8 @@ class FinanceClerkService {
 
       // Recompute outstanding and update student_collections
       const outstandingTotal = await this.computeMonthlyOutstanding(client, student, data.branchId, data.month);
-
-      // Determine due_date (simple heuristic: 10th of month) and status
-      const dueDate = new Date(`${data.month}-10`);
+      const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+      const dueDate = this.getPaymentDueDateForMonth(data.month, deadlineDay);
       const now = new Date();
       let status = 'in_collections';
       if (outstandingTotal <= 0) status = 'cleared';
@@ -213,11 +241,12 @@ class FinanceClerkService {
     const student = studentRes.rows[0];
 
     // Fee types to report
+    const penaltyDue = await this.getPenaltyDueForMonth(pool, student, targetMonth);
     const feeTypes = [
       { key: 'monthly', label: 'Monthly Tuition', due: Number(student.monthly_fee || 0) },
       { key: 'registration', label: 'Registration Fee', due: 0 },
       { key: 'bus', label: 'Bus Fee', due: Number(student.bus_fee || 0) },
-      { key: 'penalty', label: 'Penalty Fee', due: Number(student.penalty_fee || 0) }
+      { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
     ];
 
     const registrationDue = await this.getRegistrationDueForMonth(pool, studentId, student.branch_id, targetMonth);
@@ -824,7 +853,8 @@ class FinanceClerkService {
 
       for (const student of studentsRes.rows) {
         const outstandingTotal = await this.computeMonthlyOutstanding(client, student, student.branch_id, month);
-        const dueDate = new Date(`${month}-10`);
+        const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+        const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
         const now = new Date();
         let status = 'in_collections';
         if (outstandingTotal <= 0) status = 'cleared';
