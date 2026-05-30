@@ -387,6 +387,37 @@ class TeacherExamService {
    */
   async createExamSession(examId: string, studentId: string) {
     try {
+      // Validate student membership for exam (class/section)
+      // Resolve student record by user id -> students.user_id
+      const studentRes = await pool.query(
+        `SELECT id, section_id, grade FROM students WHERE user_id = $1 LIMIT 1`,
+        [studentId]
+      );
+
+      const student = studentRes.rows[0] || null;
+
+      // Fetch exam target info
+      const examRes = await pool.query(
+        `SELECT class_id, selected_section FROM teacher_exams WHERE id = $1 LIMIT 1`,
+        [examId]
+      );
+      const exam = examRes.rows[0] || null;
+
+      if (exam) {
+        // If exam targets a specific class/section, ensure student belongs
+        if (exam.class_id && student && student.section_id && String(student.section_id) !== String(exam.class_id)) {
+          throw new Error('Student is not assigned to the target class/section for this exam');
+        }
+
+        // selected_section may be stored as UUID (class id) or a label; if UUID-like, compare to section_id
+        if (exam.selected_section && student && student.section_id) {
+          const maybeUuid = String(exam.selected_section).includes('-');
+          if (maybeUuid && String(student.section_id) !== String(exam.selected_section)) {
+            throw new Error('Student is not assigned to the selected section for this exam');
+          }
+        }
+      }
+
       const result = await pool.query(
         `INSERT INTO exam_sessions (exam_id, student_id, is_active, session_start)
          VALUES ($1, $2, TRUE, NOW())
@@ -488,21 +519,43 @@ class TeacherExamService {
         const answersMap: Record<string, string> = {};
         ansRes.rows.forEach((r: any) => { answersMap[r.question_id] = r.student_answer; });
 
-        // determine gradable questions and compute per-question mark
+        // determine gradable questions
         const gradable = questions.filter(q => q && (q.type === 'options' || q.options) && (q.correctOptionId || q.correct_option_id));
-        const gradableCount = gradable.length || 0;
-        let perQuestionMark = 0;
-        if (gradableCount > 0 && total > 0) {
-          perQuestionMark = total / gradableCount;
-        }
+
+        // Check if questions include explicit points/marks per question
+        const hasExplicitPoints = gradable.some(q => q.points !== undefined || q.mark !== undefined || q.marks !== undefined || q.weight !== undefined);
 
         let computedScore = 0;
-        for (const q of gradable) {
-          const qid = q.id || q.questionId || q.question_id;
-          const correct = q.correctOptionId || q.correct_option_id;
-          const studentAns = answersMap[qid];
-          if (studentAns !== undefined && studentAns !== null && String(studentAns) === String(correct)) {
-            computedScore += perQuestionMark;
+        if (hasExplicitPoints) {
+          // sum points defined on each question; if totalMarks not provided, derive from sum
+          let derivedTotal = 0;
+          for (const q of gradable) {
+            const qid = q.id || q.questionId || q.question_id;
+            const correct = q.correctOptionId || q.correct_option_id;
+            const pts = Number(q.points ?? q.mark ?? q.marks ?? q.weight ?? 0);
+            derivedTotal += pts;
+            const studentAns = answersMap[qid];
+            if (studentAns !== undefined && studentAns !== null && String(studentAns) === String(correct)) {
+              computedScore += pts;
+            }
+          }
+          if ((!totalMarks || Number(totalMarks) === 0) && derivedTotal > 0) {
+            totalMarks = derivedTotal;
+          }
+        } else {
+          // uniform weighting
+          const gradableCount = gradable.length || 0;
+          let perQuestionMark = 0;
+          if (gradableCount > 0 && total > 0) {
+            perQuestionMark = total / gradableCount;
+          }
+          for (const q of gradable) {
+            const qid = q.id || q.questionId || q.question_id;
+            const correct = q.correctOptionId || q.correct_option_id;
+            const studentAns = answersMap[qid];
+            if (studentAns !== undefined && studentAns !== null && String(studentAns) === String(correct)) {
+              computedScore += perQuestionMark;
+            }
           }
         }
 
