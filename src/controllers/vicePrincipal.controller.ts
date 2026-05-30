@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import vicePrincipalService from '../services/vicePrincipal.service';
+import teacherOfWeekService from '../services/teacherOfWeek.service';
 
 class VicePrincipalController {
   // Absence Queue Management
@@ -241,6 +242,17 @@ class VicePrincipalController {
         success: true,
         data: grades
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getTeacherOfWeekVotes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { cycleKey } = req.query as { cycleKey?: string };
+      const summary = await teacherOfWeekService.getBranchVoteSummary(branchId!, cycleKey);
+      res.json({ success: true, data: summary });
     } catch (error) {
       next(error);
     }

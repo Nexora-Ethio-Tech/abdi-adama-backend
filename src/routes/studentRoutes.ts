@@ -20,6 +20,13 @@ router.get(
   studentController.getDashboard
 );
 
+router.get(
+  '/schedule',
+  authenticateToken,
+  authorizeRoles('Student'),
+  studentController.getSchedule
+);
+
 // ── Grades (filterable by semester + subject_id) ──────────────────────────────
 // ?semester=1|2  &  ?subject_id=<uuid>
 // Parent role is also allowed — the controller verifies the parent-child link
@@ -79,5 +86,19 @@ router.get(
 // ── Backward-compatible endpoints ─────────────────────────────────────────────
 router.get('/current-courses', authenticateToken, studentController.getCurrentCourses);
 router.get('/academic-history', authenticateToken, studentController.getAcademicHistory);
+
+router.get(
+  '/teacher-of-week',
+  authenticateToken,
+  authorizeRoles('Student'),
+  studentController.getTeacherOfWeek
+);
+
+router.post(
+  '/teacher-of-week/vote',
+  authenticateToken,
+  authorizeRoles('Student'),
+  studentController.submitTeacherOfWeekVote
+);
 
 export default router;

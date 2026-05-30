@@ -3,23 +3,217 @@ import pool from '../config/db';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { sendSuccess, sendError } from '../shared/responseUtils';
 import { performAllCleanups } from '../shared/cleanupUtils';
+import teacherOfWeekService from '../services/teacherOfWeek.service';
+
+const CURRENT_ACADEMIC_YEAR = '2025/2026';
+const CURRENT_SEMESTER = 2;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
  * Returns the enrolled course IDs (current semester) for a student.
- * Used by getDashboard to resolve schedule and deadlines without
- * The student views courses via enrollments/courses.
+ * Legacy silo path — used by getCurrentCourses only.
  */
 const getEnrolledCourseIds = async (studentIdentityId: string): Promise<string[]> => {
   const result = await pool.query(
     `SELECT course_id::text FROM silo_enrollments
      WHERE student_id = $1
-       AND academic_year = '2025/2026'
-       AND semester::text = '2'`,
-    [studentIdentityId]
+       AND academic_year = $2
+       AND semester::text = $3::text`,
+    [studentIdentityId, CURRENT_ACADEMIC_YEAR, String(CURRENT_SEMESTER)]
   );
   return result.rows.map((r: any) => r.course_id);
+};
+
+/** Build class_name values used in the Schedule Builder `schedules` table. */
+const buildScheduleClassMatchers = (
+  className: string | null,
+  sectionName: string | null,
+  grade: string | null
+): string[] => {
+  const patterns = new Set<string>();
+  const cls = (className || '').trim();
+  const sec = (sectionName || '').trim();
+  const grd = (grade || '').trim();
+
+  if (cls) {
+    patterns.add(cls);
+    if (sec) {
+      patterns.add(`${cls}${sec}`);
+      patterns.add(`${cls} ${sec}`);
+      patterns.add(`${cls}-${sec}`);
+    }
+  }
+  if (grd && sec) {
+    patterns.add(`${grd}${sec}`);
+    patterns.add(`Grade ${grd}${sec}`);
+    patterns.add(`Grade ${grd} ${sec}`);
+  }
+  return [...patterns].filter(Boolean);
+};
+
+/** Weekly timetable from approved Schedule Builder entries (Mon–Fri). */
+const fetchStudentWeeklySchedule = async (studentRow: {
+  id: string;
+  branch_id: string | null;
+  class_name: string | null;
+  section_name: string | null;
+  grade: string | null;
+}) => {
+  if (!studentRow.branch_id) return [];
+
+  const classMatchers = buildScheduleClassMatchers(
+    studentRow.class_name,
+    studentRow.section_name,
+    studentRow.grade
+  );
+  if (classMatchers.length === 0) return [];
+
+  try {
+    const result = await pool.query(
+    `SELECT
+       s.day,
+       s.time_slot,
+       s.subject,
+       COALESCE(u.name, 'TBA') AS teacher
+     FROM schedules s
+     JOIN teachers t ON s.teacher_id = t.id
+     JOIN users u ON t.user_id = u.id
+     WHERE t.branch_id = $1
+       AND s.day IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')
+       AND s.class_name = ANY($2::text[])
+     ORDER BY
+       CASE s.day
+         WHEN 'Monday' THEN 1 WHEN 'Tuesday' THEN 2 WHEN 'Wednesday' THEN 3
+         WHEN 'Thursday' THEN 4 WHEN 'Friday' THEN 5
+       END,
+       s.time_slot`,
+    [studentRow.branch_id, classMatchers]
+  );
+
+    return result.rows.map((row: any) => ({
+      day: row.day,
+      timeSlot: row.time_slot,
+      subject: row.subject,
+      teacher: row.teacher,
+      room: '',
+    }));
+  } catch {
+    return [];
+  }
+};
+
+/** Attendance percentage from student_attendance records. */
+const computeAttendanceRate = async (studentId: string): Promise<number | null> => {
+  const result = await pool.query(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE status IN ('present', 'late'))::int AS attended
+     FROM student_attendance
+     WHERE student_id = $1`,
+    [studentId]
+  );
+  const { total, attended } = result.rows[0] || { total: 0, attended: 0 };
+  if (!total) return null;
+  return Math.round((attended / total) * 1000) / 10;
+};
+
+/** First-semester course average (used on dashboard during semester 2). */
+const computeFirstSemesterAverage = async (
+  studentRow: {
+    id: string;
+    user_id: string;
+    section_id: string | null;
+    grade: string;
+    branch_id: string | null;
+  },
+  year: string
+): Promise<number | null> => {
+  const courses = await fetchHistoricalCourses(studentRow.id, studentRow.user_id, year, 1);
+  const courseIds = courses.map((c: any) => c.id);
+  if (courseIds.length === 0) return null;
+
+  let gradeRows: any[] = [];
+  try {
+    gradeRows = await fetchStudentGradeRows(studentRow.id, year, 1, courseIds, true);
+  } catch {
+    if (courseIds.length > 0) {
+      const legacy = await pool.query(
+        `SELECT g.course_id, g.type, g.score
+         FROM grades g
+         WHERE g.student_id = $1 AND g.course_id = ANY($2::uuid[]) AND g.score IS NOT NULL
+         ${SUBMITTED_GRADE_FILTER}`,
+        [studentRow.id, courseIds]
+      );
+      gradeRows = legacy.rows;
+    }
+  }
+
+  const gradingMethods = await loadGradingMethods(studentRow.grade);
+  const courseTotals: number[] = [];
+  for (const course of courses) {
+    const score = computeHistoricalCourseScore(course.id, gradeRows, gradingMethods);
+    if (score !== null) courseTotals.push(score);
+  }
+  if (courseTotals.length === 0) return null;
+  const avg = courseTotals.reduce((a, b) => a + b, 0) / courseTotals.length;
+  return Math.round(avg * 10) / 10;
+};
+
+/** School announcements posted by super-admin or school-admin for the student's branch. */
+const fetchSchoolAnnouncementsForStudent = async (branchId: string | null) => {
+  const params: unknown[] = [];
+  let branchFilter = '';
+  if (branchId) {
+    branchFilter = 'AND (n.branch_id = $1 OR n.branch_id IS NULL)';
+    params.push(branchId);
+  }
+
+  const result = await pool.query(
+    `SELECT
+       n.id::text,
+       COALESCE(n.priority, 'Normal') AS priority,
+       n.title,
+       n.content,
+       n.created_at AS timestamp,
+       'School'::text AS category
+     FROM notices n
+     JOIN users u ON n.posted_by = u.id
+     WHERE u.role IN ('super-admin', 'school-admin')
+       AND n.created_at > NOW() - INTERVAL '60 days'
+       ${branchFilter}
+     ORDER BY n.created_at DESC
+     LIMIT 20`,
+    params
+  );
+  return result.rows;
+};
+
+/** Logistics and driver notices for the student's assigned bus route(s). */
+const fetchLogisticsAnnouncementsForStudent = async (studentId: string) => {
+  const result = await pool.query(
+    `SELECT
+       n.id::text,
+       'Normal'::text AS priority,
+       n.title,
+       n.content,
+       n.created_at AS timestamp,
+       'Logistics'::text AS category,
+       n.driver_name AS "driverName"
+     FROM logistics_notices n
+     WHERE n.deleted_at IS NULL
+       AND n.created_at > NOW() - INTERVAL '60 days'
+       AND n.sender_id IN (
+         SELECT r.driver_id
+         FROM routes r
+         JOIN student_routes rm ON r.id = rm.route_id
+         WHERE rm.student_id = $1
+       )
+     ORDER BY n.created_at DESC
+     LIMIT 20`,
+    [studentId]
+  );
+  return result.rows;
 };
 
 /**
@@ -62,7 +256,7 @@ const fetchStudentCoursesForTerm = async (
        c.id AS subject_id,
        c.name,
        c.code,
-       c.progress,
+       0 AS progress,
        tu.name AS teacher,
        cl.id AS class_id,
        cl.name AS class_name,
@@ -90,30 +284,35 @@ const fetchStudentCoursesForTerm = async (
   }
 
   // Fallback: legacy silo enrollments (identity may be silo id in older datasets)
-  const siloResult = await pool.query(
-    `SELECT
-       c.id,
-       c.id AS subject_id,
-       c.name,
-       c.code,
-       e.progress,
-       i.full_name AS teacher,
-       NULL AS class_id,
-       NULL AS class_name,
-       NULL AS section_name
-     FROM silo_enrollments e
-     JOIN silo_courses c ON c.id = e.course_id
-     LEFT JOIN silo_identities i ON i.id = c.teacher_id
-     WHERE e.student_id::text = $1::text
-       ${subjectId ? 'AND c.id = $2' : ''}
-     ORDER BY c.name ASC`,
-    subjectId ? [studentId, subjectId] : [studentId]
-  );
-  return siloResult.rows;
+  try {
+    const siloResult = await pool.query(
+      `SELECT
+         c.id,
+         c.id AS subject_id,
+         c.name,
+         c.code,
+         0 AS progress,
+         i.full_name AS teacher,
+         NULL AS class_id,
+         NULL AS class_name,
+         NULL AS section_name
+       FROM silo_enrollments e
+       JOIN silo_courses c ON c.id = e.course_id
+       LEFT JOIN silo_identities i ON i.id = c.teacher_id
+       WHERE e.student_id::text = $1::text
+         ${subjectId ? 'AND c.id = $2' : ''}
+       ORDER BY c.name ASC`,
+      subjectId ? [studentId, subjectId] : [studentId]
+    );
+    return siloResult.rows;
+  } catch {
+    return [];
+  }
 };
 
 /**
  * Returns courses enrolled for a specific academic year and semester.
+ * Past years never fall back to the student's current class roster.
  */
 const fetchHistoricalCourses = async (
   studentId: string,
@@ -141,24 +340,62 @@ const fetchHistoricalCourses = async (
     return siloResult.rows;
   }
 
-  const studentRow = await resolveStudentRecord(studentId);
-  if (!studentRow) return [];
-
-  return fetchStudentCoursesForTerm(
-    studentRow.id,
-    studentRow.section_id,
-    studentRow.grade,
-    studentRow.branch_id
+  const gradeCourseResult = await pool.query(
+    `SELECT DISTINCT ON (c.id)
+       c.id,
+       c.name,
+       c.code,
+       tu.name AS teacher
+     FROM grades g
+     JOIN courses c ON c.id = g.course_id
+     LEFT JOIN teachers t ON c.teacher_id = t.id
+     LEFT JOIN users tu ON t.user_id = tu.id
+     WHERE g.student_id = $1
+       AND g.academic_year = $2
+       AND g.semester = $3
+     ORDER BY c.id, c.name ASC`,
+    [studentId, year, semester]
   );
+
+  if (gradeCourseResult.rows.length > 0) {
+    return gradeCourseResult.rows;
+  }
+
+  if (year === CURRENT_ACADEMIC_YEAR) {
+    const studentRow = await resolveStudentRecord(studentId);
+    if (!studentRow) return [];
+    return fetchStudentCoursesForTerm(
+      studentRow.id,
+      studentRow.section_id,
+      studentRow.grade,
+      studentRow.branch_id
+    );
+  }
+
+  return [];
 };
+
+/** Only grades the teacher has submitted and locked for release to students. */
+const SUBMITTED_GRADE_FILTER = `
+  AND (
+    COALESCE(g.is_submitted, false) = true
+    OR EXISTS (
+      SELECT 1 FROM grade_submissions gs
+      WHERE gs.course_id = g.course_id
+        AND gs.submission_type = g.type
+    )
+  )`;
 
 const fetchStudentGradeRows = async (
   studentId: string,
   academicYear: string,
   semester: number,
-  courseIds: string[]
+  courseIds: string[],
+  submittedOnly = true
 ) => {
   if (courseIds.length === 0) return [];
+
+  const submittedClause = submittedOnly ? SUBMITTED_GRADE_FILTER : '';
 
   const result = await pool.query(
     `SELECT g.course_id, g.type, g.score, g.total, g.weight
@@ -167,10 +404,112 @@ const fetchStudentGradeRows = async (
        AND g.academic_year = $2
        AND g.semester = $3
        AND g.course_id = ANY($4::uuid[])
-       AND g.score IS NOT NULL`,
+       AND g.score IS NOT NULL
+       ${submittedClause}`,
     [studentId, academicYear, semester, courseIds]
   );
   return result.rows;
+};
+
+const loadGradingMethods = async (gradeLevel: string) => {
+  const normalized = String(gradeLevel || '').replace(/\D/g, '') || 'default';
+  let configRes = await pool.query(
+    `SELECT method_id, label, max_weight
+     FROM grading_configs
+     WHERE grade_level = $1
+     ORDER BY created_at ASC`,
+    [normalized]
+  );
+  if (configRes.rows.length === 0) {
+    configRes = await pool.query(
+      `SELECT method_id, label, max_weight
+       FROM grading_configs
+       WHERE grade_level = 'default'
+       ORDER BY created_at ASC`
+    );
+  }
+  return configRes.rows.map((r: any) => ({
+    id: r.method_id,
+    label: r.label,
+    maxWeight: r.max_weight,
+  }));
+};
+
+/** Merge teacher-submitted grade rows into per-course summaries for the student UI. */
+const buildCourseGradeSummaries = (
+  courses: any[],
+  dbGrades: any[],
+  gradingMethods: Array<{ id: string; label: string; maxWeight: number }>,
+  studentRow: { class_name?: string | null; section_name?: string | null; grade?: string }
+) =>
+  courses.map((course: any) => {
+    const courseGrades: Record<string, number | null> = {};
+    let calculatedTotal = 0;
+    let submittedCount = 0;
+
+    for (const method of gradingMethods) {
+      const match = dbGrades.find(
+        (dg: any) => dg.course_id === course.id && dg.type === method.id
+      );
+      if (match && match.score !== null && match.score !== undefined) {
+        const score = Number(match.score);
+        courseGrades[method.id] = score;
+        calculatedTotal += score;
+        submittedCount += 1;
+      } else {
+        courseGrades[method.id] = null;
+      }
+    }
+
+    const legacyMid = dbGrades.find(
+      (dg: any) => dg.course_id === course.id && String(dg.type).toLowerCase().includes('mid')
+    );
+    const legacyFinal = dbGrades.find(
+      (dg: any) => dg.course_id === course.id && String(dg.type).toLowerCase().includes('final')
+    );
+
+    return {
+      id: course.id,
+      subject_id: course.subject_id || course.id,
+      name: course.name,
+      code: course.code,
+      teacher: course.teacher || 'N/A',
+      progress: course.progress ?? 0,
+      class_name: course.class_name || studentRow.class_name || studentRow.grade,
+      section_name: course.section_name || studentRow.section_name || null,
+      grades: courseGrades,
+      quiz_10: courseGrades.quiz ?? courseGrades.quiz_1 ?? null,
+      assignment_10: courseGrades.test ?? courseGrades.assignment ?? null,
+      mid_30: courseGrades.mid ?? (legacyMid ? Number(legacyMid.score) : null),
+      final_50: courseGrades.final ?? (legacyFinal ? Number(legacyFinal.score) : null),
+      total: submittedCount > 0 ? Math.round(calculatedTotal * 10) / 10 : null,
+    };
+  });
+
+/** Final course score for academic history (submitted components only). */
+const computeHistoricalCourseScore = (
+  courseId: string,
+  dbGrades: any[],
+  gradingMethods: Array<{ id: string; label: string; maxWeight: number }>
+): number | null => {
+  let total = 0;
+  let count = 0;
+
+  for (const method of gradingMethods) {
+    const match = dbGrades.find((g) => g.course_id === courseId && g.type === method.id);
+    if (match?.score != null) {
+      total += Number(match.score);
+      count += 1;
+    }
+  }
+
+  if (count === 0) {
+    const legacyRows = dbGrades.filter((g) => g.course_id === courseId);
+    if (legacyRows.length === 0) return null;
+    return Math.round(legacyRows.reduce((s, g) => s + Number(g.score || 0), 0) * 10) / 10;
+  }
+
+  return Math.round(total * 10) / 10;
 };
 
 /**
@@ -230,174 +569,94 @@ export const getOwnProfile = async (req: AuthRequest, res: Response) => {
 
 // ─── GET /api/student/dashboard ──────────────────────────────────────────────
 /**
- * Returns three data sources for the student dashboard:
- *  - schedule:           Today's classes (subject, time, room)
- *  - deadlines:          Upcoming assignments/tasks (read-only, no live exam)
- *  - teacherOfTheMonth:  Up to 3 monthly-rewarded teachers
- *  - announcements:      General + Logistics notices
- *  - stats:              Attendance, rank, active courses
- *
- * Schedule and deadlines are resolved via courses.
- * so no section_id column is required.
+ * Student My Dashboard — welcome stats, weekly schedule, and announcements.
  */
 export const getDashboard = async (req: AuthRequest, res: Response) => {
   const studentIdentityId = req.user?.identity_id;
 
-  // Validate authentication
   if (!studentIdentityId) {
     sendError(res, 'User identity not found. Please log in again.', 401);
     return;
   }
 
-  console.log(`[Dashboard] Fetching for student: ${studentIdentityId}`);
-
   try {
-    // Resolve enrolled course IDs (avoids broken section_id dependency)
-    const enrolledCourseIds = await getEnrolledCourseIds(studentIdentityId!);
-
-    // ── Today's schedule ────────────────────────────────────────────────────────
-    // Joins through enrolled courses → schedules.
-    // day_of_week: 0=Sunday … 6=Saturday (PostgreSQL EXTRACT(DOW))
-    let scheduleResult: any = { rows: [] };
-    if (enrolledCourseIds.length > 0) {
-      scheduleResult = await pool.query(
-        `SELECT
-           c.name        AS subject,
-           c.code,
-           ti.full_name  AS teacher,
-           sc.time_slot  AS time_slot,
-           sc.location   AS room
-         FROM silo_schedule sc
-         JOIN silo_courses c ON c.id = sc.course_id
-         LEFT JOIN silo_identities ti ON ti.id = c.teacher_id
-         WHERE c.id = ANY($1::uuid[])
-           AND sc.day = to_char(CURRENT_DATE, 'FMDay')`,
-        [enrolledCourseIds]
-      );
+    const studentRow = await resolveStudentRecord(studentIdentityId);
+    if (!studentRow) {
+      sendError(res, 'Student profile not found.', 404);
+      return;
     }
 
-    // ── Upcoming deadlines ──────────────────────────────────────────────────────
-    // Scoped to enrolled courses; excludes 'Live Exam' type
-    let deadlineResult: any = { rows: [] };
-    if (enrolledCourseIds.length > 0) {
-      deadlineResult = await pool.query(
-        `SELECT
-           d.id,
-           d.description AS title,
-           'Assignment'::text AS type,
-           d.due_date,
-           c.name AS subject
-         FROM silo_deadlines d
-         JOIN silo_courses c ON c.id = d.course_id
-         WHERE d.course_id = ANY($1::uuid[])
-           AND d.due_date >= CURRENT_DATE
-         ORDER BY d.due_date ASC
-         LIMIT 10`,
-        [enrolledCourseIds]
-      );
+    const [courses, weeklySchedule, attendanceRate, schoolAnnouncements, logisticsAnnouncements] =
+      await Promise.all([
+        fetchStudentCoursesForTerm(
+          studentRow.id,
+          studentRow.section_id,
+          studentRow.grade,
+          studentRow.branch_id
+        ),
+        fetchStudentWeeklySchedule(studentRow),
+        computeAttendanceRate(studentRow.id),
+        fetchSchoolAnnouncementsForStudent(studentRow.branch_id),
+        fetchLogisticsAnnouncementsForStudent(studentRow.id),
+      ]);
+
+    let averageGrade: number | null = null;
+    let averageGradeDisplay = 'Pending';
+    if (CURRENT_SEMESTER === 2) {
+      averageGrade = await computeFirstSemesterAverage(studentRow, CURRENT_ACADEMIC_YEAR);
+      averageGradeDisplay =
+        averageGrade !== null ? `${averageGrade}%` : 'Pending';
     }
 
-    // ── Teacher of the Month ────────────────────────────────────────────────────
-    // Simplified query - returns empty for now (table structure needs clarification)
-    const teacherResult = { rows: [] };
-
-    // ── Combined Announcements (General + Logistics) ────────────────────────────
-    const announcementsResult = await pool.query(
-      `SELECT 
-         id::text, 
-         priority, 
-         title, 
-         content, 
-         created_at AS timestamp,
-         'Academic'::text AS category
-       FROM notices
-       
-       UNION ALL
-       
-       SELECT 
-         n.id::text, 
-         'Normal'::text        AS priority, 
-         n.title, 
-         n.content             AS content, 
-         n.created_at          AS timestamp,
-         'Logistics'::text     AS category
-       FROM logistics_notices n
-       WHERE n.deleted_at IS NULL
-         AND n.sender_id IN (
-           SELECT r.driver_id FROM routes r
-           JOIN student_routes rm ON r.id = rm.route_id
-           WHERE rm.student_id = (SELECT id FROM students WHERE user_id = $1)
-         )
-       ORDER BY timestamp DESC
-       LIMIT 10`,
-      [studentIdentityId]
-    );
-
-    // ── Additional Stats (Attendance, Rank, Courses) ────────────────────────────
-    const statsResult = await pool.query(
-      `SELECT
-         'Pending'::text AS attendance,
-         'Pending'::text AS rank,
-         json_agg(DISTINCT c.name) AS active_courses
-       FROM silo_enrollments e
-       JOIN silo_courses c ON c.id = e.course_id
-       WHERE e.student_id = $1
-         AND e.academic_year = '2025/2026'
-         AND e.semester::text = '2'`,
-      [studentIdentityId]
-    );
-
-    // Get student details for dashboard profile info
-    const studentDbResult = await pool.query(
-      `SELECT
-         u.id,
-         u.digital_id   AS "digitalId",
-         u.name,
-         u.email,
-         s.grade,
-         u.status
-       FROM students s
-       JOIN users u ON s.user_id = u.id
-       WHERE s.user_id = $1
-       LIMIT 1`,
-      [studentIdentityId]
-    );
-
-    const studentInfo = studentDbResult.rows[0] || {
-      id: studentIdentityId,
-      digitalId: (req.user as any)?.digital_id || 'N/A',
-      name: (req.user as any)?.name || 'Student',
+    const studentInfo = {
+      id: studentRow.id,
+      digitalId: (req.user as any)?.digital_id || '',
+      name: studentRow.student_name || (req.user as any)?.name || 'Student',
       email: (req.user as any)?.email || '',
-      status: (req.user as any)?.status || 'Approved',
-      grade: '10',
-      class: 'A'
-    };
-
-    if (!studentInfo.class) {
-      studentInfo.class = 'A';
-    }
-
-    const stats = statsResult.rows[0] || {};
-    const totalCourses = enrolledCourseIds.length;
-
-    const mergedStats = {
-      ...stats,
-      totalCourses: totalCourses,
-      averageGrade: 87,
-      upcomingExams: deadlineResult.rows.length
+      grade: studentRow.grade,
+      class: studentRow.section_name || studentRow.class_name || '',
+      status: (req.user as any)?.status || 'Active',
     };
 
     return sendSuccess(res, {
-      schedule: scheduleResult.rows,
-      deadlines: deadlineResult.rows,
-      teacherOfTheMonth: teacherResult.rows,
-      announcements: announcementsResult.rows,
-      stats: mergedStats,
-      student: studentInfo
+      student: studentInfo,
+      stats: {
+        totalCourses: courses.length,
+        attendanceRate,
+        averageGrade,
+        averageGradeDisplay,
+        currentSemester: CURRENT_SEMESTER,
+        academicYear: CURRENT_ACADEMIC_YEAR,
+      },
+      weeklySchedule,
+      schoolAnnouncements,
+      logisticsAnnouncements,
     });
   } catch (err: any) {
     sendError(res, 'Failed to fetch dashboard.', 500, err.message);
     return;
+  }
+};
+
+// ─── GET /api/student/schedule ───────────────────────────────────────────────
+/** Full Mon–Fri timetable from Schedule Builder for the logged-in student. */
+export const getSchedule = async (req: AuthRequest, res: Response) => {
+  const studentIdentityId = req.user?.identity_id;
+
+  if (!studentIdentityId) {
+    return sendError(res, 'User identity not found. Please log in again.', 401);
+  }
+
+  try {
+    const studentRow = await resolveStudentRecord(studentIdentityId);
+    if (!studentRow) {
+      return sendError(res, 'Student profile not found.', 404);
+    }
+
+    const weeklySchedule = await fetchStudentWeeklySchedule(studentRow);
+    return sendSuccess(res, weeklySchedule);
+  } catch (err: any) {
+    return sendError(res, 'Failed to fetch schedule.', 500, err.message);
   }
 };
 
@@ -434,28 +693,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
       return sendError(res, 'Student profile not found.', 404);
     }
 
-    const gradeLevel = String(studentRow.grade || '').replace(/\D/g, '') || 'default';
-
-    let configRes = await pool.query(
-      `SELECT method_id, label, max_weight
-       FROM grading_configs
-       WHERE grade_level = $1
-       ORDER BY created_at ASC`,
-      [gradeLevel]
-    );
-    if (configRes.rows.length === 0) {
-      configRes = await pool.query(
-        `SELECT method_id, label, max_weight
-         FROM grading_configs
-         WHERE grade_level = 'default'
-         ORDER BY created_at ASC`
-      );
-    }
-    const gradingMethods = configRes.rows.map((r: any) => ({
-      id: r.method_id,
-      label: r.label,
-      maxWeight: r.max_weight,
-    }));
+    const gradingMethods = await loadGradingMethods(studentRow.grade);
 
     const courses = await fetchStudentCoursesForTerm(
       studentRow.id,
@@ -468,65 +706,40 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
     const courseIds = courses.map((c: any) => c.id);
     let dbGrades: any[] = [];
     try {
-      dbGrades = await fetchStudentGradeRows(studentRow.id, year, semester, courseIds);
+      dbGrades = await fetchStudentGradeRows(
+        studentRow.id,
+        year,
+        semester,
+        courseIds,
+        true
+      );
     } catch (gradeErr: any) {
-      // Backward compatibility if semester columns are not migrated yet
       if (courseIds.length > 0) {
         const legacy = await pool.query(
           `SELECT g.course_id, g.type, g.score, g.total, g.weight
            FROM grades g
            WHERE g.student_id = $1
              AND g.course_id = ANY($2::uuid[])
-             AND g.score IS NOT NULL`,
+             AND g.score IS NOT NULL
+             ${SUBMITTED_GRADE_FILTER}`,
           [studentRow.id, courseIds]
         );
         dbGrades = legacy.rows;
       }
     }
 
-    const mergedCourses = courses.map((course: any) => {
-      const courseGrades: Record<string, number | null> = {};
-      let calculatedTotal = 0;
-      let submittedCount = 0;
-
-      for (const method of gradingMethods) {
-        const match = dbGrades.find(
-          (dg: any) => dg.course_id === course.id && dg.type === method.id
-        );
-        if (match && match.score !== null && match.score !== undefined) {
-          const score = Number(match.score);
-          courseGrades[method.id] = score;
-          calculatedTotal += score;
-          submittedCount += 1;
-        } else {
-          courseGrades[method.id] = null;
-        }
-      }
-
-      const legacyMid = dbGrades.find((dg: any) => dg.course_id === course.id && String(dg.type).toLowerCase().includes('mid'));
-      const legacyFinal = dbGrades.find((dg: any) => dg.course_id === course.id && String(dg.type).toLowerCase().includes('final'));
-
-      return {
-        id: course.id,
-        subject_id: course.subject_id || course.id,
-        name: course.name,
-        code: course.code,
-        teacher: course.teacher || 'N/A',
-        progress: course.progress ?? 0,
-        class_name: course.class_name || studentRow.class_name || studentRow.grade,
-        section_name: course.section_name || studentRow.section_name || null,
-        grades: courseGrades,
-        quiz_10: courseGrades.quiz ?? courseGrades.quiz_1 ?? null,
-        assignment_10: courseGrades.test ?? courseGrades.assignment ?? null,
-        mid_30: courseGrades.mid ?? (legacyMid ? Number(legacyMid.score) : null),
-        final_50: courseGrades.final ?? (legacyFinal ? Number(legacyFinal.score) : null),
-        total: submittedCount > 0 ? calculatedTotal : null,
-      };
-    });
+    const mergedCourses = buildCourseGradeSummaries(
+      courses,
+      dbGrades,
+      gradingMethods,
+      studentRow
+    );
 
     return sendSuccess(res, {
       semester,
       year,
+      currentSemester: CURRENT_SEMESTER,
+      currentAcademicYear: CURRENT_ACADEMIC_YEAR,
       student: {
         id: studentRow.id,
         name: studentRow.student_name,
@@ -577,6 +790,9 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
   if (!year) {
     return sendError(res, 'Query parameter "year" is required (e.g. 2024/2025).', 400);
   }
+  if (!semester || (semester !== 1 && semester !== 2)) {
+    return sendError(res, 'Query parameter "semester" is required (1 or 2).', 400);
+  }
 
   try {
     const studentRow = await resolveStudentRecord(queryIdentityId);
@@ -584,49 +800,53 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
       return sendError(res, 'Student profile not found.', 404);
     }
 
+    const gradingMethods = await loadGradingMethods(studentRow.grade);
+
     const courses = await fetchHistoricalCourses(
       studentRow.id,
       studentRow.user_id,
       year,
-      semester ?? 2
+      semester
     );
     const courseIds = courses.map((c: any) => c.id);
 
     let gradeRows: any[] = [];
-    const semValue = semester ?? 2;
     try {
-      gradeRows = await fetchStudentGradeRows(studentRow.id, year, semValue, courseIds);
-    } catch {
-      const legacy = await pool.query(
-        `SELECT g.course_id, g.type, g.score
-         FROM grades g
-         WHERE g.student_id = $1 AND g.course_id = ANY($2::uuid[]) AND g.score IS NOT NULL`,
-        [studentRow.id, courseIds]
+      gradeRows = await fetchStudentGradeRows(
+        studentRow.id,
+        year,
+        semester,
+        courseIds,
+        true
       );
-      gradeRows = legacy.rows;
-    }
-
-    const courseTotals = new Map<string, number>();
-    for (const course of courses) {
-      const rowsForCourse = gradeRows.filter((g: any) => g.course_id === course.id);
-      if (rowsForCourse.length === 0) continue;
-      const total = rowsForCourse.reduce((sum: number, g: any) => sum + Number(g.score || 0), 0);
-      courseTotals.set(course.id, total);
+    } catch {
+      if (courseIds.length > 0) {
+        const legacy = await pool.query(
+          `SELECT g.course_id, g.type, g.score
+           FROM grades g
+           WHERE g.student_id = $1
+             AND g.course_id = ANY($2::uuid[])
+             AND g.score IS NOT NULL
+             ${SUBMITTED_GRADE_FILTER}`,
+          [studentRow.id, courseIds]
+        );
+        gradeRows = legacy.rows;
+      }
     }
 
     const historyCourses = courses.map((c: any) => {
-      const total = courseTotals.get(c.id);
+      const finalScore = computeHistoricalCourseScore(c.id, gradeRows, gradingMethods);
       return {
         name: c.name,
         code: c.code || '',
         teacher: c.teacher || null,
-        score: total !== undefined ? total.toFixed(1) : null,
-        score_display: total !== undefined ? `${total.toFixed(1)}%` : 'Pending',
+        score: finalScore !== null ? finalScore.toFixed(1) : null,
+        score_display: finalScore !== null ? `${finalScore.toFixed(1)}%` : 'Pending',
       };
     });
 
-    const scoredCourses = historyCourses.filter(c => c.score !== null);
-    const semesterLabel = semester !== null ? `Semester ${semester}` : 'All Semesters';
+    const scoredCourses = historyCourses.filter((c) => c.score !== null);
+    const semesterLabel = `Semester ${semester}`;
     const avg = scoredCourses.length > 0
       ? (scoredCourses.reduce((sum, c) => sum + parseFloat(String(c.score)), 0) / scoredCourses.length).toFixed(1) + '%'
       : 'N/A';
@@ -667,7 +887,7 @@ export const getCurrentCourses = async (req: AuthRequest, res: Response) => {
          c.name,
          c.code,
          i.full_name   AS teacher,
-         e.progress,
+         0 AS progress,
          g.quiz_1,
          g.quiz_2,
          g.test_1,
@@ -751,5 +971,37 @@ export const getAcademicHistory = async (req: AuthRequest, res: Response) => {
     return sendSuccess(res, history);
   } catch (err: any) {
     return sendError(res, 'Failed to fetch academic history.', 500, err.message);
+  }
+};
+
+// ─── Teacher of the Week (Ethiopian Sat–Wed voting window) ───────────────────
+
+export const getTeacherOfWeek = async (req: AuthRequest, res: Response) => {
+  const userId = req.user?.user_id;
+  if (!userId) {
+    return sendError(res, 'User identity not found. Please log in again.', 401);
+  }
+  try {
+    const data = await teacherOfWeekService.getStudentVoteContext(userId);
+    return sendSuccess(res, data);
+  } catch (err: any) {
+    return sendError(res, err.message || 'Failed to load Teacher of the Week.', 500);
+  }
+};
+
+export const submitTeacherOfWeekVote = async (req: AuthRequest, res: Response) => {
+  const userId = req.user?.user_id;
+  const { teacherId } = req.body;
+  if (!userId) {
+    return sendError(res, 'User identity not found. Please log in again.', 401);
+  }
+  if (!teacherId) {
+    return sendError(res, 'teacherId is required.', 400);
+  }
+  try {
+    const result = await teacherOfWeekService.submitStudentVote(userId, teacherId);
+    return sendSuccess(res, result, 'Vote recorded successfully');
+  } catch (err: any) {
+    return sendError(res, err.message || 'Failed to submit vote.', 400);
   }
 };

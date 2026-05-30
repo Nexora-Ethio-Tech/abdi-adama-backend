@@ -241,6 +241,20 @@ async function ensureSchemaExtensions(): Promise<void> {
       PRIMARY KEY (student_id, month)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_student_collections_month ON student_collections(month)`,
+    // Teacher of the Week — student voting (Ethiopian Sat–Wed window)
+    `CREATE TABLE IF NOT EXISTS teacher_of_week_votes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+      student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      cycle_key VARCHAR(20) NOT NULL,
+      ethiopian_week_start VARCHAR(20),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(student_id, cycle_key)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_teacher_of_week_votes_cycle ON teacher_of_week_votes(branch_id, cycle_key)`,
+    `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS student_vote_rating NUMERIC(12,2) DEFAULT 0`,
+    `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS student_vote_count INT DEFAULT 0`,
     // Enrolled students: sync users.status to Active (students table already uses Active)
     `UPDATE users u SET status = 'Active', updated_at = NOW()
      FROM students s
