@@ -412,6 +412,62 @@ class TeacherController {
       next(error);
     }
   }
+
+  // ─── Exam Grade & Subject Management ───────────────────────────────────────
+
+  async getAllGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const grades = await teacherService.getAllGrades();
+      res.json({
+        success: true,
+        data: grades
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getCoursesByGrade(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { gradeId } = req.params;
+      if (!gradeId) {
+        res.status(400).json({
+          success: false,
+          error: 'gradeId is required'
+        });
+        return;
+      }
+
+      const courses = await teacherService.getCoursesByGrade(gradeId);
+      res.json({
+        success: true,
+        data: courses
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getTeacherCourses(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          error: 'User identity not found'
+        });
+        return;
+      }
+
+      const courses = await teacherService.getTeacherCourses(userId);
+      res.json({
+        success: true,
+        data: courses
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new TeacherController();

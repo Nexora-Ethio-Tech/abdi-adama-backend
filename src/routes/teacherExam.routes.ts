@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { authenticate, roleGuard } from '../middleware/auth.middleware';
+import { authenticate } from '../middleware/auth';
+import { roleGuard } from '../middleware/roleGuard';
 import teacherExamService from '../services/teacherExam.service';
-import { UserRole } from '../types/auth.types';
+import { UserRole } from '../types';
 import logger from '../utils/logger';
 
 const router = Router();

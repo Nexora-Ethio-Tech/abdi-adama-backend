@@ -69,6 +69,20 @@ router.post(
 );
 
 router.post(
+  '/exams/:examId/verify-password',
+  authenticateToken,
+  authorizeRoles('Student', 'Parent'),
+  examController.verifyExamPassword
+);
+
+router.post(
+  '/exams/:examId/start',
+  authenticateToken,
+  authorizeRoles('Student', 'Parent'),
+  examController.startExamSession
+);
+
+router.post(
   '/exams/:examId/submit',
   authenticateToken,
   authorizeRoles('Student', 'Parent'),

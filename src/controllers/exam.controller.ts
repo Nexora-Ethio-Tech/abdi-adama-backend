@@ -30,37 +30,7 @@ class ExamController {
     }
   }
 
-  async saveExamAnswer(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const { examId } = req.params;
-      const { questionId, answer } = req.body;
-      const userId = req.user?.id;
-      if (!userId) { sendError(res, 'User identity not found. Please log in again.', 401); return; }
-      if (!questionId || typeof answer !== 'string') {
-        sendError(res, 'questionId and answer are required.', 400);
-        return;
-      }
 
-      await examService.saveExamAnswer(examId, userId, questionId, answer);
-      sendSuccess(res, { examId, questionId, answer });
-    } catch (error: any) {
-      next(error);
-    }
-  }
-
-  async submitExam(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const { examId } = req.params;
-      const { autoSubmitted } = req.body;
-      const userId = req.user?.id;
-      if (!userId) { sendError(res, 'User identity not found. Please log in again.', 401); return; }
-
-      const result = await examService.submitExam(examId, userId, !!autoSubmitted);
-      sendSuccess(res, result, 'Exam submitted successfully');
-    } catch (error: any) {
-      next(error);
-    }
-  }
 
   async createExam(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -70,17 +40,102 @@ class ExamController {
         return;
       }
 
-      const { title, courseId, courseName, category, durationMinutes, questions } = req.body;
-      const exam = await examService.createExam(userId, {
-        title,
-        courseId: courseId || null,
-        courseName,
-        category,
-        durationMinutes,
-        questions
-      });
+      const { 
+        title, 
+        courseId, 
+        courseName, 
+        category, 
+        durationMinutes, 
+        questions,
+        classId,
+        gradeId,
+        subjectId,
+        examType,
+        totalMarks,
+        duration,
+        selectedSection,
+        examPassword,
+        passwordRequired,
+        instructions
+      } = req.body;
 
-      sendSuccess(res, exam, 'Exam created successfully', 201);
+      // If using new format (grade/subject selection), use teacherExamService
+      if (gradeId || subjectId) {
+        const exam = await teacherExamService.createExam({
+          teacherId: userId,
+          classId: classId || null,
+          gradeId: gradeId || null,
+          subjectId: subjectId || null,
+          title: title,
+          examType: examType || 'Regular Exam',
+          totalMarks: totalMarks || 100,
+          duration: duration || durationMinutes || 60,
+          instructions: instructions || '',
+          selectedSection: selectedSection || null,
+          questions: questions || [],
+          examPassword: examPassword || null,
+          isLocked: !!examPassword,
+          passwordRequired: passwordRequired || !!examPassword
+        });
+
+        sendSuccess(res, exam, 'Exam created successfully', 201);
+      } else {
+        // Fall back to original examService for backward compatibility
+        const exam = await examService.createExam(userId, {
+          title,
+          courseId: courseId || null,
+          courseName,
+          category,
+          durationMinutes,
+          questions
+        });
+
+        sendSuccess(res, exam, 'Exam created successfully', 201);
+      }
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  // ─── Student Exam Submission ────────────────────────────────────────────────
+
+  async saveExamAnswer(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { examId } = req.params;
+      const { questionId, answer, sessionId } = req.body;
+      const userId = req.user?.id;
+
+      if (!userId || !examId || !questionId || answer === undefined) {
+        sendError(res, 'Missing required fields', 400);
+        return;
+      }
+
+      // If sessionId provided, use new teacher exam service; otherwise use old exam service
+      if (sessionId) {
+        const savedAnswer = await teacherExamService.saveExamAnswer(examId, userId, sessionId, questionId, answer);
+        sendSuccess(res, savedAnswer, 'Answer saved');
+      } else {
+        await examService.saveExamAnswer(examId, userId, questionId, answer);
+        sendSuccess(res, { examId, questionId, answer });
+      }
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  async submitExam(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { examId } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId || !examId) {
+        sendError(res, 'Missing required fields: examId', 400);
+        return;
+      }
+
+      // Submit exam using teacher exam service (auto-grade if score/total not provided)
+      const result = await teacherExamService.submitExamResult(examId, userId);
+      sendSuccess(res, result, 'Exam submitted successfully');
     } catch (error: any) {
       next(error);
     }
@@ -201,6 +256,70 @@ class ExamController {
       } else {
         next(error);
       }
+    }
+  }
+
+  // ─── Exam Password & Session Management ───────────────────────────────────────
+
+  async verifyExamPassword(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { examId } = req.params;
+      const { password } = req.body;
+      const userId = req.user?.id;
+
+      if (!userId || !examId || !password) {
+        sendError(res, 'Missing required fields: examId, password', 400);
+        return;
+      }
+
+      const isValid = await teacherExamService.verifyExamPassword(examId, password);
+      if (!isValid) {
+        sendError(res, 'Incorrect password', 401);
+        return;
+      }
+
+      // Create session and mark password as verified
+      const session = await teacherExamService.createExamSession(examId, userId);
+      await teacherExamService.markPasswordVerified(examId, userId);
+
+      sendSuccess(res, { session, message: 'Password verified' });
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  async startExamSession(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { examId } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId || !examId) {
+        sendError(res, 'Missing required fields: examId', 400);
+        return;
+      }
+
+      const session = await teacherExamService.createExamSession(examId, userId);
+      sendSuccess(res, session, 'Exam session started');
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  async submitExamResult(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { examId } = req.params;
+      const { score, totalMarks } = req.body;
+      const userId = req.user?.id;
+
+      if (!userId || !examId || score === undefined || !totalMarks) {
+        sendError(res, 'Missing required fields: score, totalMarks', 400);
+        return;
+      }
+
+      const result = await teacherExamService.submitExamResult(examId, userId, score, totalMarks);
+      sendSuccess(res, result, 'Exam submitted successfully');
+    } catch (error: any) {
+      next(error);
     }
   }
 }
