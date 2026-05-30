@@ -36,6 +36,12 @@ const stopTransportSchema = Joi.object({
   daysUsed: Joi.number().integer().min(0).max(30).required()
 });
 
+const approveApplicationSchema = Joi.object({
+  amount: Joi.number().min(0).optional(),
+  reference: Joi.string().allow('', null).optional(),
+  parentDigitalId: Joi.string().trim().optional()
+});
+
 const updateFeeStatusSchema = Joi.object({
   feeStatus: Joi.string().valid('standard', 'reduced'),
   monthlyFee: Joi.number().min(0),
@@ -72,7 +78,7 @@ router.delete('/assets/:id', clerkOnly, assetController.deleteAsset);
 router.get('/overdue-payments', clerkOnly, financeClerkController.getOverduePayments);
 router.get('/reports/daily', clerkOnly, financeClerkController.getDailyReport);
 router.get('/applications', clerkOnly, financeClerkController.getPendingApplications);
-router.patch('/applications/:id/approve', clerkOnly, financeClerkController.approveApplication);
+router.patch('/applications/:id/approve', clerkOnly, validate(approveApplicationSchema), financeClerkController.approveApplication);
 // Reject / Return application to school admin with reason
 router.patch('/applications/:id/remove', clerkOnly, financeClerkController.rejectApplication);
 // Legacy: allow delete route (will now mark as returned instead of deleting)

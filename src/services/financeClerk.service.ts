@@ -285,7 +285,7 @@ class FinanceClerkService {
   }
 
   // Get students with fee information
-  async getStudentsWithFees(branchId: string, search?: string, feeStatus?: string) {
+  async getStudentsWithFees(branchId?: string | null, search?: string, feeStatus?: string) {
     let query = `
       SELECT 
         s.id, s.grade, s.monthly_fee, s.bus_fee, s.penalty_fee,
@@ -293,11 +293,17 @@ class FinanceClerkService {
         u.name, u.email, u.digital_id
       FROM students s
       JOIN users u ON s.user_id = u.id
-      WHERE s.branch_id = $1
+      WHERE 1=1
     `;
 
-    const params: any[] = [branchId];
-    let paramCount = 1;
+    const params: any[] = [];
+    let paramCount = 0;
+
+    if (branchId) {
+      paramCount++;
+      query += ` AND s.branch_id = $${paramCount}`;
+      params.push(branchId);
+    }
 
     if (feeStatus && feeStatus !== 'all') {
       paramCount++;
@@ -911,7 +917,7 @@ class FinanceClerkService {
   // Approve an application (delegate to schoolAdminService; fee is always resolved server-side)
   async approveApplication(
     applicationId: string,
-    payment: { amount?: number; reference?: string },
+    payment: { amount?: number; reference?: string; parentDigitalId?: string },
     financeUserId: string
   ) {
     const appRes = await pool.query(
@@ -933,7 +939,7 @@ class FinanceClerkService {
 
     return await schoolAdminService.financeApproveApplication(
       applicationId,
-      { amount: resolved.amount, reference: payment.reference },
+      { amount: resolved.amount, reference: payment.reference, parentDigitalId: payment.parentDigitalId },
       financeUserId
     );
   }

@@ -358,6 +358,18 @@ class SchoolAdminController {
   // Student Application Management
   async createPendingApplication(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      const registrationOpen = await superAdminService.isRegistrationOpen();
+      if (!registrationOpen) {
+        res.status(403).json({
+          success: false,
+          error: {
+            code: 'REGISTRATION_CLOSED',
+            message: 'Online registration is currently closed.',
+          },
+        });
+        return;
+      }
+
       const branchId = req.user!.branch_id;
       const userId = req.user!.id;
 

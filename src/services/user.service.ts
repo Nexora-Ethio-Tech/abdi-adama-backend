@@ -24,7 +24,7 @@ class UserService {
     const initialStatus = autoApproveRoles.includes(role)
       ? USER_STATUS.APPROVED
       : role === 'student'
-        ? 'Active'
+        ? USER_STATUS.APPROVED
         : USER_STATUS.PENDING;
 
     for (let attempt = 1; attempt <= 3; attempt++) {
