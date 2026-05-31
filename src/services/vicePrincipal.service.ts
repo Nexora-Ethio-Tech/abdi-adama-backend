@@ -503,21 +503,20 @@ class VicePrincipalService {
         u.name as student_name,
         s.grade,
         COALESCE(c.name, s.grade) as section_name,
-        u.phone as parent_phone,
-        p.name as parent_name,
+        s.parent_phone,
+        s.parent_name,
         t.id as teacher_id,
         tu.name as room_teacher
       FROM students s
       JOIN users u ON s.user_id = u.id
-      LEFT JOIN parents p ON s.id = p.student_id
       LEFT JOIN classes c ON s.section_id = c.id
       LEFT JOIN teachers t ON t.branch_id = s.branch_id AND (t.assigned_room_class = c.name OR t.assigned_room_class = s.grade)
       LEFT JOIN users tu ON t.user_id = tu.id
       WHERE s.branch_id = $1 
         AND s.id IN (
           SELECT DISTINCT student_id 
-          FROM student_attendance 
-          WHERE branch_id = $1 AND date = $2 AND status = 'absent'
+          FROM student_attendance sa
+          WHERE sa.date = $2 AND sa.status = 'absent'
         )
       ORDER BY s.grade, COALESCE(c.name, s.grade), u.name`,
       [branchId, today]
@@ -754,7 +753,13 @@ class VicePrincipalService {
           JOIN branches b ON t.branch_id = b.id
           WHERE wp.teacher_id = t.id
             AND wp.created_at >= COALESCE(b.leaderboard_last_reset, '1970-01-01'::timestamptz)
-        ) as plan_rating_sum
+        ) as plan_rating_sum,
+        (
+          SELECT STRING_AGG(DISTINCT COALESCE(cl.grade, cl.name), ', ' ORDER BY COALESCE(cl.grade, cl.name))
+          FROM courses c
+          JOIN classes cl ON c.class_id = cl.id
+          WHERE c.teacher_id = t.id AND cl.branch_id = $1
+        ) as grades_taught
       FROM teachers t
       JOIN users u ON t.user_id = u.id
       WHERE t.branch_id = $1 AND u.status != 'Revoked'
@@ -769,12 +774,18 @@ class VicePrincipalService {
       const planRatingSum = parseFloat(row.plan_rating_sum) || 0;
       const totalPoints = studentVotes + (vpRating * 100) + (planRatingSum * 10);
       
+      // Parse grades_taught into a sorted unique array
+      const gradesTaught: string[] = row.grades_taught
+        ? row.grades_taught.split(', ').filter(Boolean)
+        : [];
+
       return {
         ...row,
         student_votes: studentVotes,
         vp_rating: vpRating,
         plan_rating_sum: planRatingSum,
-        total_points: totalPoints
+        total_points: totalPoints,
+        grades_taught: gradesTaught
       };
     });
 
