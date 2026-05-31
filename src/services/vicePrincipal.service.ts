@@ -491,6 +491,49 @@ class VicePrincipalService {
       absentCount: absent > 0 ? absent : 0,
     };
   }
+
+  // Get today's absent students with parent contact info
+  async getTodayAbsentStudents(branchId: string) {
+    const today = new Date().toISOString().split('T')[0];
+
+    const result = await pool.query(
+      `SELECT 
+        s.id,
+        s.user_id,
+        u.name as student_name,
+        s.grade,
+        s.section,
+        u.phone as parent_phone,
+        p.name as parent_name,
+        t.id as teacher_id,
+        tu.name as room_teacher
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN parents p ON s.id = p.student_id
+      LEFT JOIN teachers t ON s.section = t.section AND t.branch_id = s.branch_id
+      LEFT JOIN users tu ON t.user_id = tu.id
+      WHERE s.branch_id = $1 
+        AND s.id IN (
+          SELECT DISTINCT student_id 
+          FROM student_attendance 
+          WHERE branch_id = $1 AND date = $2 AND status = 'absent'
+        )
+      ORDER BY s.grade, s.section, u.name`,
+      [branchId, today]
+    );
+
+    return result.rows.map(row => ({
+      id: row.id,
+      name: row.student_name,
+      grade: row.grade,
+      section: row.section || 'General',
+      parentName: row.parent_name || 'Not Assigned',
+      parentPhone: row.parent_phone || 'N/A',
+      studentId: row.user_id,
+      roomTeacher: row.room_teacher || 'Not Assigned'
+    }));
+  }
 }
+
 
 export default new VicePrincipalService();

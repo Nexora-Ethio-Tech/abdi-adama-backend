@@ -28,6 +28,12 @@ const gradeLockSchema = Joi.object({
   academicYearId: Joi.string().uuid()
 });
 
+const sendAbsenceNotificationSchema = Joi.object({
+  phoneNumbers: Joi.array().items(Joi.string().required()).required(),
+  message: Joi.string().required(),
+  studentIds: Joi.array().items(Joi.string())
+});
+
 // Routes
 router.get('/absence-queue', vicePrincipalController.getAbsenceQueue);
 router.patch('/absence-queue/:id', validate(updateAbsenceSchema), vicePrincipalController.updateAbsenceStatus);
@@ -49,5 +55,9 @@ router.get('/dashboard', vicePrincipalController.getDashboard);
 router.get('/teacher-of-week/votes', vicePrincipalController.getTeacherOfWeekVotes);
 router.get('/students/:studentId/transcript', vicePrincipalController.getStudentTranscript);
 router.get('/staff-absent-count', vicePrincipalController.getStaffAbsentCount);
+
+// Attendance monitoring & SMS notifications
+router.get('/attendance/absences-today', vicePrincipalController.getTodayAbsentStudents);
+router.post('/attendance/send-absence-notification', validate(sendAbsenceNotificationSchema), vicePrincipalController.sendAbsenceNotification);
 
 export default router;

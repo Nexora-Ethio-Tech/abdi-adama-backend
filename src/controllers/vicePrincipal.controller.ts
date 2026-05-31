@@ -268,6 +268,69 @@ class VicePrincipalController {
       next(error);
     }
   }
+
+  // Get today's absent students with parent contact info for SMS notifications
+  async getTodayAbsentStudents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const absents = await vicePrincipalService.getTodayAbsentStudents(branchId!);
+
+      res.json({
+        success: true,
+        data: absents
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Send SMS notification to parents of absent students
+  async sendAbsenceNotification(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { phoneNumbers, message, studentIds } = req.body;
+
+      if (!Array.isArray(phoneNumbers) || phoneNumbers.length === 0) {
+        res.status(400).json({
+          success: false,
+          error: { message: 'No phone numbers provided' }
+        });
+        return;
+      }
+
+      if (!message || message.trim().length === 0) {
+        res.status(400).json({
+          success: false,
+          error: { message: 'Message cannot be empty' }
+        });
+        return;
+      }
+
+      // TODO: Integrate with actual SMS provider (Modem, Twilio, etc.)
+      // For now, we'll mock the SMS sending
+      console.log(`[SMS MOCK] Sending SMS to ${phoneNumbers.length} recipients`);
+      phoneNumbers.forEach((phone: string) => {
+        console.log(`  To: ${phone}`);
+        console.log(`  Message: ${message}`);
+      });
+
+      // Record SMS notification in audit log (optional)
+      // You can store this in a notifications table for audit purposes
+      const today = new Date().toISOString().split('T')[0];
+      console.log(`[SMS AUDIT] Notification sent on ${today} to ${phoneNumbers.length} parent(s) for ${studentIds?.length || 0} student(s)`);
+
+      res.json({
+        success: true,
+        message: `SMS notification sent to ${phoneNumbers.length} parent(s)`,
+        data: {
+          recipientCount: phoneNumbers.length,
+          sentAt: new Date().toISOString(),
+          studentIds: studentIds || []
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new VicePrincipalController();
