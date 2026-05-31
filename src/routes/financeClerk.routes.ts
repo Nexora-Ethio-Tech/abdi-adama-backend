@@ -53,7 +53,7 @@ const updateFeeStatusSchema = Joi.object({
 
 // Role Guard segments
 const readOnlyInventory = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]);
-const readWriteFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]);
+const readWriteFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]);
 const readOnlyFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]);
 const clerkOnly = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]);
 
