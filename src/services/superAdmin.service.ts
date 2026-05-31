@@ -543,12 +543,18 @@ class SuperAdminService {
 
   // ─── Branch fee structure ───────────────────────────────────────────────
 
-  async getBranchGradeFees() {
+  async getBranchGradeFees(branchId?: string) {
+    const params: Array<string> = [];
+    const branchFilter = branchId ? `WHERE f.branch_id = $1` : '';
+    if (branchId) params.push(branchId);
+
     const result = await pool.query(
       `SELECT f.*, b.name AS branch_name
        FROM branch_grade_fees f
        JOIN branches b ON b.id = f.branch_id
-       ORDER BY b.name, f.grade_level`
+       ${branchFilter}
+       ORDER BY b.name, f.grade_level`,
+      params
     );
     return result.rows;
   }

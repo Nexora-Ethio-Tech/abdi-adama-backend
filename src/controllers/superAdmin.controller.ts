@@ -473,9 +473,13 @@ class SuperAdminController {
 
   // ─── Branch grade fees ───────────────────────────────────────────────────
 
-  async getBranchGradeFees(_req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  async getBranchGradeFees(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const fees = await superAdminService.getBranchGradeFees();
+      let branchId = req.query.branchId as string | undefined;
+      if (req.user?.role === UserRole.SCHOOL_ADMIN) {
+        branchId = req.user.branch_id || branchId;
+      }
+      const fees = await superAdminService.getBranchGradeFees(branchId);
       res.json({ success: true, data: fees });
     } catch (error) {
       next(error);
@@ -518,7 +522,10 @@ class SuperAdminController {
 
   async getBranchProfitSummary(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const branchId = req.query.branchId as string;
+      let branchId = req.query.branchId as string | undefined;
+      if (req.user?.role === UserRole.SCHOOL_ADMIN) {
+        branchId = req.user.branch_id || branchId;
+      }
       const ethiopianMonth = Number(req.query.ethiopianMonth);
       const year = req.query.year ? Number(req.query.year) : undefined;
       if (!branchId || !ethiopianMonth) {
@@ -538,7 +545,10 @@ class SuperAdminController {
   async getMonthlyProfitTargets(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const year = req.query.year ? Number(req.query.year) : undefined;
-      const branchId = req.query.branchId as string | undefined;
+      let branchId = req.query.branchId as string | undefined;
+      if (req.user?.role === UserRole.SCHOOL_ADMIN) {
+        branchId = req.user.branch_id || branchId;
+      }
       const targets = await superAdminService.getMonthlyProfitTargets(branchId, year);
       res.json({ success: true, data: targets });
     } catch (error) {
