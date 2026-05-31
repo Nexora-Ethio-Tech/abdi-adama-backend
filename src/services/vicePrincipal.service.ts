@@ -455,6 +455,42 @@ class VicePrincipalService {
 
     return result.rows;
   }
+
+  async getStaffAbsentCount(branchId: string, date?: string) {
+    const targetDate = date || new Date().toISOString().split('T')[0];
+
+    const totalResult = await pool.query(
+      `SELECT COUNT(*)::int as total
+       FROM users u
+       WHERE u.branch_id = $1
+         AND u.is_active = true
+         AND u.status != 'Revoked'
+         AND u.role != 'student'
+         AND u.role != 'parent'`,
+      [branchId]
+    );
+
+    const presentResult = await pool.query(
+      `SELECT COUNT(*)::int as present
+       FROM employee_attendance ea
+       JOIN users u ON ea.user_id = u.id
+       WHERE u.branch_id = $1
+         AND ea.date = $2
+         AND ea.status IN ('present', 'late', 'excused', 'leave')`,
+      [branchId, targetDate]
+    );
+
+    const total = totalResult.rows[0].total;
+    const present = presentResult.rows[0].present;
+    const absent = total - present;
+
+    return {
+      date: targetDate,
+      totalStaff: total,
+      presentCount: present,
+      absentCount: absent > 0 ? absent : 0,
+    };
+  }
 }
 
 export default new VicePrincipalService();

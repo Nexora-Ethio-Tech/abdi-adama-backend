@@ -257,6 +257,17 @@ class VicePrincipalController {
       next(error);
     }
   }
+
+  async getStaffAbsentCount(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { date } = req.query;
+      const result = await vicePrincipalService.getStaffAbsentCount(branchId!, date as string | undefined);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new VicePrincipalController();

@@ -48,5 +48,6 @@ router.get('/academic-performance', vicePrincipalController.getAcademicPerforman
 router.get('/dashboard', vicePrincipalController.getDashboard);
 router.get('/teacher-of-week/votes', vicePrincipalController.getTeacherOfWeekVotes);
 router.get('/students/:studentId/transcript', vicePrincipalController.getStudentTranscript);
+router.get('/staff-absent-count', vicePrincipalController.getStaffAbsentCount);
 
 export default router;
