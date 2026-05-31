@@ -4,6 +4,19 @@ import { generateCredentials } from '../utils/credentialGenerator';
 import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
 
 class FinanceClerkService {
+  // Get available aid allocations for a student (active allocations with remaining balance)
+  private async getAvailableAid(client: any, studentId: string) {
+    const res = await client.query(
+      `SELECT id, approved_amount, used_amount, (approved_amount - used_amount) AS remaining
+       FROM student_aids
+       WHERE student_id = $1 AND status = 'active' AND approved_amount > used_amount
+       ORDER BY approved_at ASC NULLS LAST`,
+      [studentId]
+    );
+    const rows = res.rows || [];
+    const totalRemaining = rows.reduce((s: number, r: any) => s + Number(r.remaining || 0), 0);
+    return { allocations: rows, totalRemaining };
+  }
   private async getRegistrationDueForMonth(client: any, studentId: string, branchId: string, targetMonth: string): Promise<number> {
     const regPaidRes = await client.query(
       `SELECT 1
@@ -106,8 +119,12 @@ class FinanceClerkService {
       const student = studentRes.rows[0];
 
       // Validate and compute totals
-      let total = 0;
+      let totalRequested = 0;
       const toInsertItems: { feeType: string; amount: number }[] = [];
+
+      // Fetch available aid for this student
+      const aidInfo = await this.getAvailableAid(client, data.studentId);
+      const aidAvailable = Number(aidInfo.totalRemaining || 0);
 
       for (const it of data.items) {
         const feeType = it.feeType;
@@ -136,44 +153,80 @@ class FinanceClerkService {
         const alreadyPaid = Number(paidRes.rows[0].paid || 0);
         const remaining = Math.max(0, dueForType - alreadyPaid);
 
-        if (remaining <= 0) {
-          throw new Error(`Fee type already fully paid: ${feeType}`);
-        }
-
         const payAmount = Math.min(amt, remaining);
         if (payAmount <= 0) continue;
 
-        total += payAmount;
+        totalRequested += payAmount;
         toInsertItems.push({ feeType, amount: payAmount });
       }
 
       if (toInsertItems.length === 0) {
-        throw new Error('No payable items provided');
+        throw new Error('All requested fee types are already fully paid or no valid amount was provided.');
       }
 
-      // Create payment
+      // Determine aid to apply (do not double-apply aid)
+      const aidToApply = Math.min(aidAvailable, totalRequested);
+
+      // Distribute aid across requested items proportionally
+      const sumRequested = totalRequested;
+      let remainingAid = aidToApply;
+      const itemsToPersist: { feeType: string; cashAmount: number; aidApplied: number }[] = [];
+      for (let i = 0; i < toInsertItems.length; i++) {
+        const it = toInsertItems[i];
+        const proportion = sumRequested > 0 ? it.amount / sumRequested : 0;
+        // For last item, use leftover to avoid rounding issues
+        const aidForItem = i === toInsertItems.length - 1 ? remainingAid : Math.round((proportion * aidToApply) * 100) / 100;
+        remainingAid = Math.round((remainingAid - aidForItem) * 100) / 100;
+        const cashForItem = Math.round((it.amount - (aidForItem || 0)) * 100) / 100;
+        itemsToPersist.push({ feeType: it.feeType, cashAmount: cashForItem, aidApplied: aidForItem || 0 });
+      }
+
+      const totalCashCollected = itemsToPersist.reduce((s, it) => s + Number(it.cashAmount || 0), 0);
+
+      // Create payment with actual cash collected
       const paymentRes = await client.query(
         `INSERT INTO payments (student_id, payer_id, branch_id, month, date, total_amount, reference)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [data.studentId, null, data.branchId, data.month, data.date || new Date().toISOString().slice(0, 10), total, data.reference || null]
+        [data.studentId, null, data.branchId, data.month, data.date || new Date().toISOString().slice(0, 10), totalCashCollected, data.reference || null]
       );
-
       const payment = paymentRes.rows[0];
 
-      // Insert items
-      for (const it of toInsertItems) {
-        await client.query(
-          `INSERT INTO payment_items (payment_id, fee_type, amount) VALUES ($1, $2, $3)`,
-          [payment.id, it.feeType, it.amount]
-        );
+      // Insert items as cash amounts per fee type
+      for (const it of itemsToPersist) {
+        if (it.cashAmount && it.cashAmount > 0) {
+          await client.query(
+            `INSERT INTO payment_items (payment_id, fee_type, amount) VALUES ($1, $2, $3)`,
+            [payment.id, it.feeType, it.cashAmount]
+          );
+        }
       }
 
-      // Also record a finance_transactions summary (backwards compatibility)
+      // Persist aid usage records and decrement allocations (consume allocations FIFO)
+      if (aidToApply > 0) {
+        let aidRemainingToConsume = aidToApply;
+        for (const alloc of aidInfo.allocations) {
+          if (aidRemainingToConsume <= 0) break;
+          const allocRemaining = Number(alloc.remaining || 0);
+          if (allocRemaining <= 0) continue;
+          const consume = Math.min(allocRemaining, aidRemainingToConsume);
+          // Insert usage record
+          await client.query(
+            `INSERT INTO student_aid_usages (student_aid_id, payment_id, student_id, amount, month)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [alloc.id, payment.id, data.studentId, consume, data.month]
+          );
+          // Update allocation used_amount
+          await client.query(`UPDATE student_aids SET used_amount = used_amount + $1, updated_at = NOW() WHERE id = $2`, [consume, alloc.id]);
+          aidRemainingToConsume = Math.round((aidRemainingToConsume - consume) * 100) / 100;
+        }
+      }
+
+      // Also record a finance_transactions summary (backwards compatibility) - amount is cash collected
       await client.query(
         `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [data.studentId, student.name, total, `Payment (${data.month})`, data.date || new Date().toISOString().slice(0, 10), data.verifiedBy, data.branchId]
+        [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, data.date || new Date().toISOString().slice(0, 10), data.verifiedBy, data.branchId]
       );
 
       // Recompute outstanding and update student_collections
@@ -231,7 +284,7 @@ class FinanceClerkService {
 
     // Fetch student fees
     const studentRes = await pool.query(
-      `SELECT s.id, s.monthly_fee, s.bus_fee, s.penalty_fee, s.branch_id, u.name, u.parent_phone
+      `SELECT s.id, s.grade, s.is_bus_user, s.monthly_fee, s.bus_fee, s.penalty_fee, s.branch_id, s.parent_phone, u.name
        FROM students s JOIN users u ON s.user_id = u.id
        WHERE s.id = $1`,
       [studentId]
@@ -249,10 +302,11 @@ class FinanceClerkService {
       { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
     ];
 
-    const registrationDue = await this.getRegistrationDueForMonth(pool, studentId, student.branch_id, targetMonth);
-    feeTypes.find((f) => f.key === 'registration')!.due = registrationDue;
+    const registrationFee = await this.resolveRegistrationFee(student.branch_id, student.grade);
+    feeTypes.find((f) => f.key === 'registration')!.due = registrationFee.amount;
 
     const feesWithPaid: any[] = [];
+    const paidFees: string[] = [];
     let totalDue = 0;
     let totalPaid = 0;
 
@@ -265,21 +319,51 @@ class FinanceClerkService {
         [studentId, targetMonth, ft.key]
       );
       const paid = Number(paidRes.rows[0].paid || 0);
+      const remaining = Math.max(0, Number(ft.due || 0) - paid);
+      
       totalPaid += paid;
-      feesWithPaid.push({ feeType: ft.key, label: ft.label, due: Number(ft.due || 0), paid, remaining: Math.max(0, Number(ft.due || 0) - paid) });
+      feesWithPaid.push({
+        feeType: ft.key,
+        label: ft.label,
+        due: Number(ft.due || 0),
+        paid,
+        remaining,
+        isFullyPaid: Number(ft.due || 0) > 0 && remaining === 0,
+        source: ft.key === 'registration' ? registrationFee.source : undefined
+      });
+
+      if (Number(ft.due || 0) > 0 && remaining === 0) {
+        paidFees.push(ft.key);
+      }
     }
 
     // Also pull collection status
     const collRes = await pool.query(`SELECT status, due_date FROM student_collections WHERE student_id = $1 AND month = $2`, [studentId, targetMonth]);
     const collection = collRes.rows[0] || null;
 
+    // Pull aid allocations summary for the student
+    const aidRes = await pool.query(
+      `SELECT COALESCE(SUM(approved_amount),0)::numeric AS approved_total, COALESCE(SUM(used_amount),0)::numeric AS used_total
+       FROM student_aids WHERE student_id = $1 AND status = 'active'`,
+      [studentId]
+    );
+    const approvedAidTotal = Number(aidRes.rows[0]?.approved_total || 0);
+    const aidUsed = Number(aidRes.rows[0]?.used_total || 0);
+    const aidRemaining = Math.max(0, approvedAidTotal - aidUsed);
+
     return {
       student: { id: student.id, name: student.name, parent_phone: student.parent_phone },
+      usesTransport: !!student.is_bus_user,
       month: targetMonth,
       fees: feesWithPaid,
+      paidFees,
       totalDue,
       totalPaid,
       totalRemaining: Math.max(0, totalDue - totalPaid),
+      // Aid summary
+      approvedAidTotal,
+      aidUsed,
+      aidRemaining,
       collection
     };
   }
