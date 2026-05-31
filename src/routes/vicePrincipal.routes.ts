@@ -56,6 +56,7 @@ router.get('/grade-management/sections/:sectionId/grades', vicePrincipalControll
 router.post('/grade-management/generate-results/:sectionId', vicePrincipalController.generateSectionResults);
 
 router.get('/teachers', vicePrincipalController.getBranchTeachers);
+router.get('/teachers/:userId/attendance', vicePrincipalController.getTeacherAttendanceDetail);
 router.get('/teachers/leaderboard', vicePrincipalController.getLeaderboard);
 router.post('/teachers/leaderboard/reset', vicePrincipalController.resetLeaderboard);
 router.post('/teachers/:id/rate', vicePrincipalController.rateTeacher);

@@ -153,24 +153,91 @@ class VicePrincipalService {
 
   // Teacher Monitoring
   async getBranchTeachers(branchId: string) {
+    const targetDate = new Date().toISOString().split('T')[0];
     const result = await pool.query(
       `SELECT 
-        t.*,
-        u.name, u.email, u.digital_id, u.status,
-        COUNT(DISTINCT c.id) as classes_assigned,
-        COUNT(DISTINCT wp.id) as plans_submitted,
-        COUNT(DISTINCT CASE WHEN wp.status = 'Pending' THEN wp.id END) as plans_pending
+        t.id,
+        t.user_id,
+        t.branch_id,
+        t.subjects,
+        t.branch,
+        t.classes_count,
+        t.is_in_class,
+        t.is_dean,
+        t.is_room_teacher,
+        t.assigned_room_class,
+        t.department,
+        t.hire_date,
+        t.experience,
+        t.bio,
+        t.is_examiner,
+        t.vp_rating,
+        u.name,
+        u.email,
+        u.digital_id,
+        u.status,
+        COALESCE((SELECT COUNT(*) FROM classes c WHERE c.teacher_id = t.id), 0)::int as classes_assigned,
+        COALESCE((SELECT COUNT(*) FROM weekly_plans wp WHERE wp.teacher_id = t.id), 0)::int as plans_submitted,
+        COALESCE((SELECT COUNT(*) FROM weekly_plans wp WHERE wp.teacher_id = t.id AND wp.status = 'Pending'), 0)::int as plans_pending,
+        ea.status as today_attendance_status,
+        COALESCE((SELECT COUNT(*)::int
+                  FROM employee_attendance ea2
+                  JOIN users u2 ON ea2.user_id = u2.id
+                  WHERE u2.branch_id = $1 AND ea2.date = $2), 0) as today_attendance_count
       FROM teachers t
       JOIN users u ON t.user_id = u.id
-      LEFT JOIN classes c ON t.id = c.teacher_id
-      LEFT JOIN weekly_plans wp ON t.id = wp.teacher_id
+      LEFT JOIN employee_attendance ea ON ea.user_id = u.id AND ea.date = $2
       WHERE t.branch_id = $1
-      GROUP BY t.id, u.name, u.email, u.digital_id, u.status
       ORDER BY u.name`,
-      [branchId]
+      [branchId, targetDate]
     );
 
     return result.rows;
+  }
+
+  async getTeacherAttendanceDetail(branchId: string, userId: string, startDate: string, endDate: string) {
+    const teacherResult = await pool.query(
+      `SELECT 
+        u.id as user_id,
+        t.id as teacher_id,
+        u.name,
+        u.email,
+        u.digital_id
+       FROM users u
+       JOIN teachers t ON t.user_id = u.id
+       WHERE u.id = $1 AND t.branch_id = $2`,
+      [userId, branchId]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      throw new Error('Teacher not found or access denied');
+    }
+
+    const attendanceResult = await pool.query(
+      `SELECT ea.date, ea.status
+       FROM employee_attendance ea
+       WHERE ea.user_id = $1
+         AND ea.date BETWEEN $2 AND $3
+       ORDER BY ea.date ASC`,
+      [userId, startDate, endDate]
+    );
+
+    const branchDailyCountsResult = await pool.query(
+      `SELECT ea.date, COUNT(*)::int as record_count
+       FROM employee_attendance ea
+       JOIN users u ON ea.user_id = u.id
+       WHERE u.branch_id = $1
+         AND ea.date BETWEEN $2 AND $3
+       GROUP BY ea.date
+       ORDER BY ea.date ASC`,
+      [branchId, startDate, endDate]
+    );
+
+    return {
+      teacher: teacherResult.rows[0],
+      attendance: attendanceResult.rows,
+      branchDailyCounts: branchDailyCountsResult.rows
+    };
   }
 
   // Attendance Summary
@@ -774,10 +841,28 @@ class VicePrincipalService {
       const planRatingSum = parseFloat(row.plan_rating_sum) || 0;
       const totalPoints = studentVotes + (vpRating * 100) + (planRatingSum * 10);
       
-      // Parse grades_taught into a sorted unique array
-      const gradesTaught: string[] = row.grades_taught
-        ? row.grades_taught.split(', ').filter(Boolean)
-        : [];
+      // Parse grades_taught into a sorted unique array, stripping sections
+      const extractedGrades = new Set<string>();
+      if (row.grades_taught) {
+        row.grades_taught.split(', ').forEach((g: string) => {
+          const trimmed = g.trim();
+          const match = trimmed.match(/(\d{1,2})/);
+          if (match) {
+            extractedGrades.add(`Grade ${match[1]}`);
+          } else {
+            // For non-numeric grades like KG, remove trailing single letters if they look like sections
+            const noSection = trimmed.replace(/\s+[A-Z]$/i, '');
+            extractedGrades.add(noSection);
+          }
+        });
+      }
+      
+      const gradesTaught: string[] = Array.from(extractedGrades).sort((a, b) => {
+        const numA = parseInt(a.replace(/\D/g, '')) || 0;
+        const numB = parseInt(b.replace(/\D/g, '')) || 0;
+        if (numA && numB) return numA - numB;
+        return a.localeCompare(b);
+      });
 
       return {
         ...row,

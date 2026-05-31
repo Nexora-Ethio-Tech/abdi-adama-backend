@@ -258,6 +258,36 @@ class VicePrincipalController {
     }
   }
 
+  async getTeacherAttendanceDetail(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { userId } = req.params;
+      const { startDate, endDate } = req.query;
+
+      if (!startDate || !endDate) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'startDate and endDate are required query parameters.' }
+        });
+        return;
+      }
+
+      const attendance = await vicePrincipalService.getTeacherAttendanceDetail(
+        branchId!,
+        userId,
+        startDate as string,
+        endDate as string
+      );
+
+      res.json({
+        success: true,
+        data: attendance
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getStaffAbsentCount(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
