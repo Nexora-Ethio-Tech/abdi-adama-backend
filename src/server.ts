@@ -255,8 +255,8 @@ async function ensureSchemaExtensions(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_teacher_of_week_votes_cycle ON teacher_of_week_votes(branch_id, cycle_key)`,
     `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS student_vote_rating NUMERIC(12,2) DEFAULT 0`,
     `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS student_vote_count INT DEFAULT 0`,
-    // Enrolled students: sync users.status to Active (students table already uses Active)
-    `UPDATE users u SET status = 'Active', updated_at = NOW()
+    // Enrolled students: sync users.status to Approved (students table already uses Active)
+    `UPDATE users u SET status = 'Approved', updated_at = NOW()
      FROM students s
      WHERE s.user_id = u.id AND u.role = 'student' AND u.status = 'Pending'`,
   ];

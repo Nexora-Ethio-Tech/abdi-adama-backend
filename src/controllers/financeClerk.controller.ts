@@ -77,10 +77,14 @@ class FinanceClerkController {
   async approveApplication(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params;
-      const { amount, reference } = req.body;
+      const { amount, reference, parentDigitalId } = req.body;
       const financeUserId = req.user!.id;
 
-      const result = await financeClerkService.approveApplication(id, { amount, reference }, financeUserId);
+      const result = await financeClerkService.approveApplication(
+        id,
+        { amount, reference, parentDigitalId },
+        financeUserId
+      );
 
       res.status(201).json({ success: true, data: result, message: 'Application approved and student registered' });
     } catch (error) {
@@ -124,7 +128,7 @@ class FinanceClerkController {
       const { search, feeStatus } = req.query;
 
       const students = await financeClerkService.getStudentsWithFees(
-        branchId!,
+        branchId,
         search as string,
         feeStatus as string
       );

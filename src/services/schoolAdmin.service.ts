@@ -821,7 +821,7 @@ class SchoolAdminService {
   }
 
   // Finance: Approve application (record payment, create user accounts, finalize registration)
-  async financeApproveApplication(applicationId: string, payment: { amount: number; reference?: string }, financeUserId: string) {
+  async financeApproveApplication(applicationId: string, payment: { amount: number; reference?: string; parentDigitalId?: string }, financeUserId: string) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -852,18 +852,82 @@ class SchoolAdminService {
         financeUserId
       );
 
-      // ── Create parent account ───────────────────────────────────────────────
-      // Parents rarely have an email on the application form, so we always use a
-      // placeholder. The parent receives their credentials via the student's email
-      // (see sendAdmissionCredentialsEmail below).
-      const parentCreate = await userServiceInstance.createUser(
-        {
-          name: app.parent_name || `${app.applicant_name} Parent`,
-          email: genPlaceholderEmail('parent'),
-          role: 'parent',
-          branchId: app.branch_id,
-        },
-        financeUserId
+      let parentCreate;
+      let parentUserId: string;
+      let parentId: string;
+
+      if (payment.parentDigitalId) {
+        const parentRes = await client.query(
+          `SELECT u.id as user_id, p.id as parent_id, u.digital_id, u.username, u.name, u.email, u.role, u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.updated_at
+           FROM users u
+           JOIN parents p ON p.user_id = u.id
+           WHERE u.digital_id = $1
+             AND u.role = 'parent'
+             AND (p.branch_id = $2 OR p.branch_id IS NULL)
+           LIMIT 1`,
+          [payment.parentDigitalId, app.branch_id]
+        );
+
+        if (parentRes.rows.length === 0) {
+          throw new Error('Parent ID not found or does not belong to this branch.');
+        }
+
+        parentUserId = parentRes.rows[0].user_id;
+        parentId = parentRes.rows[0].parent_id;
+        parentCreate = {
+          user: {
+            id: parentRes.rows[0].user_id,
+            digital_id: parentRes.rows[0].digital_id,
+            username: parentRes.rows[0].username,
+            name: parentRes.rows[0].name,
+            email: parentRes.rows[0].email,
+            role: parentRes.rows[0].role,
+            branch_id: parentRes.rows[0].branch_id,
+            status: parentRes.rows[0].status,
+            is_active: parentRes.rows[0].is_active,
+            staff_profile: parentRes.rows[0].staff_profile,
+            created_at: parentRes.rows[0].created_at,
+            updated_at: parentRes.rows[0].updated_at,
+          },
+          temporaryPassword: undefined,
+        };
+      } else {
+        // ── Create parent account ───────────────────────────────────────────────
+        // Parents rarely have an email on the application form, so we always use a
+        // placeholder. The parent receives their credentials via the student's email
+        // (see sendAdmissionCredentialsEmail below).
+        parentCreate = await userServiceInstance.createUser(
+          {
+            name: app.parent_name || `${app.applicant_name} Parent`,
+            email: genPlaceholderEmail('parent'),
+            role: 'parent',
+            branchId: app.branch_id,
+          },
+          financeUserId
+        );
+
+        parentUserId = parentCreate.user.id;
+        const parentIdRes = await client.query(
+          'SELECT id FROM parents WHERE user_id = $1 LIMIT 1',
+          [parentUserId]
+        );
+        if (parentIdRes.rows.length === 0) {
+          throw new Error('Failed to locate created parent profile.');
+        }
+        parentId = parentIdRes.rows[0].id;
+      }
+
+      const studentIdRes = await client.query('SELECT id FROM students WHERE user_id = $1 LIMIT 1', [studentCreate.user.id]);
+      if (studentIdRes.rows.length === 0) {
+        throw new Error('Failed to locate created student profile.');
+      }
+      const studentId = studentIdRes.rows[0].id;
+
+      await client.query(
+        `INSERT INTO parent_student (parent_id, student_id)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [parentId, studentId]
       );
 
       // ── Persist payment + generated account IDs ─────────────────────────────
@@ -888,16 +952,16 @@ class SchoolAdminService {
           payment.amount,
           payment.reference || null,
           studentCreate.user.id,
-          parentCreate.user.id,
+          parentUserId,
           applicationId,
         ]
       );
 
       await client.query(
-        `UPDATE users SET status = 'Active', updated_at = NOW() WHERE id = $1`,
-        [studentCreate.user.id]
+        `UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2`,
+        ['Approved', studentCreate.user.id]
       );
-      studentCreate.user.status = 'Active';
+      studentCreate.user.status = 'Approved';
 
       await client.query('COMMIT');
 
