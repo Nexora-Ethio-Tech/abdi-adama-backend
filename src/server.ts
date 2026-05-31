@@ -253,12 +253,38 @@ async function ensureSchemaExtensions(): Promise<void> {
       UNIQUE(student_id, cycle_key)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_teacher_of_week_votes_cycle ON teacher_of_week_votes(branch_id, cycle_key)`,
+    // Vice Principal grade locking requires these tables to exist before the UI loads.
+    `CREATE TABLE IF NOT EXISTS academic_years (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      year_name VARCHAR(50) NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT FALSE,
+      branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS grade_locks (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      grade_level VARCHAR(20) NOT NULL,
+      is_locked BOOLEAN NOT NULL DEFAULT FALSE,
+      locked_by UUID REFERENCES users(id),
+      locked_at TIMESTAMPTZ,
+      branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
+      academic_year_id UUID REFERENCES academic_years(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(grade_level, branch_id, academic_year_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_grade_locks_branch ON grade_locks(branch_id)`,
     `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS student_vote_rating NUMERIC(12,2) DEFAULT 0`,
     `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS student_vote_count INT DEFAULT 0`,
     // Enrolled students: sync users.status to Approved (students table already uses Active)
     `UPDATE users u SET status = 'Approved', updated_at = NOW()
      FROM students s
      WHERE s.user_id = u.id AND u.role = 'student' AND u.status = 'Pending'`,
+    // Leaderboard tracking
+    `ALTER TABLE branches ADD COLUMN IF NOT EXISTS leaderboard_last_reset TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+    `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS vp_rating INT DEFAULT 0`,
   ];
 
   for (const sql of migrations) {

@@ -22,7 +22,7 @@ class TeacherOfWeekService {
     const cycle = getCurrentVotingCycle();
 
     const studentRow = await pool.query(
-      `SELECT s.id AS student_id, s.branch_id
+      `SELECT s.id AS student_id, s.branch_id, s.section_id, s.grade
        FROM students s
        WHERE s.user_id = $1
        LIMIT 1`,
@@ -40,7 +40,7 @@ class TeacherOfWeekService {
       };
     }
 
-    const { student_id: studentId, branch_id: branchId } = studentRow.rows[0];
+    const { student_id: studentId, branch_id: branchId, section_id: sectionId, grade: studentGrade } = studentRow.rows[0];
 
     if (!cycle.isOpen) {
       return {
@@ -55,14 +55,20 @@ class TeacherOfWeekService {
 
     const [teachersResult, voteResult] = await Promise.all([
       pool.query(
-        `SELECT t.id, u.name, t.subjects, t.department
+        `SELECT DISTINCT t.id, u.name, t.subjects, t.department
          FROM teachers t
          JOIN users u ON t.user_id = u.id
+         JOIN courses c ON c.teacher_id = t.id
+         JOIN classes cl ON c.class_id = cl.id
          WHERE t.branch_id = $1
            AND u.status != 'Revoked'
            AND u.is_active = true
+           AND (
+             cl.id = $2
+             OR ($2 IS NULL AND cl.branch_id = $1 AND (cl.name = $3 OR cl.grade = $3))
+           )
          ORDER BY u.name`,
-        [branchId]
+        [branchId, sectionId, studentGrade]
       ),
       pool.query(
         `SELECT teacher_id FROM teacher_of_week_votes

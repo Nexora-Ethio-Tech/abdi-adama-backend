@@ -48,7 +48,18 @@ router.post('/grade-locks', validate(gradeLockSchema), vicePrincipalController.t
 router.get('/grade-submissions', vicePrincipalController.getGradeSubmissions);
 router.get('/grades/:courseId/:submissionType', vicePrincipalController.getSubmittedGrades);
 
+// Grade Management
+router.get('/grade-management/sections', vicePrincipalController.getGradesAndSections);
+router.get('/grade-management/sections/:sectionId/students', vicePrincipalController.getStudentsBySection);
+router.get('/grade-management/sections/:sectionId/courses', vicePrincipalController.getCoursesBySection);
+router.get('/grade-management/sections/:sectionId/grades', vicePrincipalController.getSectionGrades);
+router.post('/grade-management/generate-results/:sectionId', vicePrincipalController.generateSectionResults);
+
 router.get('/teachers', vicePrincipalController.getBranchTeachers);
+router.get('/teachers/leaderboard', vicePrincipalController.getLeaderboard);
+router.post('/teachers/leaderboard/reset', vicePrincipalController.resetLeaderboard);
+router.post('/teachers/:id/rate', vicePrincipalController.rateTeacher);
+
 router.get('/attendance-summary', vicePrincipalController.getAttendanceSummary);
 router.get('/academic-performance', vicePrincipalController.getAcademicPerformance);
 router.get('/dashboard', vicePrincipalController.getDashboard);

@@ -331,6 +331,100 @@ class VicePrincipalController {
       next(error);
     }
   }
+
+  // Grade Management Methods
+  async getGradesAndSections(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const sections = await vicePrincipalService.getGradesAndSections(branchId!);
+      res.json({ success: true, data: sections });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getStudentsBySection(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { sectionId } = req.params;
+      const branchId = req.user!.branch_id;
+      const students = await vicePrincipalService.getStudentsBySection(sectionId, branchId!);
+      res.json({ success: true, data: students });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getCoursesBySection(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { sectionId } = req.params;
+      const branchId = req.user!.branch_id;
+      const courses = await vicePrincipalService.getCoursesBySection(sectionId, branchId!);
+      res.json({ success: true, data: courses });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getSectionGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { sectionId } = req.params;
+      const branchId = req.user!.branch_id;
+      const grades = await vicePrincipalService.getSectionGrades(sectionId, branchId!);
+      res.json({ success: true, data: grades });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async generateSectionResults(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { sectionId } = req.params;
+      const branchId = req.user!.branch_id;
+      const results = await vicePrincipalService.generateSectionResults(sectionId, branchId!);
+      res.json({ success: true, data: results, message: 'Results generated successfully' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Teacher Leaderboard Endpoints
+  async getLeaderboard(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const leaderboard = await vicePrincipalService.getLeaderboard(branchId!);
+      res.json({ success: true, data: leaderboard });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async rateTeacher(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const { rating } = req.body;
+      const branchId = req.user!.branch_id;
+
+      if (rating < 0 || rating > 5) {
+         res.status(400).json({ success: false, error: { message: 'Rating must be between 0 and 5' }});
+         return;
+      }
+
+      const teacher = await vicePrincipalService.rateTeacher(id, rating, branchId!);
+      res.json({ success: true, data: teacher, message: 'Teacher rated successfully' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async resetLeaderboard(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const result = await vicePrincipalService.resetLeaderboard(branchId!);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new VicePrincipalController();

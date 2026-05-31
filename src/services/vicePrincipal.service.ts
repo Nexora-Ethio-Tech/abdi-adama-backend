@@ -502,7 +502,7 @@ class VicePrincipalService {
         s.user_id,
         u.name as student_name,
         s.grade,
-        s.section,
+        COALESCE(c.name, s.grade) as section_name,
         u.phone as parent_phone,
         p.name as parent_name,
         t.id as teacher_id,
@@ -510,7 +510,8 @@ class VicePrincipalService {
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN parents p ON s.id = p.student_id
-      LEFT JOIN teachers t ON s.section = t.section AND t.branch_id = s.branch_id
+      LEFT JOIN classes c ON s.section_id = c.id
+      LEFT JOIN teachers t ON t.branch_id = s.branch_id AND (t.assigned_room_class = c.name OR t.assigned_room_class = s.grade)
       LEFT JOIN users tu ON t.user_id = tu.id
       WHERE s.branch_id = $1 
         AND s.id IN (
@@ -518,7 +519,7 @@ class VicePrincipalService {
           FROM student_attendance 
           WHERE branch_id = $1 AND date = $2 AND status = 'absent'
         )
-      ORDER BY s.grade, s.section, u.name`,
+      ORDER BY s.grade, COALESCE(c.name, s.grade), u.name`,
       [branchId, today]
     );
 
@@ -526,14 +527,306 @@ class VicePrincipalService {
       id: row.id,
       name: row.student_name,
       grade: row.grade,
-      section: row.section || 'General',
+      section: row.section_name || 'General',
       parentName: row.parent_name || 'Not Assigned',
       parentPhone: row.parent_phone || 'N/A',
       studentId: row.user_id,
       roomTeacher: row.room_teacher || 'Not Assigned'
     }));
   }
-}
 
+  // Grade Management Methods
+  async getGradesAndSections(branchId: string) {
+    const result = await pool.query(
+      `SELECT 
+        c.id,
+        c.name as class_name,
+        COUNT(DISTINCT s.id) as student_count,
+        c.capacity
+      FROM classes c
+      LEFT JOIN students s ON s.section_id = c.id
+      WHERE c.branch_id = $1
+      GROUP BY c.id, c.name, c.capacity
+      ORDER BY c.name`,
+      [branchId]
+    );
+
+    // Group by grade
+    const gradesMap: Record<string, any> = {};
+    for (const row of result.rows) {
+      const className = row.class_name;
+      const gradeMatch = className.match(/^(?:Grade\s*)?(\d{1,2})\s*([A-Za-z]*)$/i);
+      const gradeName = gradeMatch ? `Grade ${gradeMatch[1]}` : className;
+      const sectionName = gradeMatch ? (gradeMatch[2] || className.replace(gradeName, '').trim() || 'A') : className;
+      if (!gradesMap[gradeName]) {
+        gradesMap[gradeName] = {
+          grade_name: gradeName,
+          sections: []
+        };
+      }
+      gradesMap[gradeName].sections.push({
+        id: row.id,
+        section_name: sectionName,
+        student_count: parseInt(row.student_count) || 0,
+        capacity: row.capacity || 0
+      });
+    }
+
+    return Object.values(gradesMap);
+  }
+
+  async getStudentsBySection(sectionId: string, branchId: string) {
+    const result = await pool.query(
+      `SELECT 
+        s.id,
+        s.user_id,
+        u.name as name,
+        s.grade,
+        COALESCE(c.name, s.grade) as section,
+        s.created_at as enrollment_date
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      JOIN classes c ON s.section_id = c.id
+      WHERE c.id = $1 AND s.branch_id = $2
+      ORDER BY u.name`,
+      [sectionId, branchId]
+    );
+
+    return result.rows;
+  }
+
+  async getCoursesBySection(sectionId: string, branchId: string) {
+    const result = await pool.query(
+      `SELECT DISTINCT
+        c.id,
+        c.name,
+        c.code,
+        t.user_id as teacher_id,
+        u.name as teacher_name
+      FROM courses c
+      LEFT JOIN teachers t ON c.teacher_id = t.id
+      LEFT JOIN users u ON t.user_id = u.id
+      JOIN classes cl ON c.class_id = cl.id
+      WHERE cl.id = $1
+      ORDER BY c.name`,
+      [sectionId]
+    );
+
+    return result.rows;
+  }
+
+  async getSectionGrades(sectionId: string, branchId: string) {
+    // Get students in the section
+    const studentsResult = await pool.query(
+      `SELECT s.id, s.user_id, u.name
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       JOIN classes c ON s.section_id = c.id
+       WHERE c.id = $1
+       ORDER BY u.name`,
+      [sectionId]
+    );
+
+    // Get courses for the branch
+    const coursesResult = await pool.query(
+      `SELECT id, name, code
+       FROM courses
+       WHERE class_id = $1
+       ORDER BY name`,
+      [sectionId]
+    );
+
+    // Get grades for all students in this section
+    const gradesResult = await pool.query(
+      `SELECT 
+        g.id,
+        g.student_id,
+        g.course_id,
+        g.score,
+        g.total,
+        g.type as submission_type
+      FROM grades g
+      WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
+        AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)` ,
+      [sectionId]
+    );
+
+    // Structure the data
+    const gradesMap: Record<string, Record<string, any>> = {};
+    for (const student of studentsResult.rows) {
+      gradesMap[student.id] = {
+        id: student.id,
+        name: student.name,
+        grades: {}
+      };
+    }
+
+    for (const grade of gradesResult.rows) {
+      if (gradesMap[grade.student_id]) {
+        gradesMap[grade.student_id].grades[grade.course_id] = {
+          id: grade.id,
+          score: grade.score,
+          total: grade.total,
+          submission_type: grade.submission_type
+        };
+      }
+    }
+
+    return {
+      students: studentsResult.rows,
+      courses: coursesResult.rows,
+      grades: Object.values(gradesMap)
+    };
+  }
+
+  async generateSectionResults(sectionId: string, branchId: string) {
+    // Get all students in the section
+    const studentsResult = await pool.query(
+      `SELECT s.id
+       FROM students s
+       JOIN classes c ON s.section_id = c.id
+       WHERE c.id = $1`,
+      [sectionId]
+    );
+
+    // Calculate totals, averages, and ranks for each student
+    const results: any[] = [];
+    for (const student of studentsResult.rows) {
+      const gradesResult = await pool.query(
+        `SELECT score, total
+         FROM grades
+         WHERE student_id = $1
+           AND is_submitted = true
+           AND course_id IN (SELECT id FROM courses WHERE class_id = $2)`,
+        [student.id, sectionId]
+      );
+
+      if (gradesResult.rows.length > 0) {
+        const total = gradesResult.rows.reduce((sum, g) => sum + (parseFloat(g.score) || 0), 0);
+        const average = total / gradesResult.rows.length;
+
+        results.push({
+          student_id: student.id,
+          total,
+          average: parseFloat(average.toFixed(2))
+        });
+      }
+    }
+
+    // Calculate ranks
+    results.sort((a, b) => b.total - a.total);
+    results.forEach((result, index) => {
+      result.rank = index + 1;
+    });
+
+    // Update the database with calculated values
+    for (const result of results) {
+      await pool.query(
+        `UPDATE grades
+         SET total = $1, average = $2, rank = $3
+         WHERE student_id = $4
+           AND course_id IN (SELECT id FROM courses WHERE class_id = $5)`,
+        [result.total, result.average, result.rank, result.student_id, sectionId]
+      );
+    }
+
+    return results;
+  }
+
+  // --- Teacher Leaderboard Methods ---
+  
+  async getLeaderboard(branchId: string) {
+    const result = await pool.query(
+      `SELECT 
+        t.id as teacher_id,
+        u.name as teacher_name,
+        COALESCE(t.vp_rating, 0) as vp_rating,
+        (
+          SELECT COUNT(*)
+          FROM teacher_of_week_votes v
+          JOIN branches b ON v.branch_id = b.id
+          WHERE v.teacher_id = t.id 
+            AND v.created_at >= COALESCE(b.leaderboard_last_reset, '1970-01-01'::timestamptz)
+        ) as student_votes,
+        (
+          SELECT COALESCE(SUM(dean_rating), 0)
+          FROM weekly_plans wp
+          JOIN branches b ON t.branch_id = b.id
+          WHERE wp.teacher_id = t.id
+            AND wp.created_at >= COALESCE(b.leaderboard_last_reset, '1970-01-01'::timestamptz)
+        ) as plan_rating_sum
+      FROM teachers t
+      JOIN users u ON t.user_id = u.id
+      WHERE t.branch_id = $1 AND u.status != 'Revoked'
+      ORDER BY u.name`,
+      [branchId]
+    );
+
+    // Calculate total points
+    const leaderboard = result.rows.map(row => {
+      const studentVotes = parseInt(row.student_votes) || 0;
+      const vpRating = parseInt(row.vp_rating) || 0;
+      const planRatingSum = parseFloat(row.plan_rating_sum) || 0;
+      const totalPoints = studentVotes + (vpRating * 100) + (planRatingSum * 10);
+      
+      return {
+        ...row,
+        student_votes: studentVotes,
+        vp_rating: vpRating,
+        plan_rating_sum: planRatingSum,
+        total_points: totalPoints
+      };
+    });
+
+    // Sort by points descending
+    return leaderboard.sort((a, b) => b.total_points - a.total_points);
+  }
+
+  async rateTeacher(teacherId: string, rating: number, branchId: string) {
+    // Ensure teacher belongs to this branch
+    const teacherCheck = await pool.query(
+      'SELECT id FROM teachers WHERE id = $1 AND branch_id = $2',
+      [teacherId, branchId]
+    );
+
+    if (teacherCheck.rows.length === 0) {
+      throw new Error('Teacher not found or access denied');
+    }
+
+    const result = await pool.query(
+      `UPDATE teachers SET vp_rating = $1 WHERE id = $2 RETURNING *`,
+      [rating, teacherId]
+    );
+
+    return result.rows[0];
+  }
+
+  async resetLeaderboard(branchId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Update leaderboard_last_reset for the branch
+      await client.query(
+        `UPDATE branches SET leaderboard_last_reset = CURRENT_TIMESTAMP WHERE id = $1`,
+        [branchId]
+      );
+
+      // Reset vp_rating for all teachers in this branch
+      await client.query(
+        `UPDATE teachers SET vp_rating = 0 WHERE branch_id = $1`,
+        [branchId]
+      );
+
+      await client.query('COMMIT');
+      return { success: true, message: 'Leaderboard reset successfully' };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+}
 
 export default new VicePrincipalService();
