@@ -12,6 +12,26 @@ import {
 import logger from '../utils/logger';
 
 class SchoolAdminController {
+  async toggleRegistration(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { open } = req.body;
+      const adminId = req.user!.id;
+      if (typeof open !== 'boolean') {
+        throw new Error('open must be a boolean');
+      }
+      
+      const settings = await superAdminService.updateSystemSettings({ registration_open: open ? 'true' : 'false' }, adminId);
+      
+      res.json({
+        success: true,
+        data: settings,
+        message: `Registration is now ${open ? 'open' : 'closed'}`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // User Management (existing methods)
   async registerUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

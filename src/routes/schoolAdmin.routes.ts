@@ -85,7 +85,9 @@ router.post('/applications',
 router.get('/applications', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getPendingApplications);
 router.get('/applications/:id/transcript', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getApplicationTranscript);
 router.patch('/applications/:id/status', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.updateApplicationStatus);
+router.patch('/system-settings/registration', schoolAdminController.toggleRegistration);
 
+// User Management
 // ============================================================
 // SCHOOL ADMIN ONLY ROUTES
 // ============================================================
