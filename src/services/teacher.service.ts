@@ -389,7 +389,7 @@ class TeacherService {
   }
 
   // Get assigned classes (teacher courses with class/section context)
-  async getAssignedClasses(teacherId: string) {
+  async getAssignedClasses(teacherId: string, purpose?: string) {
     const teacherResult = await pool.query(
       'SELECT * FROM teachers WHERE user_id = $1',
       [teacherId]
@@ -400,6 +400,73 @@ class TeacherService {
     }
 
     const teacher = teacherResult.rows[0];
+
+    if (purpose === 'grades') {
+      const result = await pool.query(
+        `SELECT 
+          co.id AS course_id,
+          c.id AS class_id,
+          c.id AS id,
+          c.name,
+          c.section,
+          c.grade AS grade_level,
+          c.capacity,
+          co.name AS subject,
+          (SELECT COUNT(*)::int FROM students s WHERE s.section_id = c.id) AS "enrolledStudents",
+          (SELECT COUNT(*)::int FROM students s WHERE s.section_id = c.id) AS actual_student_count
+        FROM courses co
+        JOIN classes c ON co.class_id = c.id
+        WHERE co.teacher_id = $1
+        ORDER BY c.name, c.section`,
+        [teacher.id]
+      );
+      return result.rows;
+    }
+
+    if (purpose === 'attendance') {
+      const result = await pool.query(
+        `WITH teacher_classes_combined AS (
+          -- 1. class_teachers table
+          SELECT 
+            c.id AS class_id,
+            c.name,
+            c.section,
+            c.grade AS grade_level,
+            c.capacity,
+            'Assigned Class'::text AS subject
+          FROM class_teachers ct
+          JOIN classes c ON ct.class_id = c.id
+          WHERE ct.teacher_id = $1
+
+          UNION
+
+          -- 2. classes table (teacher_id column)
+          SELECT 
+            c.id AS class_id,
+            c.name,
+            c.section,
+            c.grade AS grade_level,
+            c.capacity,
+            'Assigned Class'::text AS subject
+          FROM classes c
+          WHERE c.teacher_id = $1
+        )
+        SELECT 
+          class_id AS id,
+          class_id,
+          name,
+          section,
+          grade_level,
+          capacity,
+          subject,
+          (SELECT COUNT(*)::int FROM students s WHERE s.section_id = class_id) AS "enrolledStudents",
+          (SELECT COUNT(*)::int FROM students s WHERE s.section_id = class_id) AS actual_student_count
+        FROM teacher_classes_combined
+        ORDER BY name, section`,
+        [teacher.id]
+      );
+      return result.rows;
+    }
 
     const result = await pool.query(
       `WITH teacher_classes_combined AS (
@@ -648,13 +715,14 @@ class TeacherService {
       `INSERT INTO communication_logs
        (student_id, teacher_id, week_ending, rating_uniform, rating_materials,
         rating_homework, rating_participation, rating_conduct, rating_social,
-        rating_punctuality, rating_note_taking, teacher_note)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        rating_punctuality, rating_note_taking, rating_excellent, teacher_note)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (student_id, week_ending)
        DO UPDATE SET
          rating_uniform = $4, rating_materials = $5, rating_homework = $6,
          rating_participation = $7, rating_conduct = $8, rating_social = $9,
-         rating_punctuality = $10, rating_note_taking = $11, teacher_note = $12
+         rating_punctuality = $10, rating_note_taking = $11, rating_excellent = $12,
+         teacher_note = $13
        RETURNING *`,
       [
         logData.studentId,
@@ -668,6 +736,7 @@ class TeacherService {
         logData.ratingSocial,
         logData.ratingPunctuality,
         logData.ratingNoteTaking,
+        logData.ratingExcellent,
         logData.teacherNote || null
       ]
     );

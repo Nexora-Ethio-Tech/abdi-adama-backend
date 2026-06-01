@@ -16,24 +16,13 @@ import pool from '../config/db';
  * Removes any records that are outside the current weekly window.
  */
 export const performCommunicationCleanup = async () => {
-  try {
-    // We define "old" as anything where the week_ending is older than the most recent Friday.
-    // If today is Friday, Sunday's record is the new one.
-    // If today is Thursday, Sunday's record is the one to be deleted tonight.
-    
-    // Logic: Delete records where week_ending is 5 or more days old.
-    // This ensures that a record posted for Sunday stays through the following Thursday and is deleted on Friday morning.
-    await pool.query(
-      "DELETE FROM communication_logs WHERE week_ending <= CURRENT_DATE - INTERVAL '5 days'"
-    );
-  } catch (err) {
-    console.error('[commBookUtils] Cleanup failed:', err);
-  }
+  // Historical communication logs are now preserved for parents to view.
+  // No-op to prevent deletion of records.
 };
 
 /**
  * Returns a filter for the active communication log window.
  */
 export const getActiveCommLogSQL = () => {
-  return "week_ending > CURRENT_DATE - INTERVAL '5 days'";
+  return "1=1"; // Return all logs to enable parent history
 };

@@ -74,14 +74,15 @@ const weeklyPlanSchema = Joi.object({
 const communicationLogSchema = Joi.object({
   studentId: Joi.string().uuid().required(),
   weekEnding: Joi.date().iso().required(),
-  ratingUniform: Joi.number().integer().min(0).max(3).required(),
-  ratingMaterials: Joi.number().integer().min(0).max(3).required(),
-  ratingHomework: Joi.number().integer().min(0).max(3).required(),
-  ratingParticipation: Joi.number().integer().min(0).max(3).required(),
-  ratingConduct: Joi.number().integer().min(0).max(3).required(),
-  ratingSocial: Joi.number().integer().min(0).max(3).required(),
-  ratingPunctuality: Joi.number().integer().min(0).max(3).required(),
-  ratingNoteTaking: Joi.number().integer().min(0).max(3).required(),
+  ratingUniform: Joi.number().integer().min(0).max(5).required(),
+  ratingMaterials: Joi.number().integer().min(0).max(5).required(),
+  ratingHomework: Joi.number().integer().min(0).max(5).required(),
+  ratingParticipation: Joi.number().integer().min(0).max(5).required(),
+  ratingConduct: Joi.number().integer().min(0).max(5).required(),
+  ratingSocial: Joi.number().integer().min(0).max(5).required(),
+  ratingPunctuality: Joi.number().integer().min(0).max(5).required(),
+  ratingNoteTaking: Joi.number().integer().min(0).max(5).required(),
+  ratingExcellent: Joi.number().integer().min(0).max(5).required(),
   teacherNote: Joi.string().allow('')
 });
 

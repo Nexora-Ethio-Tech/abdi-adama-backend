@@ -145,8 +145,9 @@ class TeacherController {
   async getAssignedClasses(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const teacherId = req.user!.id;
+      const { purpose } = req.query;
 
-      const classes = await teacherService.getAssignedClasses(teacherId);
+      const classes = await teacherService.getAssignedClasses(teacherId, purpose as string);
 
       res.json({
         success: true,

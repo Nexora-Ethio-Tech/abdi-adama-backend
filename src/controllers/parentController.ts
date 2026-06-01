@@ -190,6 +190,7 @@ export const getChildCommunicationLogs = async (req: AuthRequest, res: Response)
          cl.rating_social,
          cl.rating_punctuality,
          cl.rating_note_taking,
+         cl.rating_excellent,
          cl.teacher_note,
          to_char(cl.week_ending, 'YYYY-MM-DD') AS week_ending_formatted,
          u.name AS teacher_name
@@ -197,9 +198,7 @@ export const getChildCommunicationLogs = async (req: AuthRequest, res: Response)
        LEFT JOIN teachers t ON cl.teacher_id = t.id
        LEFT JOIN users u ON t.user_id = u.id
        WHERE cl.student_id = $1
-         AND ${getActiveCommLogSQL()}
-       ORDER BY cl.week_ending DESC
-       LIMIT 1`,
+       ORDER BY cl.week_ending DESC`,
       [studentId]
     );
 
