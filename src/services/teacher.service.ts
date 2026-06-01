@@ -65,7 +65,8 @@ class TeacherService {
         sa.date
       FROM students s
       JOIN users u ON s.user_id = u.id
-      JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+      JOIN classes c ON s.section_id = c.id 
+        OR (s.section_id IS NULL AND (s.grade = c.name OR s.grade = c.grade) AND s.branch_id = c.branch_id)
       LEFT JOIN student_attendance sa ON s.id = sa.student_id AND sa.date = $2
       WHERE c.id = $1
       ORDER BY u.name`,
@@ -400,41 +401,62 @@ class TeacherService {
 
     const teacher = teacherResult.rows[0];
 
-    const coursesResult = await pool.query(
-      `SELECT
-        c.id,
-        c.id AS course_id,
-        c.name AS subject,
-        c.code,
-        cl.id AS class_id,
-        cl.name,
-        cl.section,
-        cl.grade AS grade_level,
-        COUNT(DISTINCT s.id) AS actual_student_count
-      FROM courses c
-      JOIN classes cl ON c.class_id = cl.id
-      LEFT JOIN students s ON s.section_id = cl.id
-        OR (s.section_id IS NULL AND s.branch_id IS NOT DISTINCT FROM cl.branch_id AND (s.grade = cl.name OR cl.grade = s.grade))
-      WHERE c.teach
-      er_id = $1
-      GROUP BY c.id, cl.id
-      ORDER BY cl.name, c.name`,
-      [teacher.id]
-    );
-
-    if (coursesResult.rows.length > 0) {
-      return coursesResult.rows;
-    }
-
     const result = await pool.query(
-      `SELECT 
-        c.*,
-        COUNT(s.id) as actual_student_count
-      FROM classes c
-      LEFT JOIN students s ON s.grade = c.name AND s.branch_id = c.branch_id
-      WHERE c.teacher_id = $1
-      GROUP BY c.id
-      ORDER BY c.name`,
+      `WITH teacher_classes_combined AS (
+        -- 1. class_teachers table
+        SELECT 
+          c.id AS class_id,
+          c.name,
+          c.section,
+          c.grade AS grade_level,
+          c.capacity,
+          COALESCE(
+            (SELECT string_agg(co.name, ', ') FROM courses co WHERE co.class_id = c.id AND co.teacher_id = ct.teacher_id),
+            'Assigned Class'
+          ) AS subject
+        FROM class_teachers ct
+        JOIN classes c ON ct.class_id = c.id
+        WHERE ct.teacher_id = $1
+
+        UNION
+
+        -- 2. classes table (teacher_id column)
+        SELECT 
+          c.id AS class_id,
+          c.name,
+          c.section,
+          c.grade AS grade_level,
+          c.capacity,
+          'Assigned Class'::text AS subject
+        FROM classes c
+        WHERE c.teacher_id = $1
+
+        UNION
+
+        -- 3. courses table (teacher_id column)
+        SELECT 
+          c.id AS class_id,
+          c.name,
+          c.section,
+          c.grade AS grade_level,
+          c.capacity,
+          co.name AS subject
+        FROM courses co
+        JOIN classes c ON co.class_id = c.id
+        WHERE co.teacher_id = $1
+      )
+      SELECT 
+        class_id AS id,
+        class_id,
+        name,
+        section,
+        grade_level,
+        capacity,
+        subject,
+        (SELECT COUNT(*)::int FROM students s WHERE s.section_id = class_id) AS "enrolledStudents",
+        (SELECT COUNT(*)::int FROM students s WHERE s.section_id = class_id) AS actual_student_count
+      FROM teacher_classes_combined
+      ORDER BY name, section`,
       [teacher.id]
     );
 
@@ -446,17 +468,28 @@ class TeacherService {
     const result = await pool.query(
       `SELECT 
         s.id, s.grade, s.parent_name, s.parent_phone,
-        s.allergies, s.medications, s.chronic_conditions,
+        s.allergies, s.medications, s.chronic_conditions, s.status,
         u.name, u.email, u.digital_id
       FROM students s
       JOIN users u ON s.user_id = u.id
-      JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+      JOIN classes c ON s.section_id = c.id 
+        OR (s.section_id IS NULL AND (s.grade = c.name OR s.grade = c.grade) AND s.branch_id = c.branch_id)
       WHERE c.id = $1
       ORDER BY u.name`,
       [classId]
     );
 
-    return result.rows;
+    return result.rows.map((row: any) => {
+      const nameParts = (row.name || '').trim().split(/\s+/);
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+      return {
+        ...row,
+        digitalId: row.digital_id,
+        firstName,
+        lastName
+      };
+    });
   }
 
   // Submit weekly lesson plan
@@ -685,10 +718,12 @@ class TeacherService {
 
       // Verify teacher has access to this student (student must be in one of teacher's classes)
       const accessResult = await client.query(
-        `SELECT COUNT(*) as count
+        `SELECT COUNT(*)::int as count
          FROM classes c
-         JOIN students s ON s.grade = c.name AND s.branch_id = c.branch_id
-         WHERE c.teacher_id = $1 AND s.id = $2`,
+         JOIN students s ON s.section_id = c.id 
+           OR (s.section_id IS NULL AND (s.grade = c.name OR s.grade = c.grade) AND s.branch_id = c.branch_id)
+         LEFT JOIN class_teachers ct ON ct.class_id = c.id
+         WHERE (c.teacher_id = $1 OR ct.teacher_id = $1) AND s.id = $2`,
         [teacher.id, studentId]
       );
 
@@ -876,7 +911,14 @@ class TeacherService {
 
     // Assigned classes count
     const classesResult = await pool.query(
-      'SELECT COUNT(*) as count FROM classes WHERE teacher_id = $1',
+      `WITH teacher_classes_combined AS (
+        SELECT ct.class_id FROM class_teachers ct WHERE ct.teacher_id = $1
+        UNION
+        SELECT c.id AS class_id FROM classes c WHERE c.teacher_id = $1
+        UNION
+        SELECT co.class_id FROM courses co WHERE co.teacher_id = $1
+      )
+      SELECT COUNT(*)::int as count FROM teacher_classes_combined`,
       [teacher.id]
     );
 

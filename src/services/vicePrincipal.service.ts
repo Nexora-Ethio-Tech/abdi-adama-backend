@@ -176,6 +176,7 @@ class VicePrincipalService {
         u.email,
         u.digital_id,
         u.status,
+        u.staff_profile,
         COALESCE((SELECT COUNT(*) FROM classes c WHERE c.teacher_id = t.id), 0)::int as classes_assigned,
         COALESCE((SELECT COUNT(*) FROM weekly_plans wp WHERE wp.teacher_id = t.id), 0)::int as plans_submitted,
         COALESCE((SELECT COUNT(*) FROM weekly_plans wp WHERE wp.teacher_id = t.id AND wp.status = 'Pending'), 0)::int as plans_pending,
