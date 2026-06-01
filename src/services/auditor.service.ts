@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import { todayEthiopic } from '../utils/ethiopicUtils';
 
 class AuditorService {
   // View all payments (READ ONLY)
@@ -203,13 +204,14 @@ class AuditorService {
       [branchId]
     );
 
+    const ethToday = todayEthiopic();
     const monthlyResult = await pool.query(
       `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
        FROM finance_transactions
        WHERE branch_id = $1
-       AND EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE)
-       AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)`,
-      [branchId]
+       AND LOWER(ethiopic_month) = $2
+       AND ethiopic_year = $3`,
+      [branchId, ethToday.month.toLowerCase(), ethToday.year]
     );
 
     // Count pending fee reduction requests for this branch

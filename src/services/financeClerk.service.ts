@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import schoolAdminService from './schoolAdmin.service';
+import { gregorianToEthiopic, todayEthiopic } from '../utils/ethiopicUtils';
 import { generateCredentials } from '../utils/credentialGenerator';
 import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
 
@@ -223,10 +224,12 @@ class FinanceClerkService {
       }
 
       // Also record a finance_transactions summary (backwards compatibility) - amount is cash collected
+      const dateStr = data.date || new Date().toISOString().slice(0, 10);
+      const ethDate = gregorianToEthiopic(new Date(dateStr));
       await client.query(
-        `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, data.date || new Date().toISOString().slice(0, 10), data.verifiedBy, data.branchId]
+        `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, dateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
       );
 
       // Recompute outstanding and update student_collections
@@ -754,10 +757,11 @@ class FinanceClerkService {
         [data.studentId]
       );
 
+      const ethToday = todayEthiopic();
       await client.query(
         `INSERT INTO finance_transactions
-          (student_id, student_name, amount, type, date, verified_by, branch_id)
-         VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6)`,
+          (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
+         VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6, $7, $8)`,
         [
           data.studentId,
           student.name,
@@ -765,6 +769,8 @@ class FinanceClerkService {
           'Transport Stop Charge',
           data.verifiedBy,
           data.branchId,
+          ethToday.month,
+          ethToday.year
         ]
       );
 
@@ -867,14 +873,15 @@ class FinanceClerkService {
       [branchId]
     );
 
-    // This month's revenue
+    // This month's revenue (Ethiopic)
+    const ethToday = todayEthiopic();
     const monthResult = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) as total
        FROM finance_transactions
        WHERE branch_id = $1 
-       AND EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CURRENT_DATE)
-       AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CURRENT_DATE)`,
-      [branchId]
+       AND LOWER(ethiopic_month) = $2
+       AND ethiopic_year = $3`,
+      [branchId, ethToday.month.toLowerCase(), ethToday.year]
     );
 
     // Pending fee reductions
