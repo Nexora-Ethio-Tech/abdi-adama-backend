@@ -36,7 +36,7 @@ async function main() {
         `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id`,
-        ['FIN-MB-001', 'financeclerk', 'Finance Clerk', financeClerkEmail, passwordHash, 'finance-clerk', branchId, 'Approved', true]
+        ['FIN-MB-001', 'financeclerk', 'Yonas Alemayehu', financeClerkEmail, passwordHash, 'finance-clerk', branchId, 'Approved', true]
       );
       financeClerkId = insertClerkRes.rows[0].id;
       console.log(`✅ Created Finance Clerk user: ${financeClerkEmail} (Password: Finance@2026)`);

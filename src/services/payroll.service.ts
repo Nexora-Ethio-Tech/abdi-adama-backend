@@ -541,17 +541,18 @@ class PayrollService {
     }
 
     if (includeOther) {
-      // Convert the Ethiopic month name to a Gregorian date range so that
-      // transactions stored with Gregorian dates (CURRENT_DATE) are matched correctly.
-      const rangeFn = ETHIOPIC_MONTH_RANGES[month.toLowerCase()];
-      if (rangeFn) {
-        const { start, end } = rangeFn(year);
+      // Query using the native ethiopic_month and ethiopic_year columns
+      // For fallback (Gregorian names), we use the date range logic since those
+      // are not natively stored in the ethiopic_month column.
+      const isEthiopic = !!ETHIOPIC_MONTH_RANGES[month.toLowerCase()];
+      
+      if (isEthiopic) {
         const otherResult = await pool.query(
           `SELECT * FROM finance_transactions
-           WHERE date >= $1 AND date <= $2
+           WHERE LOWER(ethiopic_month) = $1 AND ethiopic_year = $2
              AND student_id IS NULL
            ORDER BY date ASC`,
-          [start, end]
+          [month.toLowerCase(), year]
         );
         otherData = otherResult.rows;
       } else {
