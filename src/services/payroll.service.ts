@@ -2,10 +2,51 @@ import pool from '../config/database';
 import { calculateEthiopianIncomeTax, calculatePension } from '../utils/taxCalculator';
 import { sendPayrollNotification } from '../utils/emailService';
 
-// Map month names to numbers (1-12)
+// Map month names to numbers (1-12) — supports both Gregorian and Ethiopic names
 const MONTH_MAP: { [key: string]: number } = {
+  // Gregorian
   january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
-  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
+  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+  // Ethiopic — approximate Gregorian month number each Ethiopic month *starts* in
+  meskerem: 9, tikimt: 10, hidar: 11, tahsas: 12, tir: 1, yekatit: 2,
+  megabit: 3, miazia: 4, ginbot: 5, sene: 6, hamle: 7, nehase: 8, pagume: 9
+};
+
+/**
+ * Returns the approximate Gregorian date range (inclusive) that covers a given
+ * Ethiopic month. The Ethiopic calendar starts ~11 days after its Gregorian
+ * equivalent, so we cast a slightly wider net (+/- a few days) to avoid
+ * missing edge-case transactions recorded on Gregorian dates.
+ *
+ * Mapping (Ethiopic month → approx. Gregorian range):
+ *   Meskerem  (1)  → Sep 11 – Oct 10
+ *   Tikimt    (2)  → Oct 11 – Nov 09
+ *   Hidar     (3)  → Nov 10 – Dec 09
+ *   Tahsas    (4)  → Dec 10 – Jan 08 (next year)
+ *   Tir       (5)  → Jan 09 – Feb 07
+ *   Yekatit   (6)  → Feb 08 – Mar 09
+ *   Megabit   (7)  → Mar 10 – Apr 08
+ *   Miazia    (8)  → Apr 09 – May 08
+ *   Ginbot    (9)  → May 09 – Jun 07
+ *   Sene      (10) → Jun 08 – Jul 07
+ *   Hamle     (11) → Jul 08 – Aug 06
+ *   Nehase    (12) → Aug 07 – Sep 05
+ *   Pagume    (13) → Sep 06 – Sep 10
+ */
+const ETHIOPIC_MONTH_RANGES: { [key: string]: (ethYear: number) => { start: string; end: string } } = {
+  meskerem: (y) => ({ start: `${y + 7}-09-11`, end: `${y + 7}-10-10` }),
+  tikimt:   (y) => ({ start: `${y + 7}-10-11`, end: `${y + 7}-11-09` }),
+  hidar:    (y) => ({ start: `${y + 7}-11-10`, end: `${y + 7}-12-09` }),
+  tahsas:   (y) => ({ start: `${y + 7}-12-10`, end: `${y + 8}-01-08` }),
+  tir:      (y) => ({ start: `${y + 8}-01-09`, end: `${y + 8}-02-07` }),
+  yekatit:  (y) => ({ start: `${y + 8}-02-08`, end: `${y + 8}-03-09` }),
+  megabit:  (y) => ({ start: `${y + 8}-03-10`, end: `${y + 8}-04-08` }),
+  miazia:   (y) => ({ start: `${y + 8}-04-09`, end: `${y + 8}-05-08` }),
+  ginbot:   (y) => ({ start: `${y + 8}-05-09`, end: `${y + 8}-06-07` }),
+  sene:     (y) => ({ start: `${y + 8}-06-08`, end: `${y + 8}-07-07` }),
+  hamle:    (y) => ({ start: `${y + 8}-07-08`, end: `${y + 8}-08-06` }),
+  nehase:   (y) => ({ start: `${y + 8}-08-07`, end: `${y + 8}-09-05` }),
+  pagume:   (y) => ({ start: `${y + 8}-09-06`, end: `${y + 8}-09-10` }),
 };
 
 class PayrollService {
@@ -477,7 +518,6 @@ class PayrollService {
    * Retrieves data for custom auditor export (Staff Payroll with TIN, Other Transactions)
    */
   async getCustomExportData(month: string, year: number, includeStaff: boolean, includeOther: boolean) {
-    const monthNum = this.monthNameToNumber(month);
     let staffData: any[] = [];
     let otherData: any[] = [];
 
@@ -501,20 +541,39 @@ class PayrollService {
     }
 
     if (includeOther) {
-      const otherResult = await pool.query(
-        `SELECT * FROM finance_transactions 
-         WHERE EXTRACT(MONTH FROM date) = $1 AND EXTRACT(YEAR FROM date) = $2
-           AND student_id IS NULL`,
-        [monthNum, year]
-      );
-      otherData = otherResult.rows;
+      // Convert the Ethiopic month name to a Gregorian date range so that
+      // transactions stored with Gregorian dates (CURRENT_DATE) are matched correctly.
+      const rangeFn = ETHIOPIC_MONTH_RANGES[month.toLowerCase()];
+      if (rangeFn) {
+        const { start, end } = rangeFn(year);
+        const otherResult = await pool.query(
+          `SELECT * FROM finance_transactions
+           WHERE date >= $1 AND date <= $2
+             AND student_id IS NULL
+           ORDER BY date ASC`,
+          [start, end]
+        );
+        otherData = otherResult.rows;
+      } else {
+        // Fallback for non-Ethiopic month names (e.g. "January") — use EXTRACT
+        const monthNum = this.monthNameToNumber(month);
+        const gregYear = year + 8; // Ethiopic year → Gregorian year approx
+        const otherResult = await pool.query(
+          `SELECT * FROM finance_transactions
+           WHERE EXTRACT(MONTH FROM date) = $1 AND EXTRACT(YEAR FROM date) = $2
+             AND student_id IS NULL
+           ORDER BY date ASC`,
+          [monthNum, gregYear]
+        );
+        otherData = otherResult.rows;
+      }
     }
 
     if (staffData.length === 0 && otherData.length === 0) {
-      throw new Error('NO_TRANSACTIONS_FOUND');
+      return { staffData, otherData, empty: true };
     }
 
-    return { staffData, otherData };
+    return { staffData, otherData, empty: false };
   }
 }
 

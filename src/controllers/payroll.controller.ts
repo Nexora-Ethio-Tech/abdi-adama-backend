@@ -248,6 +248,16 @@ class PayrollController {
         isOther
       );
 
+      // No data found — return a friendly JSON notice, not an error
+      if (data.empty) {
+        res.status(200).json({
+          success: false,
+          empty: true,
+          message: `No records were found for ${month} ${year}. There may not be any payroll runs or transactions recorded for this period yet.`
+        });
+        return;
+      }
+
       const buffer = generateCustomExcel(
         month as string,
         Number(year),
@@ -259,16 +269,6 @@ class PayrollController {
       res.setHeader('Content-Disposition', `attachment; filename="auditor_report_${month}_${year}.xlsx"`);
       res.status(200).send(buffer);
     } catch (error: any) {
-      if (error.message === 'NO_TRANSACTIONS_FOUND') {
-        res.status(404).json({
-          success: false,
-          error: {
-            code: 'NOT_FOUND',
-            message: 'There is no transaction registered in the month you selected.'
-          }
-        });
-        return;
-      }
       next(error);
     }
   }

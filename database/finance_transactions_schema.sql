@@ -21,3 +21,13 @@ CREATE INDEX IF NOT EXISTS idx_finance_transactions_student ON finance_transacti
 CREATE INDEX IF NOT EXISTS idx_finance_transactions_date ON finance_transactions(date);
 CREATE INDEX IF NOT EXISTS idx_finance_transactions_type ON finance_transactions(type);
 CREATE INDEX IF NOT EXISTS idx_finance_transactions_branch_date ON finance_transactions(branch_id, date);
+
+-- ============================================================
+-- Idempotent column alterations — safe to run on every boot
+-- ============================================================
+
+-- Allow non-student transactions (e.g. expenses) by making student_id nullable
+ALTER TABLE finance_transactions ALTER COLUMN student_id DROP NOT NULL;
+
+-- Allow non-student transactions by making student_name nullable
+ALTER TABLE finance_transactions ALTER COLUMN student_name DROP NOT NULL;
