@@ -593,14 +593,20 @@ class TeacherService {
       throw new Error('Can only update plans in Draft or Revision Required status');
     }
 
+    // Clear review details if resubmitting for review
+    const isResubmitting = planData.status === 'Pending';
+
     const result = await pool.query(
       `UPDATE weekly_plans SET
        date = $1, content = $2, objectives = $3, teacher_activity = $4,
        time_duration = $5, student_activity = $6, teaching_method = $7,
        teaching_aids = $8, evaluation = $9, remark = $10,
        status = $11, course_id = $12, subject = $13, dept_head_id = $14,
-       week_number = $15, updated_at = NOW()
-       WHERE id = $16
+       week_number = $15,
+       dean_feedback = CASE WHEN $16 = true THEN NULL ELSE dean_feedback END,
+       dean_rating = CASE WHEN $16 = true THEN NULL ELSE dean_rating END,
+       updated_at = NOW()
+       WHERE id = $17
        RETURNING *`,
       [
         planData.date,
@@ -618,6 +624,7 @@ class TeacherService {
         planData.subject || null,
         planData.deptHeadId || null,
         planData.weekNumber || null,
+        isResubmitting,
         planId
       ]
     );
@@ -1044,7 +1051,7 @@ class TeacherService {
   // Get weekly plans submitted to this teacher (as department head)
   async getDeptPlans(teacherUserId: string, status?: string) {
     const teacherResult = await pool.query(
-      'SELECT id FROM teachers WHERE user_id = $1',
+      'SELECT id, is_dean, department FROM teachers WHERE user_id = $1',
       [teacherUserId]
     );
 
@@ -1052,7 +1059,12 @@ class TeacherService {
       throw new Error('Teacher not found');
     }
 
-    const teacherId = teacherResult.rows[0].id;
+    const { id: teacherId, is_dean: isDean, department: deptHeadDept } = teacherResult.rows[0];
+
+    // If not a department head, return empty array immediately
+    if (!isDean) {
+      return [];
+    }
 
     let query = `
       SELECT wp.*, u.name as teacher_name, c.name as course_name
@@ -1064,8 +1076,14 @@ class TeacherService {
     `;
     const params: any[] = [teacherId];
 
+    if (deptHeadDept) {
+      query += ` AND LOWER(t.department) = LOWER($2)`;
+      params.push(deptHeadDept);
+    }
+
     if (status) {
-      query += ' AND wp.status = $2';
+      const statusParamIndex = params.length + 1;
+      query += ` AND wp.status = $${statusParamIndex}`;
       params.push(status);
     }
 
@@ -1078,7 +1096,7 @@ class TeacherService {
   // Review a weekly plan as department head
   async reviewDeptPlan(teacherUserId: string, planId: string, reviewData: { status: string; feedback?: string; rating?: number }) {
     const teacherResult = await pool.query(
-      'SELECT id FROM teachers WHERE user_id = $1',
+      'SELECT id, is_dean, department FROM teachers WHERE user_id = $1',
       [teacherUserId]
     );
 
@@ -1086,11 +1104,19 @@ class TeacherService {
       throw new Error('Teacher not found');
     }
 
-    const teacherId = teacherResult.rows[0].id;
+    const { id: teacherId, is_dean: isDean, department: deptHeadDept } = teacherResult.rows[0];
+
+    // If not a department head, throw error
+    if (!isDean) {
+      throw new Error('Access denied: Only department heads can review plans');
+    }
 
     // Check if the plan exists and is assigned to this department head
     const planCheck = await pool.query(
-      'SELECT id, status FROM weekly_plans WHERE id = $1 AND dept_head_id = $2',
+      `SELECT wp.id, wp.status, wp.teacher_id, t.department 
+       FROM weekly_plans wp 
+       JOIN teachers t ON wp.teacher_id = t.id 
+       WHERE wp.id = $1 AND wp.dept_head_id = $2`,
       [planId, teacherId]
     );
 
@@ -1098,19 +1124,60 @@ class TeacherService {
       throw new Error('Lesson plan not found or not assigned to you for review');
     }
 
-    const result = await pool.query(
-      `UPDATE weekly_plans SET
-       status = $1,
-       dean_feedback = $2,
-       dean_rating = $3,
-       reviewed_by = $4,
-       updated_at = NOW()
-       WHERE id = $5
-       RETURNING *`,
-      [reviewData.status, reviewData.feedback || null, reviewData.rating || null, teacherId, planId]
-    );
+    // Department Heads should only review plans from teachers in their own department
+    if (deptHeadDept && planCheck.rows[0].department && planCheck.rows[0].department.toLowerCase() !== deptHeadDept.toLowerCase()) {
+      throw new Error('Access denied: Teacher belongs to a different department');
+    }
 
-    return result.rows[0];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const result = await client.query(
+        `UPDATE weekly_plans SET
+         status = $1,
+         dean_feedback = $2,
+         dean_rating = $3,
+         reviewed_by = $4,
+         updated_at = NOW()
+         WHERE id = $5
+         RETURNING *`,
+        [reviewData.status, reviewData.feedback || null, reviewData.rating || null, teacherId, planId]
+      );
+
+      if (reviewData.rating) {
+        const ratingPoints = reviewData.rating * 100; // 1 -> 100, 2 -> 200, 3 -> 300
+        await client.query(
+          `INSERT INTO teacher_ratings (teacher_id, weekly_plan_id, rating_value, rated_by)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (weekly_plan_id)
+           DO UPDATE SET rating_value = EXCLUDED.rating_value, rated_by = EXCLUDED.rated_by, created_at = NOW()`,
+          [planCheck.rows[0].teacher_id, planId, ratingPoints, teacherId]
+        );
+
+        // Aggregate total score and update teachers table
+        const sumResult = await client.query(
+          `SELECT COALESCE(SUM(rating_value), 0) as total_score 
+           FROM teacher_ratings 
+           WHERE teacher_id = $1`,
+          [planCheck.rows[0].teacher_id]
+        );
+        const totalScore = parseInt(sumResult.rows[0].total_score) || 0;
+
+        await client.query(
+          `UPDATE teachers SET overall_rating_score = $1 WHERE id = $2`,
+          [totalScore, planCheck.rows[0].teacher_id]
+        );
+      }
+
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // ─── Exam Grade & Subject Management ───────────────────────────────────────

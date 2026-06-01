@@ -52,7 +52,7 @@ async function test() {
 
   for (const s of studentIds) {
     console.log(`\n=================== TESTING FOR ${s.name} (${s.digitalId}) ===================`);
-    
+
     // Get user row
     const userRes = await pool.query(
       `SELECT id, name, role FROM users WHERE digital_id = $1`,

@@ -884,11 +884,11 @@ class VicePrincipalService {
             AND v.created_at >= COALESCE(b.leaderboard_last_reset, '1970-01-01'::timestamptz)
         ) as student_votes,
         (
-          SELECT COALESCE(SUM(dean_rating), 0)
-          FROM weekly_plans wp
+          SELECT COALESCE(SUM(r.rating_value), 0)
+          FROM teacher_ratings r
           JOIN branches b ON t.branch_id = b.id
-          WHERE wp.teacher_id = t.id
-            AND wp.created_at >= COALESCE(b.leaderboard_last_reset, '1970-01-01'::timestamptz)
+          WHERE r.teacher_id = t.id
+            AND r.created_at >= COALESCE(b.leaderboard_last_reset, '1970-01-01'::timestamptz)
         ) as plan_rating_sum,
         (
           SELECT STRING_AGG(DISTINCT COALESCE(cl.grade, cl.name), ', ' ORDER BY COALESCE(cl.grade, cl.name))
@@ -908,7 +908,7 @@ class VicePrincipalService {
       const studentVotes = parseInt(row.student_votes) || 0;
       const vpRating = parseInt(row.vp_rating) || 0;
       const planRatingSum = parseFloat(row.plan_rating_sum) || 0;
-      const totalPoints = studentVotes + (vpRating * 100) + (planRatingSum * 10);
+      const totalPoints = studentVotes + (vpRating * 100) + planRatingSum;
       
       // Parse grades_taught into a sorted unique array, stripping sections
       const extractedGrades = new Set<string>();
@@ -977,9 +977,9 @@ class VicePrincipalService {
         [branchId]
       );
 
-      // Reset vp_rating for all teachers in this branch
+      // Reset vp_rating and overall_rating_score for all teachers in this branch
       await client.query(
-        `UPDATE teachers SET vp_rating = 0 WHERE branch_id = $1`,
+        `UPDATE teachers SET vp_rating = 0, overall_rating_score = 0 WHERE branch_id = $1`,
         [branchId]
       );
 
