@@ -17,6 +17,7 @@ router.post('/public/applications',
   // Controller will handle validation and default branch assignment
   schoolAdminController.createPublicPendingApplication
 );
+router.get('/public/branches', schoolAdminController.getBranches);
 
 router.use(authenticate);
 router.use(requireBranchId);

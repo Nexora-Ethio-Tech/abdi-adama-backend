@@ -390,9 +390,6 @@ class SchoolAdminController {
         return;
       }
 
-      const branchId = req.user!.branch_id;
-      const userId = req.user!.id;
-
       // Extract form data - handle both string and FormData inputs
       const extractField = (field: string): string => {
         const value = req.body[field];
@@ -418,6 +415,22 @@ class SchoolAdminController {
       const chronicConditions = extractField('chronicConditions');
       const medications = extractField('medications');
       const notes = extractField('notes');
+      const branchName = extractField('branchName');
+      let branchId = req.user!.branch_id;
+      const userId = req.user!.id;
+
+      if (branchName) {
+        const resolvedBranchId = await schoolAdminService.getBranchIdByName(branchName);
+        if (!resolvedBranchId) {
+          res.status(400).json({
+            success: false,
+            message: 'Invalid branch name',
+            errors: { branchName: 'Branch Name is required and must match an existing branch.' },
+          });
+          return;
+        }
+        branchId = resolvedBranchId;
+      }
 
       logger.debug('Received application data:', {
         name,
@@ -474,11 +487,11 @@ class SchoolAdminController {
 
       // Ensure branchId exists
       if (!branchId) {
-        logger.error('User missing branch_id:', { userId });
+        logger.error('User missing branch_id and branchName was not provided:', { userId });
         res.status(400).json({
           success: false,
           message: 'User branch not found',
-          errors: { branchId: 'Branch ID is required' },
+          errors: { branchName: 'Branch Name is required' },
         });
         return;
       }
@@ -576,6 +589,18 @@ class SchoolAdminController {
     }
   }
 
+  async getBranches(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branches = await schoolAdminService.getBranches();
+      res.json({
+        success: true,
+        data: branches
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getPendingApplications(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
@@ -603,11 +628,24 @@ class SchoolAdminController {
         return;
       }
 
-      // Use same validation and file handling as authenticated route but determine branchId automatically
-      const defaultBranchId = await schoolAdminService.getDefaultBranchId();
+      const branchName = String(req.body?.branchName || '').trim();
+      if (!branchName) {
+        res.status(400).json({
+          success: false,
+          message: 'Branch Name is required',
+          errors: { branchName: 'Branch Name is required' },
+        });
+        return;
+      }
+
+      const defaultBranchId = await schoolAdminService.getBranchIdByName(branchName);
       if (!defaultBranchId) {
-        logger.error('No default branch found for public application');
-        res.status(500).json({ success: false, message: 'Server misconfiguration: no branch available' });
+        logger.warn('Unknown branch name submitted for public application:', { branchName });
+        res.status(400).json({
+          success: false,
+          message: 'Invalid branch name',
+          errors: { branchName: 'Branch Name must match an existing branch.' },
+        });
         return;
       }
 

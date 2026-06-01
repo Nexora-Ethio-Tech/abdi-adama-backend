@@ -726,6 +726,23 @@ class SchoolAdminService {
     return null;
   }
 
+  async getBranches() {
+    const result = await pool.query(`SELECT id, name FROM branches ORDER BY name`);
+    return result.rows;
+  }
+
+  async getBranchIdByName(branchName: string): Promise<string | null> {
+    const cleanedName = branchName.trim();
+    if (!cleanedName) return null;
+
+    const result = await pool.query(
+      `SELECT id FROM branches WHERE name = $1 LIMIT 1`,
+      [cleanedName]
+    );
+
+    return result.rows.length > 0 ? result.rows[0].id : null;
+  }
+
   // Get application transcript file binary data
   async getApplicationTranscript(applicationId: string, branchId: string) {
     const result = await pool.query(
