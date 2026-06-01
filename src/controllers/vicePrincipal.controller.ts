@@ -428,7 +428,14 @@ class VicePrincipalController {
     try {
       const { sectionId } = req.params;
       const branchId = req.user!.branch_id;
-      const grades = await vicePrincipalService.getSectionGrades(sectionId, branchId!);
+      const { academicYear, semester } = req.query;
+      const parsedSemester = semester !== undefined ? Number(semester) : undefined;
+      const grades = await vicePrincipalService.getSectionGrades(
+        sectionId,
+        branchId!,
+        academicYear as string,
+        parsedSemester
+      );
       res.json({ success: true, data: grades });
     } catch (error) {
       next(error);
@@ -439,7 +446,14 @@ class VicePrincipalController {
     try {
       const { sectionId } = req.params;
       const branchId = req.user!.branch_id;
-      const results = await vicePrincipalService.generateSectionResults(sectionId, branchId!);
+      const { academicYear, semester } = req.body;
+      const parsedSemester = semester !== undefined ? Number(semester) : undefined;
+      const results = await vicePrincipalService.generateSectionResults(
+        sectionId,
+        branchId!,
+        academicYear as string,
+        parsedSemester
+      );
       res.json({ success: true, data: results, message: 'Results generated successfully' });
     } catch (error) {
       next(error);

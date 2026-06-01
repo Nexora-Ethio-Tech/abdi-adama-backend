@@ -402,6 +402,9 @@ class TeacherService {
     const teacher = teacherResult.rows[0];
 
     if (purpose === 'grades') {
+      // Return all classes where this teacher has an active course assignment.
+      // The courses table is the authoritative source for subject-teaching assignments.
+      // Homeroom-only assignments are kept clean by the reconciliation logic (no orphaned course rows).
       const result = await pool.query(
         `SELECT 
           co.id AS course_id,

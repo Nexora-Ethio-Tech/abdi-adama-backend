@@ -295,7 +295,7 @@ class ScheduleService {
 
       for (const row of dedupedRows.values()) {
         const classCheck = await client.query(
-          'SELECT id FROM classes WHERE id = $1 AND branch_id = $2',
+          'SELECT id, name, section FROM classes WHERE id = $1 AND branch_id = $2',
           [row.classId, branchId]
         );
         if (classCheck.rows.length === 0) {
@@ -316,6 +316,32 @@ class ScheduleService {
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [branchId, year, row.classId, row.teacherId, row.subject, row.sessionsPerWeek]
         );
+
+        // Sync the courses table so Grade Entry always reflects the structure.
+        const cls = classCheck.rows[0];
+        const cleanSubject = (row.subject || '').trim();
+        const cleanClassName = (cls.name || '').replace(/\s+/g, '');
+        const cleanSection = (cls.section || '').replace(/\s+/g, '');
+        const subjectCode = `${cleanSubject.substring(0, 4).toUpperCase()}-${cleanClassName}-${cleanSection}`;
+
+        // Upsert: match on class_id + subject name (not teacher, as teacher may change)
+        const existingCourse = await client.query(
+          `SELECT id FROM courses WHERE class_id = $1 AND name = $2`,
+          [row.classId, cleanSubject]
+        );
+
+        if (existingCourse.rows.length === 0) {
+          await client.query(
+            `INSERT INTO courses (name, code, teacher_id, class_id, progress) VALUES ($1, $2, $3, $4, 0)`,
+            [cleanSubject, subjectCode, row.teacherId, row.classId]
+          );
+        } else {
+          // Update teacher & code in case the structure was edited
+          await client.query(
+            `UPDATE courses SET teacher_id = $1, code = $2 WHERE id = $3`,
+            [row.teacherId, subjectCode, existingCourse.rows[0].id]
+          );
+        }
       }
 
       await client.query('COMMIT');
@@ -327,6 +353,7 @@ class ScheduleService {
       client.release();
     }
   }
+
 
   async getStructure(branchId: string, academicYear?: string) {
     const year = academicYear || '2025/2026';

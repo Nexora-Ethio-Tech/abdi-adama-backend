@@ -750,7 +750,28 @@ class VicePrincipalService {
     return result.rows;
   }
 
-  async getSectionGrades(sectionId: string, branchId: string) {
+  private getActiveSemester(): number {
+    const now = new Date();
+    const m = now.getMonth() + 1;
+    const d = now.getDate();
+    if ((m === 9 && d >= 11) || m >= 10 || m === 1) return 1;
+    if (m >= 2 && m <= 6) return 2;
+    return 2; // Jul–Sep 10 summer
+  }
+
+  private getActiveAcademicYear(): string {
+    const now = new Date();
+    const m = now.getMonth() + 1;
+    const d = now.getDate();
+    const gYear = now.getFullYear();
+    const ecYear = (m > 9 || (m === 9 && d >= 11)) ? gYear - 7 : gYear - 8;
+    return `${ecYear + 7}/${ecYear + 8}`;
+  }
+
+  async getSectionGrades(sectionId: string, branchId: string, academicYear?: string, semester?: number) {
+    const activeYear = academicYear || this.getActiveAcademicYear();
+    const activeSem = semester !== undefined ? semester : this.getActiveSemester();
+
     // Get students in the section
     const studentsResult = await pool.query(
       `SELECT s.id, s.user_id, u.name
@@ -782,8 +803,10 @@ class VicePrincipalService {
         g.type as submission_type
       FROM grades g
       WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
-        AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)` ,
-      [sectionId]
+        AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
+        AND g.academic_year = $2
+        AND g.semester = $3` ,
+      [sectionId, activeYear, activeSem]
     );
 
     // Structure the data
@@ -814,7 +837,10 @@ class VicePrincipalService {
     };
   }
 
-  async generateSectionResults(sectionId: string, branchId: string) {
+  async generateSectionResults(sectionId: string, branchId: string, academicYear?: string, semester?: number) {
+    const activeYear = academicYear || this.getActiveAcademicYear();
+    const activeSem = semester !== undefined ? semester : this.getActiveSemester();
+
     // Get all students in the section
     const studentsResult = await pool.query(
       `SELECT s.id
@@ -832,8 +858,10 @@ class VicePrincipalService {
          FROM grades
          WHERE student_id = $1
            AND is_submitted = true
-           AND course_id IN (SELECT id FROM courses WHERE class_id = $2)`,
-        [student.id, sectionId]
+           AND course_id IN (SELECT id FROM courses WHERE class_id = $2)
+           AND academic_year = $3
+           AND semester = $4`,
+        [student.id, sectionId, activeYear, activeSem]
       );
 
       if (gradesResult.rows.length > 0) {
@@ -860,8 +888,10 @@ class VicePrincipalService {
         `UPDATE grades
          SET total = $1, average = $2, rank = $3
          WHERE student_id = $4
-           AND course_id IN (SELECT id FROM courses WHERE class_id = $5)`,
-        [result.total, result.average, result.rank, result.student_id, sectionId]
+           AND course_id IN (SELECT id FROM courses WHERE class_id = $5)
+           AND academic_year = $6
+           AND semester = $7`,
+        [result.total, result.average, result.rank, result.student_id, sectionId, activeYear, activeSem]
       );
     }
 

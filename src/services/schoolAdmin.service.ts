@@ -514,61 +514,54 @@ class SchoolAdminService {
       )
     `);
 
-    // Delete any existing assignments for this class (to allow replacement)
+    // Delete any existing assignments for this class (replace its teacher)
     await pool.query(
       `DELETE FROM class_teachers WHERE class_id = $1`,
       [classId]
     );
 
-    // Insert new assignment
+    // A teacher can only be a homeroom teacher for ONE class at a time.
+    // Remove any other class_teachers entries for this teacher and clean up
+    // the orphaned auto-created courses that are not backed by schedule_structure.
+    try {
+      const oldAssignments = await pool.query(
+        `SELECT class_id FROM class_teachers WHERE teacher_id = $1`,
+        [actualTeacherId]
+      );
+      if (oldAssignments.rows.length > 0) {
+        for (const old of oldAssignments.rows) {
+          // Null out any auto-created course for the old class if it has no schedule_structure backing
+          await pool.query(
+            `UPDATE courses
+             SET teacher_id = NULL
+             WHERE class_id = $1 AND teacher_id = $2
+               AND NOT EXISTS (
+                 SELECT 1 FROM schedule_structure ss
+                 WHERE ss.class_id = $1 AND ss.teacher_id = $2
+               )`,
+            [old.class_id, actualTeacherId]
+          );
+        }
+        await pool.query(
+          `DELETE FROM class_teachers WHERE teacher_id = $1`,
+          [actualTeacherId]
+        );
+      }
+    } catch (cleanupErr: any) {
+      console.error('⚠️ Could not clean up old homeroom assignments:', cleanupErr.message);
+    }
+
+    // Insert new homeroom assignment
     await pool.query(
       `INSERT INTO class_teachers (class_id, teacher_id, branch_id)
        VALUES ($1, $2, $3)`,
       [classId, actualTeacherId, branchId]
     );
 
-    // Auto-create matching course for grades entry
-    try {
-      const teacherInfo = await pool.query(
-        `SELECT t.department, t.subjects, u.name 
-         FROM teachers t 
-         JOIN users u ON t.user_id = u.id 
-         WHERE t.id = $1`,
-        [actualTeacherId]
-      );
-      let subjectName = 'General Subject';
-      if (teacherInfo.rows.length > 0) {
-        const ti = teacherInfo.rows[0];
-        if (ti.name.toLowerCase().includes('alemu')) {
-          subjectName = 'Biology';
-        } else if (ti.subjects && ti.subjects.length > 0) {
-          subjectName = ti.subjects[0];
-        } else if (ti.department && ti.department !== 'N/A' && ti.department !== 'General') {
-          subjectName = ti.department;
-        }
-      }
-
-      const classInfo = await pool.query('SELECT name, section FROM classes WHERE id = $1', [classId]);
-      const className = classInfo.rows[0]?.name || 'Grade';
-      const classSection = classInfo.rows[0]?.section || '1';
-      const cleanClassName = className.replace(/\s+/g, '');
-      const cleanSection = classSection.replace(/\s+/g, '');
-      const subjectCode = `${subjectName.substring(0, 4).toUpperCase()}-${cleanClassName}-${cleanSection}`;
-
-      const courseCheck = await pool.query(
-        'SELECT id FROM courses WHERE class_id = $1 AND teacher_id = $2',
-        [classId, actualTeacherId]
-      );
-      if (courseCheck.rows.length === 0) {
-        await pool.query(
-          `INSERT INTO courses (name, code, teacher_id, class_id, progress)
-           VALUES ($1, $2, $3, $4, 0)`,
-          [subjectName, subjectCode, actualTeacherId, classId]
-        );
-      }
-    } catch (courseErr: any) {
-      console.error('⚠️ Could not auto-create course assignment:', courseErr.message);
-    }
+    // NOTE: We do NOT auto-create a course here anymore.
+    // Homeroom assignments are for Attendance only.
+    // Subject-teaching courses must come from the Schedule Structure (schedule_structure table).
+    // This prevents orphaned course records that pollute the Grade Entry tab.
 
     // Return updated class with teacher data
     const result = await pool.query(
@@ -602,6 +595,23 @@ class SchoolAdminService {
       `DELETE FROM class_teachers WHERE class_id = $1 AND teacher_id = $2 AND branch_id = $3`,
       [classId, teacherId, branchId]
     );
+
+    // Clean up any auto-created course for this class that isn't backed by schedule_structure.
+    // This prevents the teacher from still seeing the class in Grade Entry after being unassigned.
+    try {
+      await pool.query(
+        `UPDATE courses
+         SET teacher_id = NULL
+         WHERE class_id = $1 AND teacher_id = $2
+           AND NOT EXISTS (
+             SELECT 1 FROM schedule_structure ss
+             WHERE ss.class_id = $1 AND ss.teacher_id = $2
+           )`,
+        [classId, teacherId]
+      );
+    } catch (cleanupErr: any) {
+      console.error('⚠️ Could not clean up orphaned course on unassign:', cleanupErr.message);
+    }
 
     return { message: 'Teacher unassigned from class' };
   }
