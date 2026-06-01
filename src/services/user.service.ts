@@ -37,26 +37,26 @@ class UserService {
 
         // Generate username: use provided username or derive from email
         let userUsername = username || email.split('@')[0];
-        
+
         // If no explicit username provided, ensure uniqueness by appending role or suffix
         if (!username) {
           const baseUsername = userUsername;
           let checkUsername = baseUsername;
           let counter = 1;
-          
+
           // Check if username exists and generate a unique one if needed
           while (true) {
             const usernameCheck = await client.query(
               'SELECT id FROM users WHERE username = $1',
               [checkUsername]
             );
-            
+
             if (usernameCheck.rows.length === 0) {
               // Username is available
               userUsername = checkUsername;
               break;
             }
-            
+
             // Username taken, try with suffix (append role or counter)
             if (counter === 1) {
               // First attempt: try appending the role abbreviation
@@ -66,9 +66,9 @@ class UserService {
               // Subsequent attempts: append counter
               checkUsername = `${baseUsername}${counter}`;
             }
-            
+
             counter++;
-            
+
             // Prevent infinite loop
             if (counter > 100) {
               const error: any = new Error('Unable to generate unique username');
