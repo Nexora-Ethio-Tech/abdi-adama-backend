@@ -1,3 +1,5 @@
+import * as xlsx from 'xlsx';
+
 /**
  * Utility for exporting payroll data to Excel (via CSV) and PDF (via print-ready HTML).
  */
@@ -264,4 +266,88 @@ export function generatePayrollHTML(run: PayrollRun, items: PayrollItem[]): stri
   `;
 
   return html;
+}
+
+/**
+ * Generates an Excel buffer with multiple sheets for Auditor Custom Export.
+ */
+export function generateCustomExcel(
+  month: string,
+  year: number,
+  staffData: any[],
+  otherData: any[]
+): Buffer {
+  const wb = xlsx.utils.book_new();
+
+  // Scenario A: Staff Payroll
+  if (staffData.length > 0) {
+    const staffHeaders = [
+      'Employee Name',
+      'TIN Number',
+      'Basic Salary (ETB)',
+      'Transport Allowance (ETB)',
+      'Housing Allowance (ETB)',
+      'Position Allowance (ETB)',
+      'Overtime Hours',
+      'Overtime Amount (ETB)',
+      'Gross Salary (ETB)',
+      'Absent Days',
+      'Absent Penalty (ETB)',
+      'Loan Deduction (ETB)',
+      'Taxable Income (ETB)',
+      'Income Tax (ETB)',
+      'Pension Employee 7% (ETB)',
+      'Pension Employer 11% (ETB)',
+      'Total Deductions (ETB)',
+      'Net Pay (ETB)'
+    ];
+
+    const staffRows = staffData.map(item => ({
+      'Employee Name': item.employee_name,
+      'TIN Number': item.tin_number || 'N/A',
+      'Basic Salary (ETB)': Number(item.basic_salary),
+      'Transport Allowance (ETB)': Number(item.transport_allowance),
+      'Housing Allowance (ETB)': Number(item.housing_allowance),
+      'Position Allowance (ETB)': Number(item.position_allowance),
+      'Overtime Hours': item.overtime_hours,
+      'Overtime Amount (ETB)': Number(item.overtime_amount),
+      'Gross Salary (ETB)': Number(item.gross_salary),
+      'Absent Days': item.absent_days,
+      'Absent Penalty (ETB)': Number(item.penalty_amount),
+      'Loan Deduction (ETB)': Number(item.loan_deduction),
+      'Taxable Income (ETB)': Number(item.taxable_income),
+      'Income Tax (ETB)': Number(item.income_tax),
+      'Pension Employee 7% (ETB)': Number(item.pension_employee),
+      'Pension Employer 11% (ETB)': Number(item.pension_employer),
+      'Total Deductions (ETB)': Number(item.total_deductions),
+      'Net Pay (ETB)': Number(item.net_pay)
+    }));
+
+    const wsStaff = xlsx.utils.json_to_sheet(staffRows, { header: staffHeaders });
+    xlsx.utils.book_append_sheet(wb, wsStaff, 'Staff Payroll');
+  }
+
+  // Scenario B: Other Transactions
+  if (otherData.length > 0) {
+    const otherHeaders = [
+      'Transaction ID',
+      'Date',
+      'Amount (ETB)',
+      'Type',
+      'Verified By'
+    ];
+
+    const otherRows = otherData.map(tx => ({
+      'Transaction ID': tx.id,
+      'Date': new Date(tx.date).toLocaleDateString(),
+      'Amount (ETB)': Number(tx.amount),
+      'Type': tx.type,
+      'Verified By': tx.verified_by || 'System'
+    }));
+
+    const wsOther = xlsx.utils.json_to_sheet(otherRows, { header: otherHeaders });
+    xlsx.utils.book_append_sheet(wb, wsOther, 'Other Transactions');
+  }
+
+  return xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }

@@ -19,6 +19,7 @@ router.patch('/notifications/:id/read', employeeProfileController.markNotificati
 // Liability and report routes (super-admin and auditor only)
 router.get('/liability', roleGuard([UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.getSchoolLiability);
 router.get('/export/:id', roleGuard([UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.exportPayroll);
+router.get('/custom-export', roleGuard([UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.customExport);
 
 // Administrative modification/viewing routes
 router.post('/generate', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), payrollController.generatePayroll);

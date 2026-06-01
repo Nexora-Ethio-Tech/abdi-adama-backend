@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import payrollService from '../services/payroll.service';
-import { generatePayrollCSV, generatePayrollHTML } from '../utils/exportService';
+import { generatePayrollCSV, generatePayrollHTML, generateCustomExcel } from '../utils/exportService';
 
 class PayrollController {
   /**
@@ -217,6 +217,58 @@ class PayrollController {
         res.status(200).send(csvContent);
       }
     } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Custom export for Auditor with Staff Payroll and Other Transactions filtering.
+   */
+  async customExport(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { month, year, includeStaff, includeOther } = req.query;
+
+      if (!month || !year) {
+        res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'month and year are required.' } });
+        return;
+      }
+
+      const isStaff = includeStaff === 'true';
+      const isOther = includeOther === 'true';
+
+      if (!isStaff && !isOther) {
+        res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'At least one export type must be selected.' } });
+        return;
+      }
+
+      const data = await payrollService.getCustomExportData(
+        month as string,
+        Number(year),
+        isStaff,
+        isOther
+      );
+
+      const buffer = generateCustomExcel(
+        month as string,
+        Number(year),
+        data.staffData,
+        data.otherData
+      );
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="auditor_report_${month}_${year}.xlsx"`);
+      res.status(200).send(buffer);
+    } catch (error: any) {
+      if (error.message === 'NO_TRANSACTIONS_FOUND') {
+        res.status(404).json({
+          success: false,
+          error: {
+            code: 'NOT_FOUND',
+            message: 'There is no transaction registered in the month you selected.'
+          }
+        });
+        return;
+      }
       next(error);
     }
   }

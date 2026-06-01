@@ -41,7 +41,11 @@ class EmployeeProfileService {
         data.tinNumber || null
       ]
     );
-    return result.rows[0];
+    const profile = result.rows[0];
+    return {
+      ...profile,
+      total_allowance: Number(profile.transport_allowance || 0) + Number(profile.housing_allowance || 0) + Number(profile.position_allowance || 0)
+    };
   }
 
   /**
@@ -49,9 +53,10 @@ class EmployeeProfileService {
    */
   async getProfile(userId: string) {
     const result = await pool.query(
-      `SELECT u.id as user_id, u.name, u.digital_id, u.role, u.branch_id, u.email, u.status, u.is_active,
+            `SELECT u.id as user_id, u.name, u.digital_id, u.role, u.branch_id, u.email, u.status, u.is_active,
               e.id as profile_id, e.basic_salary, e.transport_allowance, e.housing_allowance,
-              e.position_allowance, e.overtime_rate_per_hour, e.bank_account, e.tin_number
+              e.position_allowance, (COALESCE(e.transport_allowance, 0) + COALESCE(e.housing_allowance, 0) + COALESCE(e.position_allowance, 0)) as total_allowance,
+              e.overtime_rate_per_hour, e.bank_account, e.tin_number
        FROM users u
        LEFT JOIN employee_payroll_profiles e ON u.id = e.user_id
        WHERE u.id = $1`,
@@ -72,7 +77,8 @@ class EmployeeProfileService {
              e.id as profile_id, COALESCE(e.basic_salary, 0) as basic_salary, 
              COALESCE(e.transport_allowance, 0) as transport_allowance, 
              COALESCE(e.housing_allowance, 0) as housing_allowance,
-             COALESCE(e.position_allowance, 0) as position_allowance, 
+              COALESCE(e.position_allowance, 0) as position_allowance,
+              (COALESCE(e.transport_allowance, 0) + COALESCE(e.housing_allowance, 0) + COALESCE(e.position_allowance, 0)) as total_allowance, 
              COALESCE(e.overtime_rate_per_hour, 0) as overtime_rate_per_hour, 
              e.bank_account, e.tin_number
       FROM users u

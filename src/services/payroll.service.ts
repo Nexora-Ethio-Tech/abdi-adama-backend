@@ -472,6 +472,50 @@ class PayrollService {
     const result = await pool.query(query, [month, year]);
     return result.rows[0];
   }
+
+  /**
+   * Retrieves data for custom auditor export (Staff Payroll with TIN, Other Transactions)
+   */
+  async getCustomExportData(month: string, year: number, includeStaff: boolean, includeOther: boolean) {
+    const monthNum = this.monthNameToNumber(month);
+    let staffData: any[] = [];
+    let otherData: any[] = [];
+
+    if (includeStaff) {
+      const runResult = await pool.query(
+        `SELECT id, status FROM payroll_runs WHERE month = $1 AND year = $2 ORDER BY created_at DESC LIMIT 1`,
+        [month, year]
+      );
+      if (runResult.rows.length > 0) {
+        const runId = runResult.rows[0].id;
+        const itemsResult = await pool.query(
+          `SELECT i.*, p.tin_number
+           FROM payroll_items i
+           LEFT JOIN employee_payroll_profiles p ON i.employee_id = p.user_id
+           WHERE i.payroll_run_id = $1
+           ORDER BY i.employee_name ASC`,
+          [runId]
+        );
+        staffData = itemsResult.rows;
+      }
+    }
+
+    if (includeOther) {
+      const otherResult = await pool.query(
+        `SELECT * FROM finance_transactions 
+         WHERE EXTRACT(MONTH FROM date) = $1 AND EXTRACT(YEAR FROM date) = $2
+           AND student_id IS NULL`,
+        [monthNum, year]
+      );
+      otherData = otherResult.rows;
+    }
+
+    if (staffData.length === 0 && otherData.length === 0) {
+      throw new Error('NO_TRANSACTIONS_FOUND');
+    }
+
+    return { staffData, otherData };
+  }
 }
 
 export default new PayrollService();

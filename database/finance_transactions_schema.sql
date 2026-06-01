@@ -5,8 +5,8 @@
 
 CREATE TABLE IF NOT EXISTS finance_transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-  student_name VARCHAR(150) NOT NULL,
+  student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+  student_name VARCHAR(150),
   amount NUMERIC(12, 2) NOT NULL,
   type VARCHAR(50) NOT NULL,
   date DATE NOT NULL,
