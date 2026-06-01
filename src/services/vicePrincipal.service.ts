@@ -366,14 +366,20 @@ class VicePrincipalService {
 
   // Get student transcript
   async getStudentTranscript(studentId: string, branchId: string) {
-    // Get student info
+    // Resolve the student using either the internal UUID or the visible school identifier.
     const studentResult = await pool.query(
       `SELECT 
         s.id, s.grade, s.status,
         u.name, u.email, u.digital_id
       FROM students s
       JOIN users u ON s.user_id = u.id
-      WHERE s.id = $1 AND s.branch_id = $2`,
+      WHERE s.branch_id = $2
+        AND (
+          s.id::text = $1
+          OR u.digital_id = $1
+          OR COALESCE(u.username, '') = $1
+        )
+      LIMIT 1`,
       [studentId, branchId]
     );
 
@@ -396,7 +402,7 @@ class VicePrincipalService {
       LEFT JOIN users u ON t.user_id = u.id
       WHERE g.student_id = $1
       ORDER BY c.name, g.created_at DESC`,
-      [studentId]
+      [student.id]
     );
 
     // Group grades by course and calculate averages
@@ -479,6 +485,42 @@ class VicePrincipalService {
         gradeStatus: overallAverage >= 50 ? 'Passing' : 'Needs Improvement'
       }
     };
+  }
+
+  async searchStudents(branchId: string, query: string) {
+    const searchTerm = `%${query.trim()}%`;
+
+    const result = await pool.query(
+      `SELECT 
+        s.id,
+        u.name,
+        u.digital_id,
+        u.username,
+        s.grade,
+        COALESCE(c.name, s.grade) as section_name
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       LEFT JOIN classes c ON s.section_id = c.id
+       WHERE s.branch_id = $1
+         AND (
+           u.name ILIKE $2
+           OR u.digital_id ILIKE $2
+           OR COALESCE(u.username, '') ILIKE $2
+           OR s.id::text ILIKE $2
+         )
+       ORDER BY u.name
+       LIMIT 20`,
+      [branchId, searchTerm]
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      digitalId: row.digital_id,
+      username: row.username,
+      grade: row.grade,
+      section: row.section_name || 'General'
+    }));
   }
 
   // Get all grade submissions in a branch
@@ -606,39 +648,65 @@ class VicePrincipalService {
     const result = await pool.query(
       `SELECT 
         c.id,
-        c.name as class_name,
+        COALESCE(c.grade, c.name) as grade_name,
+        COALESCE(NULLIF(TRIM(c.section), ''), '1') as section_name,
         COUNT(DISTINCT s.id) as student_count,
-        c.capacity
+        COALESCE(c.capacity, 0) as capacity
       FROM classes c
       LEFT JOIN students s ON s.section_id = c.id
       WHERE c.branch_id = $1
-      GROUP BY c.id, c.name, c.capacity
-      ORDER BY c.name`,
+      GROUP BY c.id, COALESCE(c.grade, c.name), COALESCE(NULLIF(TRIM(c.section), ''), '1'), c.capacity
+      ORDER BY 
+        COALESCE(c.grade, c.name),
+        CASE
+          WHEN COALESCE(NULLIF(TRIM(c.section), ''), '1') ~ '^[0-9]+$' THEN COALESCE(NULLIF(TRIM(c.section), ''), '1')::int
+          ELSE 9999
+        END,
+        COALESCE(NULLIF(TRIM(c.section), ''), '1')`,
       [branchId]
     );
 
     // Group by grade
     const gradesMap: Record<string, any> = {};
     for (const row of result.rows) {
-      const className = row.class_name;
-      const gradeMatch = className.match(/^(?:Grade\s*)?(\d{1,2})\s*([A-Za-z]*)$/i);
-      const gradeName = gradeMatch ? `Grade ${gradeMatch[1]}` : className;
-      const sectionName = gradeMatch ? (gradeMatch[2] || className.replace(gradeName, '').trim() || 'A') : className;
+      const gradeName = row.grade_name || 'Unknown Grade';
+      const sectionName = row.section_name || '1';
+
       if (!gradesMap[gradeName]) {
         gradesMap[gradeName] = {
           grade_name: gradeName,
           sections: []
         };
       }
-      gradesMap[gradeName].sections.push({
-        id: row.id,
-        section_name: sectionName,
-        student_count: parseInt(row.student_count) || 0,
-        capacity: row.capacity || 0
-      });
+
+      const existingSection = gradesMap[gradeName].sections.find((section: any) => section.section_name === sectionName);
+      if (existingSection) {
+        existingSection.student_count += parseInt(row.student_count) || 0;
+        existingSection.capacity = Math.max(existingSection.capacity || 0, row.capacity || 0);
+        if (!existingSection.id) {
+          existingSection.id = row.id;
+        }
+      } else {
+        gradesMap[gradeName].sections.push({
+          id: row.id,
+          section_name: sectionName,
+          student_count: parseInt(row.student_count) || 0,
+          capacity: row.capacity || 0
+        });
+      }
     }
 
-    return Object.values(gradesMap);
+    return Object.values(gradesMap).map((group: any) => ({
+      ...group,
+      sections: group.sections.sort((a: any, b: any) => {
+        const aValue = Number.parseInt(String(a.section_name), 10);
+        const bValue = Number.parseInt(String(b.section_name), 10);
+        if (Number.isFinite(aValue) && Number.isFinite(bValue)) {
+          return aValue - bValue;
+        }
+        return String(a.section_name).localeCompare(String(b.section_name), undefined, { numeric: true, sensitivity: 'base' });
+      })
+    }));
   }
 
   async getStudentsBySection(sectionId: string, branchId: string) {

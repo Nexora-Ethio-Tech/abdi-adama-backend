@@ -212,6 +212,27 @@ class VicePrincipalController {
     }
   }
 
+  async searchStudents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const query = String(req.query.query || '').trim();
+
+      if (!query) {
+        res.json({ success: true, data: [] });
+        return;
+      }
+
+      const students = await vicePrincipalService.searchStudents(branchId!, query);
+
+      res.json({
+        success: true,
+        data: students
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Grade submissions review
   async getGradeSubmissions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

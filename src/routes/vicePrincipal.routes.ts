@@ -61,6 +61,8 @@ router.get('/teachers/leaderboard', vicePrincipalController.getLeaderboard);
 router.post('/teachers/leaderboard/reset', vicePrincipalController.resetLeaderboard);
 router.post('/teachers/:id/rate', vicePrincipalController.rateTeacher);
 
+router.get('/students/search', vicePrincipalController.searchStudents);
+
 router.get('/attendance-summary', vicePrincipalController.getAttendanceSummary);
 router.get('/academic-performance', vicePrincipalController.getAcademicPerformance);
 router.get('/dashboard', vicePrincipalController.getDashboard);
