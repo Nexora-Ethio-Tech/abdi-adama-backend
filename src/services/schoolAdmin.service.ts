@@ -1124,7 +1124,7 @@ class SchoolAdminService {
     const result = await pool.query(
       `SELECT 
         t.*,
-        u.name, u.email, u.digital_id, u.status
+        u.name, u.email, u.digital_id, u.status, u.staff_profile
       FROM teachers t
       JOIN users u ON t.user_id = u.id
       WHERE t.branch_id = $1
@@ -1746,7 +1746,9 @@ class SchoolAdminService {
         // Subjects must be saved in the subjects TEXT[] column in teachers table
         await client.query(
           `UPDATE teachers 
-           SET is_dean = true, 
+           SET is_dean = true,
+               is_room_teacher = false,
+               assigned_room_class = NULL,
                subjects = $1,
                updated_at = NOW() 
            WHERE id = $2`,
@@ -1766,19 +1768,25 @@ class SchoolAdminService {
 
         await client.query(
           `UPDATE teachers 
-           SET is_room_teacher = true, 
-               assigned_room_class = $1,
+           SET is_room_teacher = true,
+               is_dean = false,
+               subjects = $1,
+               assigned_room_class = $2,
                updated_at = NOW() 
-           WHERE id = $2`,
-          [assignedClass || null, teacherId]
+           WHERE id = $3`,
+          [[], assignedClass || null, teacherId]
         );
       } else if (promotionType === 'before-school-educator') {
-        // Can add before-school metadata or flags in teachers table if needed
+        // Clear department/home teacher flags when promoting to before-school educator
         await client.query(
           `UPDATE teachers 
-           SET updated_at = NOW() 
+           SET is_room_teacher = false,
+               is_dean = false,
+               subjects = $1,
+               assigned_room_class = NULL,
+               updated_at = NOW() 
            WHERE id = $2`,
-          [teacherId]
+          [[], teacherId]
         );
       }
 
