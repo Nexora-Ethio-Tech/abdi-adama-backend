@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import vicePrincipalService from '../services/vicePrincipal.service';
 import teacherOfWeekService from '../services/teacherOfWeek.service';
+import { smsService } from '../services/sms.service';
 
 class VicePrincipalController {
   // Absence Queue Management
@@ -356,24 +357,31 @@ class VicePrincipalController {
         return;
       }
 
-      // TODO: Integrate with actual SMS provider (Modem, Twilio, etc.)
-      // For now, we'll mock the SMS sending
-      console.log(`[SMS MOCK] Sending SMS to ${phoneNumbers.length} recipients`);
-      phoneNumbers.forEach((phone: string) => {
-        console.log(`  To: ${phone}`);
-        console.log(`  Message: ${message}`);
-      });
+      console.log(`[SMS] Initiating SMS to ${phoneNumbers.length} recipients`);
+      let successCount = 0;
+      let failureCount = 0;
+
+      for (const phone of phoneNumbers) {
+        const success = await smsService.sendSMS(phone, message);
+        if (success) {
+          successCount++;
+        } else {
+          failureCount++;
+        }
+      }
 
       // Record SMS notification in audit log (optional)
       // You can store this in a notifications table for audit purposes
       const today = new Date().toISOString().split('T')[0];
-      console.log(`[SMS AUDIT] Notification sent on ${today} to ${phoneNumbers.length} parent(s) for ${studentIds?.length || 0} student(s)`);
+      console.log(`[SMS AUDIT] Notification sent on ${today} - Success: ${successCount}, Failed: ${failureCount} for ${studentIds?.length || 0} student(s)`);
 
       res.json({
         success: true,
-        message: `SMS notification sent to ${phoneNumbers.length} parent(s)`,
+        message: `SMS notifications completed. Success: ${successCount}, Failed: ${failureCount}`,
         data: {
           recipientCount: phoneNumbers.length,
+          successCount,
+          failureCount,
           sentAt: new Date().toISOString(),
           studentIds: studentIds || []
         }
