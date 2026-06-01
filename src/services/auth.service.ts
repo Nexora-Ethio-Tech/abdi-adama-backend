@@ -20,7 +20,14 @@ class AuthService {
          LEFT JOIN branches b ON b.id = u.branch_id
          WHERE lower(u.email) = $1
             OR lower(u.username) = $1
-            OR lower(u.digital_id) = $1`,
+            OR lower(u.digital_id) = $1
+         ORDER BY
+           CASE u.role
+             WHEN 'super-admin' THEN 1
+             WHEN 'school-admin' THEN 2
+             ELSE 3
+           END
+         LIMIT 1`,
         [lookupLower]
       );
 
