@@ -131,6 +131,8 @@ async function ensureSchemaExtensions(): Promise<void> {
         END IF;
       END$$;`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_profile JSONB`,
+    // Integration with ZKTeco Biometrics
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS zk_device_id VARCHAR(50) UNIQUE`,
     // Library book code column (used for human-friendly Book ID like BK-1234)
     `ALTER TABLE library_books ADD COLUMN IF NOT EXISTS book_code VARCHAR(50)`,
     // Grading configurations table
