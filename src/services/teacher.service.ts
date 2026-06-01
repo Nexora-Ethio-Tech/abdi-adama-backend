@@ -415,7 +415,8 @@ class TeacherService {
       JOIN classes cl ON c.class_id = cl.id
       LEFT JOIN students s ON s.section_id = cl.id
         OR (s.section_id IS NULL AND s.branch_id IS NOT DISTINCT FROM cl.branch_id AND (s.grade = cl.name OR cl.grade = s.grade))
-      WHERE c.teacher_id = $1
+      WHERE c.teach
+      er_id = $1
       GROUP BY c.id, cl.id
       ORDER BY cl.name, c.name`,
       [teacher.id]
@@ -768,7 +769,7 @@ class TeacherService {
       const otherCourses = [];
 
       for (const course of courseMap.values()) {
-        course.average = course.totalPossible > 0 
+        course.average = course.totalPossible > 0
           ? parseFloat(((course.totalScore / course.totalPossible) * 100).toFixed(2))
           : 0;
 
@@ -784,13 +785,13 @@ class TeacherService {
       const courses = [...myCourses, ...otherCourses];
 
       // Calculate overall average
-      const overallAverage = totalWeight > 0 
+      const overallAverage = totalWeight > 0
         ? parseFloat((totalWeightedScore / totalWeight).toFixed(2))
         : courses.length > 0
           ? parseFloat((courses.reduce((sum, c) => sum + c.average, 0) / courses.length).toFixed(2))
           : 0;
 
-      const myAverage = myCoursesCount > 0 
+      const myAverage = myCoursesCount > 0
         ? parseFloat((myCoursesAverage / myCoursesCount).toFixed(2))
         : 0;
 
