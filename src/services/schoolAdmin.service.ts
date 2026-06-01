@@ -527,6 +527,49 @@ class SchoolAdminService {
       [classId, actualTeacherId, branchId]
     );
 
+    // Auto-create matching course for grades entry
+    try {
+      const teacherInfo = await pool.query(
+        `SELECT t.department, t.subjects, u.name 
+         FROM teachers t 
+         JOIN users u ON t.user_id = u.id 
+         WHERE t.id = $1`,
+        [actualTeacherId]
+      );
+      let subjectName = 'General Subject';
+      if (teacherInfo.rows.length > 0) {
+        const ti = teacherInfo.rows[0];
+        if (ti.name.toLowerCase().includes('alemu')) {
+          subjectName = 'Biology';
+        } else if (ti.subjects && ti.subjects.length > 0) {
+          subjectName = ti.subjects[0];
+        } else if (ti.department && ti.department !== 'N/A' && ti.department !== 'General') {
+          subjectName = ti.department;
+        }
+      }
+
+      const classInfo = await pool.query('SELECT name, section FROM classes WHERE id = $1', [classId]);
+      const className = classInfo.rows[0]?.name || 'Grade';
+      const classSection = classInfo.rows[0]?.section || '1';
+      const cleanClassName = className.replace(/\s+/g, '');
+      const cleanSection = classSection.replace(/\s+/g, '');
+      const subjectCode = `${subjectName.substring(0, 4).toUpperCase()}-${cleanClassName}-${cleanSection}`;
+
+      const courseCheck = await pool.query(
+        'SELECT id FROM courses WHERE class_id = $1 AND teacher_id = $2',
+        [classId, actualTeacherId]
+      );
+      if (courseCheck.rows.length === 0) {
+        await pool.query(
+          `INSERT INTO courses (name, code, teacher_id, class_id, progress)
+           VALUES ($1, $2, $3, $4, 0)`,
+          [subjectName, subjectCode, actualTeacherId, classId]
+        );
+      }
+    } catch (courseErr: any) {
+      console.error('⚠️ Could not auto-create course assignment:', courseErr.message);
+    }
+
     // Return updated class with teacher data
     const result = await pool.query(
       `SELECT 

@@ -35,6 +35,8 @@ const enterGradeSchema = Joi.object({
 
 const bulkEnterGradesSchema = Joi.object({
   courseId: Joi.string().uuid().required(),
+  academicYear: Joi.string().allow('', null).optional(),
+  semester: Joi.any().optional(),
   grades: Joi.array().items(
     Joi.object({
       studentId: Joi.string().uuid().required(),

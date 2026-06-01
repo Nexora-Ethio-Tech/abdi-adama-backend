@@ -676,9 +676,10 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
     return sendError(res, 'User identity not found. Please log in again.', 401);
   }
 
-  if (req.user?.role === 'Parent' && req.query.student_id) {
+  const userRole = (req.user?.role || '').toLowerCase();
+  if (userRole === 'parent' && req.query.student_id) {
     const targetStudentId = req.query.student_id as string;
-    const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
+    const isLinked = await verifyParentLink(req.user?.user_id || '', targetStudentId);
     if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
     queryIdentityId = targetStudentId;
   }
@@ -778,8 +779,9 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
   const targetStudentId = req.query.student_id as string;
 
   // Support Parent Viewing Child
-  if (req.user?.role === 'Parent' && targetStudentId) {
-    const isLinked = await verifyParentLink(req.user.user_id, targetStudentId);
+  const userRole = (req.user?.role || '').toLowerCase();
+  if (userRole === 'parent' && targetStudentId) {
+    const isLinked = await verifyParentLink(req.user?.user_id || '', targetStudentId);
     if (!isLinked) return sendError(res, 'Unauthorized access to student data.', 403);
     queryIdentityId = targetStudentId;
   }
