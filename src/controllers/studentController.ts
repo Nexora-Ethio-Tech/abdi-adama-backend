@@ -5,8 +5,36 @@ import { sendSuccess, sendError } from '../shared/responseUtils';
 import { performAllCleanups } from '../shared/cleanupUtils';
 import teacherOfWeekService from '../services/teacherOfWeek.service';
 
-const CURRENT_ACADEMIC_YEAR = '2025/2026';
-const CURRENT_SEMESTER = 2;
+// ─── Dynamic Academic Period (Ethiopian Calendar) ────────────────────────────
+// Ethiopian New Year (Enkutatash) ≈ September 11.
+// Academic year starts Meskerem (Sep 11) and the EC year label = Gregorian year − 7.
+// Gregorian academic year string = "${ecYear + 7}/${ecYear + 8}"
+//
+// First Semester : Sep 11 – Jan 31  (EC Meskerem – Tir)
+// Second Semester: Feb 1  – Jun 30  (EC Yekatit – Sene)
+// Jul–Sep 10     : summer – treat as end of second semester
+
+function getActiveSemester(): 1 | 2 {
+  const now = new Date();
+  const m = now.getMonth() + 1;
+  const d = now.getDate();
+  if ((m === 9 && d >= 11) || m >= 10 || m === 1) return 1;
+  if (m >= 2 && m <= 6) return 2;
+  return 2; // Jul–Sep 10 summer
+}
+
+function getActiveAcademicYear(): string {
+  const now = new Date();
+  const m = now.getMonth() + 1;
+  const d = now.getDate();
+  const gYear = now.getFullYear();
+  // After Enkutatash → EC year = gYear − 7
+  const ecYear = (m > 9 || (m === 9 && d >= 11)) ? gYear - 7 : gYear - 8;
+  return `${ecYear + 7}/${ecYear + 8}`;
+}
+
+const CURRENT_ACADEMIC_YEAR = getActiveAcademicYear();
+const CURRENT_SEMESTER: 1 | 2 = getActiveSemester();
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
