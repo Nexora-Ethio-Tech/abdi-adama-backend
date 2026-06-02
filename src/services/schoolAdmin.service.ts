@@ -789,7 +789,7 @@ class SchoolAdminService {
     if (!cleanedName) return null;
 
     const result = await pool.query(
-      `SELECT id FROM branches WHERE name = $1 LIMIT 1`,
+      `SELECT id FROM branches WHERE TRIM(LOWER(name)) = LOWER($1) LIMIT 1`,
       [cleanedName]
     );
 

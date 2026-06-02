@@ -14,8 +14,11 @@ async function ensureSchemaExtensions(): Promise<void> {
   const path = require('path');
   
   const migrationFiles = [
-    'complete_schema.sql',
-    '2ndmigration_super_admin_seed.sql'
+    '1stcomplete_schemafulldb_dumped.sql',
+    '2ndmigration_super_admin_seed.sql',
+    '3rd_online_exams_and_ratings.sql',
+    '4thfix_schedule_varchar_limits.sql',
+    '5th_fix_varchar10_limits.sql',
   ];
 
   for (const fileName of migrationFiles) {

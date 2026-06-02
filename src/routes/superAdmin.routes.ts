@@ -45,6 +45,22 @@ const systemSettingsSchema = Joi.object({
   active_academic_year_id: Joi.alternatives().try(Joi.string().uuid(), Joi.string().valid(''), Joi.valid(null)).optional(),
 });
 
+// SMTP settings schema with example placeholders for the Super Admin settings UI
+const smtpSettingsSchema = Joi.object({
+  smtp_host: Joi.string().hostname().required().example('smtp.gmail.com'),
+  smtp_port: Joi.number().integer().min(1).max(65535).required().example(587),
+  smtp_user: Joi.string().email().required().example('abdiadamaschooloffice@gmail.com'),
+  smtp_from: Joi.string().required().example('Abdi Adama School IMS <abdiadamaschooloffice@gmail.com>').custom((value, helpers) => {
+    const emailOnly = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const displayNameWithEmail = /^.+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/;
+    if (emailOnly.test(value) || displayNameWithEmail.test(value)) {
+      return value;
+    }
+    return helpers.error('any.invalid');
+  }, 'SMTP from address validation'),
+  smtp_pass: Joi.string().allow('').optional().example('gdgg eify uzec fhox'),
+});
+
 const createUserSchema = Joi.object({
   name: Joi.string().required(),
   email: Joi.string().email().required(),
@@ -121,9 +137,13 @@ router.delete('/branch-grade-fees/:id', superAdminController.deleteBranchGradeFe
 router.post('/profit-targets', validate(profitTargetSchema), superAdminController.upsertMonthlyProfitTarget);
 
 // SMTP / Email Settings Management
+const smtpTestSchema = Joi.object({
+  email: Joi.string().email().required()
+});
+
 router.get('/smtp-settings', superAdminController.getSmtpSettings);
-router.put('/smtp-settings', validate(systemSettingsSchema), superAdminController.updateSmtpSettings);
-router.post('/smtp-settings/test', superAdminController.testSmtpSettings);
+router.put('/smtp-settings', validate(smtpSettingsSchema), superAdminController.updateSmtpSettings);
+router.post('/smtp-settings/test', validate(smtpTestSchema), superAdminController.testSmtpSettings);
 
 // System settings (branding, contact, global flags)
 router.get('/system-settings', superAdminController.getSystemSettings);

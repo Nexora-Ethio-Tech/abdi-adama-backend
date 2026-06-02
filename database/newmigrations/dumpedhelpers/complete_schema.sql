@@ -4,8 +4,6 @@
 
 -- Dumped from database version 17.4
 -- Dumped by pg_dump version 17.4
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -5592,4 +5590,8 @@ ALTER TABLE ONLY public.weekly_plans
 ALTER TABLE ONLY public.weekly_plans
     ADD CONSTRAINT weekly_plans_teacher_id_fkey FOREIGN KEY (teacher_id) REFERENCES public.teachers(id) ON DELETE CASCADE;
 
+
+--
+-- PostgreSQL database dump complete
+--
 

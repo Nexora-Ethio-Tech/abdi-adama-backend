@@ -1,4 +1,3 @@
--- Seed super-admin user if no super-admin exists
 DO $$ 
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.users WHERE role = 'super-admin') THEN
@@ -9,8 +8,8 @@ BEGIN
       'abdiadamaschooloffice@gmail.com', 
       '$2a$12$OPPdSZBzk56MXIHrYhTo0eYX8KHCOQD8kotlmMqpqpqcslOwlpU/a', 
       'super-admin', 
-      'SA-001', 
-      'Active'
+      'SA-001',
+      'Approved'
     );
   END IF;
 END $$;
