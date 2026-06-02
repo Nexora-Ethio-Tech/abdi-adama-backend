@@ -33,8 +33,18 @@ startKeepalive();
 app.use(helmet());
 
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
-  credentials: true
+  origin: [
+    'http://abdi-adama.com',
+    'https://abdi-adama.com',
+    'http://www.abdi-adama.com',
+    'https://www.abdi-adama.com',
+    'http://localhost:5173',
+    'http://localhost:4173',
+    ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : [])
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
 
 const limiter = rateLimit({
