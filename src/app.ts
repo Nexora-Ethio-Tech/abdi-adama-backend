@@ -33,15 +33,8 @@ startKeepalive();
 app.use(helmet());
 
 app.use(cors({
-  origin: [
-    'http://abdi-adama.com',
-    'https://abdi-adama.com',
-    'http://www.abdi-adama.com',
-    'https://www.abdi-adama.com',
-    'http://localhost:5173',
-    'http://localhost:4173',
-    ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : [])
-  ],
+  // Dynamically allow all origins (reflects the request origin back)
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
