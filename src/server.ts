@@ -48,6 +48,33 @@ async function bootstrap(): Promise<void> {
 
     await ensureSchemaExtensions();
 
+      // Ensure email_config has sensible placeholders so the Super Admin UI shows values
+      async function ensureEmailConfigDefaults() {
+        try {
+          const defaults: Record<string, string> = {
+            smtp_host: process.env.SMTP_HOST || 'smtp.gmail.com',
+            smtp_port: process.env.SMTP_PORT || '587',
+            smtp_user: process.env.SMTP_USER || '',
+            smtp_from: process.env.SMTP_FROM || (process.env.SMTP_USER || ''),
+          };
+
+          for (const [key, value] of Object.entries(defaults)) {
+            // Only insert when key is missing; preserve any existing admin-provided values
+            await pool.query(
+              `INSERT INTO email_config (key, value, updated_by, updated_at)
+               VALUES ($1, $2, 'system', NOW())
+               ON CONFLICT (key) DO NOTHING`,
+              [key, value]
+            );
+          }
+          logger.info('Email config defaults ensured');
+        } catch (err: any) {
+          logger.warn(`Could not ensure email config defaults: ${err.message}`);
+        }
+      }
+
+      await ensureEmailConfigDefaults();
+
     // Keep monthly collections statuses fresh for current month
     const runCollectionsSync = async () => {
       try {
