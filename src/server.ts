@@ -10,350 +10,31 @@ dotenv.config();
 const PORT = process.env.PORT || 5000;
 
 async function ensureSchemaExtensions(): Promise<void> {
-  const migrations = [
-    // Branches — legacy installs may still be missing the branch code column
-    `ALTER TABLE branches ADD COLUMN IF NOT EXISTS code VARCHAR(20)`,
-    // Classes — capacity & section columns (from schema_additions.sql)
-    `ALTER TABLE classes ADD COLUMN IF NOT EXISTS capacity INT DEFAULT 0`,
-    `ALTER TABLE classes ADD COLUMN IF NOT EXISTS section VARCHAR(10)`,
-    `ALTER TABLE classes ADD COLUMN IF NOT EXISTS grade VARCHAR(10)`,
-    `ALTER TABLE classes ADD COLUMN IF NOT EXISTS current_count INT DEFAULT 0`,
-    `ALTER TABLE students ADD COLUMN IF NOT EXISTS requested_aid_amount NUMERIC(12,2)`,
-    // Loans — allow pending/approved workflow (fixes loans_status_check on older DBs)
-    `ALTER TABLE loans ADD COLUMN IF NOT EXISTS audited_by UUID REFERENCES users(id) ON DELETE SET NULL`,
-    `ALTER TABLE loans ADD COLUMN IF NOT EXISTS audited_at TIMESTAMPTZ`,
-    `ALTER TABLE loans ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`,
-    `ALTER TABLE loans ADD COLUMN IF NOT EXISTS rejection_reason TEXT`,
-    `ALTER TABLE loans DROP CONSTRAINT IF EXISTS loans_status_check`,
-    `ALTER TABLE loans ADD CONSTRAINT loans_status_check CHECK (status IN ('pending', 'approved', 'active', 'completed', 'rejected', 'cancelled'))`,
-    // Pending applications — new columns used by academic application workflow
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_name VARCHAR(200)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_email VARCHAR(255)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS applicant_phone VARCHAR(30)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS digital_id VARCHAR(50)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS grade_applying VARCHAR(20)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS parent_phone VARCHAR(30)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS gender VARCHAR(10)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS address TEXT`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS notes TEXT`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL`,
-    // Missing transcript and application columns
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS transcript_data BYTEA`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS transcript_mime_type VARCHAR(100)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS transcript_file_name VARCHAR(255)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS transcript_file_size BIGINT`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS created_by UUID`,
-    // Finance workflow fields
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS finance_status VARCHAR(20)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS finance_user_id UUID REFERENCES users(id) ON DELETE SET NULL`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS finance_approved_at TIMESTAMPTZ`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS payment_amount NUMERIC`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(255)`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS student_user_id UUID REFERENCES users(id) ON DELETE SET NULL`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS parent_user_id UUID REFERENCES users(id) ON DELETE SET NULL`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS credentials_generated_at TIMESTAMPTZ`,
-    `ALTER TABLE pending_applications ADD COLUMN IF NOT EXISTS registration_completed_at TIMESTAMPTZ`,
-    `DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'pending_applications' AND column_name = 'name'
-        ) THEN
-          IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'pending_applications' AND column_name = 'applicant_name'
-          ) THEN
-            UPDATE pending_applications
-            SET applicant_name = name
-            WHERE applicant_name IS NULL AND name IS NOT NULL;
-            ALTER TABLE pending_applications ALTER COLUMN name DROP NOT NULL;
-          ELSE
-            ALTER TABLE pending_applications RENAME COLUMN name TO applicant_name;
-          END IF;
-        END IF;
-
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'pending_applications' AND column_name = 'email'
-        ) THEN
-          IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'pending_applications' AND column_name = 'applicant_email'
-          ) THEN
-            UPDATE pending_applications
-            SET applicant_email = email
-            WHERE applicant_email IS NULL AND email IS NOT NULL;
-            ALTER TABLE pending_applications ALTER COLUMN email DROP NOT NULL;
-          ELSE
-            ALTER TABLE pending_applications RENAME COLUMN email TO applicant_email;
-          END IF;
-        END IF;
-
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'pending_applications' AND column_name = 'phone'
-        ) THEN
-          IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'pending_applications' AND column_name = 'applicant_phone'
-          ) THEN
-            UPDATE pending_applications
-            SET applicant_phone = phone
-            WHERE applicant_phone IS NULL AND phone IS NOT NULL;
-            ALTER TABLE pending_applications ALTER COLUMN phone DROP NOT NULL;
-          ELSE
-            ALTER TABLE pending_applications RENAME COLUMN phone TO applicant_phone;
-          END IF;
-        END IF;
-
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'pending_applications' AND column_name = 'last_grade'
-        ) THEN
-          IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'pending_applications' AND column_name = 'grade_applying'
-          ) THEN
-            UPDATE pending_applications
-            SET grade_applying = last_grade
-            WHERE grade_applying IS NULL AND last_grade IS NOT NULL;
-            ALTER TABLE pending_applications ALTER COLUMN last_grade DROP NOT NULL;
-          ELSE
-            ALTER TABLE pending_applications RENAME COLUMN last_grade TO grade_applying;
-          END IF;
-        END IF;
-
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'pending_applications' AND column_name = 'date'
-        ) THEN
-          ALTER TABLE pending_applications ALTER COLUMN date DROP NOT NULL;
-        END IF;
-      END$$;`,
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_profile JSONB`,
-    // Integration with ZKTeco Biometrics
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS zk_device_id VARCHAR(50) UNIQUE`,
-    // Library book code column (used for human-friendly Book ID like BK-1234)
-    `ALTER TABLE library_books ADD COLUMN IF NOT EXISTS book_code VARCHAR(50)`,
-    // Grading configurations table
-    `CREATE TABLE IF NOT EXISTS grading_configs (
-      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      grade_level VARCHAR(20)  NOT NULL,
-      method_id   VARCHAR(30)  NOT NULL,
-      label       VARCHAR(50)  NOT NULL,
-      max_weight  INT          NOT NULL,
-      created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-      UNIQUE(grade_level, method_id)
-    )`,
-    // Seed default grading configs if table is empty
-    `INSERT INTO grading_configs (grade_level, method_id, label, max_weight)
-     SELECT grade_level, method_id, label, max_weight FROM (VALUES
-       ('default', 'mid',        'Mid-Exam',       30),
-       ('default', 'final',      'Final-Exam',     50),
-       ('default', 'quiz',       'Quiz',           10),
-       ('default', 'assignment', 'Assignment',     10),
-       ('10',      'mid',        'Mid-Exam',       30),
-       ('10',      'final',      'Final-Exam',     40),
-       ('10',      'quiz',       'Quiz',           10),
-       ('10',      'classwork',  'Class-Work',     10),
-       ('10',      'activity',   'Class Activity', 10),
-       ('9',       'mid',        'Mid-Exam',       25),
-       ('9',       'final',      'Final-Exam',     50),
-       ('9',       'homework',   'Home-Work',      15),
-       ('9',       'test',       'Test',           10)
-     ) AS v(grade_level, method_id, label, max_weight)
-     WHERE NOT EXISTS (SELECT 1 FROM grading_configs)`,
-    // Grades table
-    `CREATE TABLE IF NOT EXISTS grades (
-      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      student_id  UUID          NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-      course_id   UUID          NOT NULL REFERENCES courses(id)  ON DELETE CASCADE,
-      type        VARCHAR(30)   NOT NULL,
-      weight      VARCHAR(10),
-      score       NUMERIC(6,2),
-      total       NUMERIC(6,2)  NOT NULL,
-      created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
-    )`,
-    `ALTER TABLE grades ADD COLUMN IF NOT EXISTS academic_year VARCHAR(20) DEFAULT '2025/2026'`,
-    `ALTER TABLE grades ADD COLUMN IF NOT EXISTS semester SMALLINT DEFAULT 2`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS uq_grades_student_course_type_term
-      ON grades (student_id, course_id, type, academic_year, semester)`,
-    // Driver Notifications — tracks driver-posted alerts with 3-day auto-purge
-    `CREATE TABLE IF NOT EXISTS driver_notifications (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      driver_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      message TEXT NOT NULL,
-      target_route VARCHAR(255),
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      deleted_at TIMESTAMPTZ
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_driver_notifications_driver_id ON driver_notifications(driver_id)`,
-    `CREATE INDEX IF NOT EXISTS idx_driver_notifications_created_at ON driver_notifications(created_at)`,
-    // Payments and collections for finance module
-    `CREATE TABLE IF NOT EXISTS payments (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-      payer_id UUID REFERENCES users(id) ON DELETE SET NULL,
-      branch_id UUID,
-      month VARCHAR(7),
-      date DATE DEFAULT CURRENT_DATE,
-      total_amount NUMERIC NOT NULL,
-      reference VARCHAR(255),
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_payments_student_month ON payments(student_id, month)`,
-    `CREATE TABLE IF NOT EXISTS finance_transactions (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-      student_name VARCHAR(150) NOT NULL,
-      amount NUMERIC(12,2) NOT NULL,
-      type VARCHAR(150) NOT NULL,
-      date DATE NOT NULL DEFAULT CURRENT_DATE,
-      verified_by VARCHAR(150),
-      branch_id UUID REFERENCES branches(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_finance_transactions_branch_date ON finance_transactions(branch_id, date)`,
-    `CREATE INDEX IF NOT EXISTS idx_finance_transactions_student_id ON finance_transactions(student_id)`,
-    `CREATE TABLE IF NOT EXISTS assets (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      name VARCHAR(255) NOT NULL,
-      description TEXT,
-      amount INTEGER NOT NULL DEFAULT 1,
-      value NUMERIC(12,2) NOT NULL,
-      branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`,
-    `ALTER TABLE assets ADD COLUMN IF NOT EXISTS amount INTEGER NOT NULL DEFAULT 1`,
-    `CREATE TABLE IF NOT EXISTS payment_items (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
-      fee_type VARCHAR(100) NOT NULL,
-      amount NUMERIC NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_payment_items_fee_type ON payment_items(fee_type)`,
-    `CREATE TABLE IF NOT EXISTS student_collections (
-      student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-      month VARCHAR(7) NOT NULL,
-      due_date DATE,
-      status VARCHAR(20) NOT NULL DEFAULT 'in_collections',
-      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (student_id, month)
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_student_collections_month ON student_collections(month)`,
-    // Teacher of the Week — student voting (Ethiopian Sat–Wed window)
-    `CREATE TABLE IF NOT EXISTS teacher_of_week_votes (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-      student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-      teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-      cycle_key VARCHAR(20) NOT NULL,
-      ethiopian_week_start VARCHAR(20),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE(student_id, cycle_key)
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_teacher_of_week_votes_cycle ON teacher_of_week_votes(branch_id, cycle_key)`,
-    // Vice Principal grade locking requires these tables to exist before the UI loads.
-    `CREATE TABLE IF NOT EXISTS academic_years (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      year_name VARCHAR(50) NOT NULL,
-      start_date DATE NOT NULL,
-      end_date DATE NOT NULL,
-      is_active BOOLEAN NOT NULL DEFAULT FALSE,
-      branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`,
-    `CREATE TABLE IF NOT EXISTS grade_locks (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      grade_level VARCHAR(20) NOT NULL,
-      is_locked BOOLEAN NOT NULL DEFAULT FALSE,
-      locked_by UUID REFERENCES users(id),
-      locked_at TIMESTAMPTZ,
-      branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
-      academic_year_id UUID REFERENCES academic_years(id),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE(grade_level, branch_id, academic_year_id)
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_grade_locks_branch ON grade_locks(branch_id)`,
-    `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS student_vote_rating NUMERIC(12,2) DEFAULT 0`,
-    `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS student_vote_count INT DEFAULT 0`,
-    // Enrolled students: sync users.status to Approved (students table already uses Active)
-    `UPDATE users u SET status = 'Approved', updated_at = NOW()
-     FROM students s
-     WHERE s.user_id = u.id AND u.role = 'student' AND u.status = 'Pending'`,
-    // Leaderboard tracking
-    `ALTER TABLE branches ADD COLUMN IF NOT EXISTS leaderboard_last_reset TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
-    `ALTER TABLE teachers ADD COLUMN IF NOT EXISTS vp_rating INT DEFAULT 0`,
+  const fs = require('fs');
+  const path = require('path');
+  
+  const migrationFiles = [
+    'complete_schema.sql',
+    '2ndmigration_super_admin_seed.sql'
   ];
 
-  for (const sql of migrations) {
-    try {
-      await pool.query(sql);
-    } catch (err: any) {
-      logger.warn(`Schema migration skipped: ${sql.slice(0, 60)}... — ${err.message}`);
+  for (const fileName of migrationFiles) {
+    const filePath = path.join(__dirname, '../database/newmigrations', fileName);
+    logger.info(`Running migration: ${filePath}`);
+    
+    if (fs.existsSync(filePath)) {
+      try {
+        const schemaSql = fs.readFileSync(filePath, 'utf8');
+        await pool.query(schemaSql);
+        logger.info(`✅ Successfully applied ${fileName}`);
+      } catch (err: any) {
+        logger.error(`❌ Failed to run ${fileName}: ${err.message}`);
+        throw new Error(`Migration ${fileName} failed: ${err.message}`);
+      }
+    } else {
+      logger.warn(`⚠️ Migration not found at ${filePath}`);
     }
   }
-
-  // Run payroll and schedule schema migrations dynamically from database/*.sql
-  try {
-    const fs = require('fs');
-    const path = require('path');
-
-    const runSchemaFile = async (fileName: string, label: string) => {
-      const schemaPath = path.join(__dirname, '../database', fileName);
-      logger.debug(`Checking schema file for ${label} at path: ${schemaPath}`);
-      if (fs.existsSync(schemaPath)) {
-        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-        try {
-          await pool.query(schemaSql);
-          logger.info(`✅ ${label} database schema verified and updated`);
-        } catch (fileErr: any) {
-          logger.error(`❌ Failed to apply schema file for ${label} at ${schemaPath}: ${fileErr.message}`);
-        }
-      } else {
-        logger.warn(`⚠️ ${label} schema file not found at: ${schemaPath}`);
-      }
-    };
-
-    await runSchemaFile('payroll_schema.sql', 'Payroll');
-    await runSchemaFile('loan_workflow_migration.sql', 'Loan workflow');
-    await runSchemaFile('schedule_schema.sql', 'Schedule Builder');
-    await runSchemaFile('email_smtp_migration.sql', 'Email / SMTP');
-    await runSchemaFile('system_settings_migration.sql', 'System settings');
-    await runSchemaFile('profit_targets_branch_migration.sql', 'Profit targets per branch');
-    await runSchemaFile('finance_transactions_schema.sql', 'Finance Transactions');
-    await runSchemaFile('asset_adjustments.sql', 'Asset adjustments (audit)');
-    await runSchemaFile('2026_05_30_add_student_aid_tables.sql', 'Student aid allocations');
-    await runSchemaFile('teacher_portal_migration.sql', 'Teacher portal (grade_submissions, weekly_plans enhancements, grades submission fields)');
-    await runSchemaFile('pending_applications_finance_removal.sql', 'Pending applications - finance removal columns');
-    // Migration to remove UNIQUE constraint on users.email so duplicate emails are allowed
-    await runSchemaFile('remove_email_unique.sql', 'Remove email UNIQUE constraint');
-    // Also apply any important migrations from the migrations/ folder (one-off schema updates)
-    const runMigrationFile = async (fileName: string, label: string) => {
-      const migrationPath = path.join(__dirname, '../migrations', fileName);
-      logger.debug(`Checking migration file for ${label} at path: ${migrationPath}`);
-      if (fs.existsSync(migrationPath)) {
-        const migrationSql = fs.readFileSync(migrationPath, 'utf8');
-        try {
-          await pool.query(migrationSql);
-          logger.info(`✅ ${label} migration applied`);
-        } catch (migErr: any) {
-          logger.error(`❌ Failed to apply migration file for ${label} at ${migrationPath}: ${migErr.message}`);
-        }
-      } else {
-        logger.warn(`⚠️ ${label} migration file not found at: ${migrationPath}`);
-      }
-    };
-
-    await runMigrationFile('001_add_section_to_students.sql', 'Section assignment (students.section_id)');
-  } catch (err: any) {
-    logger.error('❌ Failed to run schema migrations:', err);
-  }
-
-  logger.info('✅ Schema extensions verified');
 }
 
 async function bootstrap(): Promise<void> {
@@ -363,7 +44,6 @@ async function bootstrap(): Promise<void> {
     logger.info(`Database time: ${res.rows[0].now}`);
 
     await ensureSchemaExtensions();
-    await ensureScheduleSchema();
 
     // Keep monthly collections statuses fresh for current month
     const runCollectionsSync = async () => {
