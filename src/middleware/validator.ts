@@ -88,6 +88,15 @@ export const schemas = {
 
   changePassword: Joi.object({
     currentPassword: Joi.string().required(),
-    newPassword: Joi.string().min(8).required()
+    newPassword: Joi.string()
+      .min(5)
+      .pattern(/[A-Z]/, 'uppercase letter')
+      .pattern(/[a-z]/, 'lowercase letter')
+      .pattern(/[0-9]/, 'number')
+      .required()
+      .messages({
+        'string.min': 'New password must be at least 5 characters long',
+        'string.pattern.name': 'New password must contain at least one {#name}',
+      })
   })
 };

@@ -35,17 +35,60 @@ class UserService {
 
         // Emails are not required to be unique in this system; do not block creation.
 
-        const userUsername = username || email.split('@')[0];
-        // Proactively check for duplicate username
-        const usernameCheck = await client.query(
-          'SELECT id FROM users WHERE username = $1',
-          [userUsername]
-        );
-        if (usernameCheck.rows.length > 0) {
-          const error: any = new Error('A user with this username already exists');
-          error.statusCode = 409;
-          error.code = 'USERNAME_EXISTS';
-          throw error;
+        // Generate username: use provided username or derive from email
+        let userUsername = username || email.split('@')[0];
+
+        // If no explicit username provided, ensure uniqueness by appending role or suffix
+        if (!username) {
+          const baseUsername = userUsername;
+          let checkUsername = baseUsername;
+          let counter = 1;
+
+          // Check if username exists and generate a unique one if needed
+          while (true) {
+            const usernameCheck = await client.query(
+              'SELECT id FROM users WHERE username = $1',
+              [checkUsername]
+            );
+
+            if (usernameCheck.rows.length === 0) {
+              // Username is available
+              userUsername = checkUsername;
+              break;
+            }
+
+            // Username taken, try with suffix (append role or counter)
+            if (counter === 1) {
+              // First attempt: try appending the role abbreviation
+              const roleAbbr = role.substring(0, 3).toLowerCase(); // 'sch', 'vic', 'aud', etc.
+              checkUsername = `${baseUsername}_${roleAbbr}`;
+            } else {
+              // Subsequent attempts: append counter
+              checkUsername = `${baseUsername}${counter}`;
+            }
+
+            counter++;
+
+            // Prevent infinite loop
+            if (counter > 100) {
+              const error: any = new Error('Unable to generate unique username');
+              error.statusCode = 409;
+              error.code = 'USERNAME_GENERATION_FAILED';
+              throw error;
+            }
+          }
+        } else {
+          // If explicit username provided, check for conflicts
+          const usernameCheck = await client.query(
+            'SELECT id FROM users WHERE username = $1',
+            [userUsername]
+          );
+          if (usernameCheck.rows.length > 0) {
+            const error: any = new Error('A user with this username already exists');
+            error.statusCode = 409;
+            error.code = 'USERNAME_EXISTS';
+            throw error;
+          }
         }
 
         const digitalId = await generateDigitalId(role, branchId || null);
