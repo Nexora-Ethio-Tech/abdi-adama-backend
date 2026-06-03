@@ -1,11 +1,11 @@
-import dotenv from 'dotenv';
+import 'dotenv/config';
+
 import app from './app';
 import pool from './config/database';
 import logger from './utils/logger';
 import ensureScheduleSchema from './scripts/ensureScheduleSchema';
 import financeClerkService from './services/financeClerk.service';
 
-dotenv.config();
 
 const PORT = process.env.PORT || 5000;
 
