@@ -32,12 +32,31 @@ startKeepalive();
 
 app.use(helmet());
 
+// Allowed origins (add/remove as needed)
+const allowedOrigins = [
+  'https://abdi-adama.com',   // Production frontend
+  'https://www.abdi-adama.com', // Production frontend with www
+  'http://localhost:5173',    // Vite dev server
+  'http://localhost:3000',    // Create React App / other dev server
+  'http://localhost:4173',    // Vite preview server
+];
+
 app.use(cors({
-  // Dynamically allow all origins (reflects the request origin back)
-  origin: true,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (e.g. mobile apps, server-to-server requests, curl)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
 }));
 
 const limiter = rateLimit({
