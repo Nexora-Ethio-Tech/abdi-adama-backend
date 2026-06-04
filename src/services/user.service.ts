@@ -266,6 +266,68 @@ class UserService {
       throw error;
     }
   }
+
+  async updateUser(userId: string, updateData: { name?: string; email?: string }): Promise<User> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramCount = 0;
+
+    if (updateData.name) {
+      paramCount++;
+      fields.push(`name = $${paramCount}`);
+      values.push(updateData.name);
+    }
+
+    if (updateData.email) {
+      paramCount++;
+      fields.push(`email = $${paramCount}`);
+      values.push(updateData.email);
+    }
+
+    if (fields.length === 0) {
+      throw new Error('No fields to update');
+    }
+
+    paramCount++;
+    fields.push(`updated_at = NOW()`);
+    values.push(userId);
+
+    const result = await pool.query<User>(
+      `UPDATE users SET ${fields.join(', ')}
+       WHERE id = $${paramCount}
+       RETURNING id, digital_id, name, email, role, status`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('User not found');
+    }
+
+    return result.rows[0];
+  }
+
+  async resetUserPIN(userId: string): Promise<{ userId: string; name: string; newPIN: string }> {
+    const userCheck = await pool.query(
+      `SELECT id, name, role FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      throw new Error('User not found');
+    }
+
+    const user = userCheck.rows[0];
+
+    const newPIN = generate4DigitPIN();
+    const hashedPIN = await hashPassword(newPIN);
+
+    await pool.query(
+      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [hashedPIN, userId]
+    );
+
+    return { userId, name: user.name, newPIN };
+  }
 }
 
 export default new UserService();

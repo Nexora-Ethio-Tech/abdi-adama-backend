@@ -101,7 +101,9 @@ router.post('/create-auditor', validate(schemas.createAdminUser), superAdminCont
 router.post('/users', validate(createUserSchema), superAdminController.createUser);
 router.get('/users', superAdminController.getAllUsers);
 router.get('/users/:id', superAdminController.getUserById);
+router.patch('/users/:id', validate(schemas.updateUser), superAdminController.updateUser);
 router.patch('/users/:id/status', validate(schemas.updateUserStatus), superAdminController.updateUserStatus);
+router.post('/users/:id/reset-pin', superAdminController.resetUserPIN);
 router.delete('/users/:id', superAdminController.deleteUser);
 
 // Branch Management

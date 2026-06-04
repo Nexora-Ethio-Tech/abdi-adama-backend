@@ -129,6 +129,39 @@ class SuperAdminController {
     }
   }
 
+  async updateUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const updateData = req.body;
+
+      const user = await userService.updateUser(id, updateData);
+
+      res.json({
+        success: true,
+        data: user,
+        message: 'User updated successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async resetUserPIN(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      const result = await userService.resetUserPIN(id);
+
+      res.json({
+        success: true,
+        data: result,
+        message: `PIN reset successfully. New PIN: ${result.newPIN}`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getAllUsers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { role, branchId, status } = req.query;
