@@ -485,6 +485,24 @@ class SchoolAdminController {
         return;
       }
 
+      // Check for duplicate application
+      const hasExisting = await schoolAdminService.checkExistingApplication(
+        digital_id || null,
+        phoneValidation.formatted,
+        name
+      );
+      if (hasExisting) {
+        res.status(400).json({
+          success: false,
+          message: 'An active application with this FAN number or parent phone number already exists.',
+          errors: {
+            digital_id: 'An active application already exists.',
+            parentPhone: 'An active application already exists.'
+          }
+        });
+        return;
+      }
+
       // Ensure branchId exists
       if (!branchId) {
         logger.error('User missing branch_id and branchName was not provided:', { userId });
@@ -698,6 +716,24 @@ class SchoolAdminController {
       const phoneValidation = validateAndFormatPhoneNumber(parentPhone);
       if (!phoneValidation.isValid) {
         res.status(400).json({ success: false, message: 'Invalid phone number', errors: { parentPhone: phoneValidation.error } });
+        return;
+      }
+
+      // Check for duplicate application
+      const hasExisting = await schoolAdminService.checkExistingApplication(
+        digital_id || null,
+        phoneValidation.formatted,
+        name
+      );
+      if (hasExisting) {
+        res.status(400).json({
+          success: false,
+          message: 'An active application with this FAN number or parent phone number already exists.',
+          errors: {
+            digital_id: 'An active application already exists.',
+            parentPhone: 'An active application already exists.'
+          }
+        });
         return;
       }
 

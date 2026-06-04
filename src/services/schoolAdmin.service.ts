@@ -709,6 +709,19 @@ class SchoolAdminService {
     return result.rows;
   }
 
+  async checkExistingApplication(digitalId: string | null, parentPhone: string, applicantName: string) {
+    const query = `
+      SELECT id FROM pending_applications 
+      WHERE status != 'declined' AND (
+        ($1::text IS NOT NULL AND digital_id IS NOT NULL AND digital_id = $1)
+        OR (parent_phone = $2 AND LOWER(applicant_name) = LOWER($3))
+      )
+      LIMIT 1
+    `;
+    const result = await pool.query(query, [digitalId || null, parentPhone, applicantName.trim()]);
+    return result.rows.length > 0;
+  }
+
   // Student Application Management
   async createPendingApplication(data: any) {
     const result = await pool.query(
