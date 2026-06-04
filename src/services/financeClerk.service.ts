@@ -105,9 +105,30 @@ class FinanceClerkService {
     try {
       await client.query('BEGIN');
 
-      // Lock student row
+      // Lock student row and fetch fees (standard fallbacks from branch_grade_fees if not overridden)
       const studentRes = await client.query(
-        `SELECT s.id, s.monthly_fee, s.bus_fee, s.penalty_fee, s.branch_id, u.name
+        `SELECT s.id, s.grade, s.branch_id, s.parent_phone, u.name,
+           COALESCE(
+             NULLIF(s.monthly_fee, 0),
+             (
+               SELECT monthly_fee FROM branch_grade_fees 
+               WHERE branch_id = s.branch_id 
+                 AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+               LIMIT 1
+             ),
+             0
+           ) AS monthly_fee,
+           COALESCE(
+             NULLIF(s.bus_fee, 0),
+             (
+               SELECT bus_fee FROM branch_grade_fees 
+               WHERE branch_id = s.branch_id 
+                 AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+               LIMIT 1
+             ),
+             0
+           ) AS bus_fee,
+           s.penalty_fee
          FROM students s JOIN users u ON s.user_id = u.id
          WHERE s.id = $1 FOR UPDATE`,
         [data.studentId]
@@ -118,6 +139,30 @@ class FinanceClerkService {
       }
 
       const student = studentRes.rows[0];
+
+      // Enforce constraint: Penalty fees must be paid in full before paying other fees
+      const penaltyDue = await this.getPenaltyDueForMonth(client, student, data.month);
+      const penaltyPaidRes = await client.query(
+        `SELECT COALESCE(SUM(pi.amount), 0) AS paid
+         FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'penalty'`,
+        [data.studentId, data.month]
+      );
+      const penaltyAlreadyPaid = Number(penaltyPaidRes.rows[0].paid || 0);
+      const penaltyOutstanding = Math.max(0, penaltyDue - penaltyAlreadyPaid);
+
+      if (penaltyOutstanding > 0) {
+        const penaltyPaymentItem = data.items.find(it => it.feeType === 'penalty');
+        const penaltyPaidInTx = penaltyPaymentItem ? Number(penaltyPaymentItem.amount) : 0;
+        const penaltyRemainingAfterTx = Math.max(0, penaltyOutstanding - penaltyPaidInTx);
+
+        if (penaltyRemainingAfterTx > 0) {
+          const payingOtherFees = data.items.some(it => it.feeType !== 'penalty' && Number(it.amount) > 0);
+          if (payingOtherFees) {
+            throw new Error('Outstanding penalty fees must be fully settled before other payments can be cleared.');
+          }
+        }
+      }
 
       // Validate and compute totals
       let totalRequested = 0;
@@ -287,7 +332,28 @@ class FinanceClerkService {
 
     // Fetch student fees
     const studentRes = await pool.query(
-      `SELECT s.id, s.grade, s.is_bus_user, s.monthly_fee, s.bus_fee, s.penalty_fee, s.branch_id, s.parent_phone, u.name
+      `SELECT s.id, s.grade, s.is_bus_user, s.branch_id, s.parent_phone, u.name,
+         COALESCE(
+           NULLIF(s.monthly_fee, 0),
+           (
+             SELECT monthly_fee FROM branch_grade_fees 
+             WHERE branch_id = s.branch_id 
+               AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+             LIMIT 1
+           ),
+           0
+         ) AS monthly_fee,
+         COALESCE(
+           NULLIF(s.bus_fee, 0),
+           (
+             SELECT bus_fee FROM branch_grade_fees 
+             WHERE branch_id = s.branch_id 
+               AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+             LIMIT 1
+           ),
+           0
+         ) AS bus_fee,
+         s.penalty_fee
        FROM students s JOIN users u ON s.user_id = u.id
        WHERE s.id = $1`,
       [studentId]
@@ -373,18 +439,48 @@ class FinanceClerkService {
 
   // Get students with fee information
   async getStudentsWithFees(branchId?: string | null, search?: string, feeStatus?: string) {
+    const month = new Date().toISOString().slice(0, 7);
+    try {
+      await this.syncCollectionStatusesForMonth(month, branchId || undefined);
+    } catch (e) {
+      console.error('Failed to sync collection statuses:', e);
+    }
+
     let query = `
       SELECT 
-        s.id, s.grade, s.monthly_fee, s.bus_fee, s.penalty_fee,
+        s.id, s.grade, s.branch_id,
+        COALESCE(
+          NULLIF(s.monthly_fee, 0),
+          (
+            SELECT monthly_fee FROM branch_grade_fees 
+            WHERE branch_id = s.branch_id 
+              AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+            LIMIT 1
+          ),
+          0
+        ) AS monthly_fee,
+        COALESCE(
+          NULLIF(s.bus_fee, 0),
+          (
+            SELECT bus_fee FROM branch_grade_fees 
+            WHERE branch_id = s.branch_id 
+              AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+            LIMIT 1
+          ),
+          0
+        ) AS bus_fee,
+        s.penalty_fee,
         s.fee_status, s.fee_approval_status, s.fee_notes, s.requested_aid_amount,
-        u.name, u.email, u.digital_id
+        u.name, u.email, u.digital_id,
+        sc.status AS collection_status
       FROM students s
       JOIN users u ON s.user_id = u.id
+      LEFT JOIN student_collections sc ON sc.student_id = s.id AND sc.month = $1
       WHERE 1=1
     `;
 
-    const params: any[] = [];
-    let paramCount = 0;
+    const params: any[] = [month];
+    let paramCount = 1;
 
     if (branchId) {
       paramCount++;
@@ -408,7 +504,22 @@ class FinanceClerkService {
     query += ' ORDER BY u.name';
 
     const result = await pool.query(query, params);
-    return result.rows;
+
+    const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
+    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+    const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
+    const isPastDeadline = new Date() > dueDate;
+
+    return result.rows.map((student: any) => {
+      let penalty = Number(student.penalty_fee || 0);
+      if (penalty === 0 && isPastDeadline && student.collection_status !== 'cleared') {
+        penalty = penaltyRate;
+      }
+      return {
+        ...student,
+        penalty_fee: penalty
+      };
+    });
   }
 
   // Get transport students with current route/driver assignment
@@ -916,7 +1027,28 @@ class FinanceClerkService {
 
     const result = await pool.query(
       `SELECT 
-        s.id, s.grade, s.monthly_fee, s.bus_fee, s.penalty_fee,
+        s.id, s.grade, s.branch_id,
+        COALESCE(
+          NULLIF(s.monthly_fee, 0),
+          (
+            SELECT monthly_fee FROM branch_grade_fees 
+            WHERE branch_id = s.branch_id 
+              AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+            LIMIT 1
+          ),
+          0
+        ) AS monthly_fee,
+        COALESCE(
+          NULLIF(s.bus_fee, 0),
+          (
+            SELECT bus_fee FROM branch_grade_fees 
+            WHERE branch_id = s.branch_id 
+              AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+            LIMIT 1
+          ),
+          0
+        ) AS bus_fee,
+        s.penalty_fee,
         u.name, u.email, u.digital_id, s.parent_phone
       FROM student_collections sc
       JOIN students s ON s.id = sc.student_id
@@ -942,7 +1074,27 @@ class FinanceClerkService {
       }
 
       const studentsRes = await client.query(
-        `SELECT s.id, s.monthly_fee, s.bus_fee, s.penalty_fee, s.branch_id
+        `SELECT s.id, s.grade, s.branch_id, s.penalty_fee,
+           COALESCE(
+             NULLIF(s.monthly_fee, 0),
+             (
+               SELECT monthly_fee FROM branch_grade_fees 
+               WHERE branch_id = s.branch_id 
+                 AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+               LIMIT 1
+             ),
+             0
+           ) AS monthly_fee,
+           COALESCE(
+             NULLIF(s.bus_fee, 0),
+             (
+               SELECT bus_fee FROM branch_grade_fees 
+               WHERE branch_id = s.branch_id 
+                 AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+               LIMIT 1
+             ),
+             0
+           ) AS bus_fee
          FROM students s
          WHERE 1=1 ${where}`,
         params
