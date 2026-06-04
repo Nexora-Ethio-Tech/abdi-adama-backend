@@ -739,7 +739,9 @@ class SuperAdminService {
       [id]
     );
     if (result.rows.length === 0) {
-      throw new Error('Fee configuration not found');
+      const err: any = new Error('Fee configuration not found. It may have already been deleted.');
+      err.statusCode = 404;
+      throw err;
     }
     return { id };
   }
