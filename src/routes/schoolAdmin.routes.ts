@@ -159,6 +159,7 @@ router.get('/dashboard/at-risk-students', schoolAdminController.getAtRiskStudent
 
 // Events Calendar
 router.get('/dashboard/upcoming-events', schoolAdminController.getUpcomingEvents);
+router.get('/events', schoolAdminController.getEvents);
 router.post('/events', validate(createEventSchema), schoolAdminController.createEvent);
 router.patch('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
 router.delete('/events/:id', schoolAdminController.deleteEvent);

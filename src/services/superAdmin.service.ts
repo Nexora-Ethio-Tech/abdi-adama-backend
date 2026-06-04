@@ -358,12 +358,58 @@ class SuperAdminService {
       WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
     `);
 
+    // Teacher attendance rate using latest recorded date
+    const teacherAttendanceResult = await pool.query(`
+      WITH latest_date AS (
+        SELECT MAX(ea.date) as d
+        FROM employee_attendance ea
+        JOIN users u ON ea.user_id = u.id
+        WHERE u.role = 'teacher'
+      ),
+      totals AS (
+        SELECT COUNT(*)::numeric as total FROM users WHERE role = 'teacher'
+      ),
+      present AS (
+        SELECT COUNT(DISTINCT ea.user_id)::numeric as cnt
+        FROM employee_attendance ea
+        JOIN users u ON ea.user_id = u.id
+        CROSS JOIN latest_date ld
+        WHERE u.role = 'teacher' AND ea.date = ld.d AND LOWER(ea.status) = 'present'
+      )
+      SELECT
+        CASE WHEN (SELECT total FROM totals) = 0 OR (SELECT d FROM latest_date) IS NULL THEN 0
+        ELSE ROUND(((SELECT cnt FROM present) / (SELECT total FROM totals)) * 100, 1)
+        END as rate
+    `);
+
+    // Student attendance rate using latest recorded date
+    const studentAttendanceResult = await pool.query(`
+      WITH latest_date AS (
+        SELECT MAX(date) as d FROM student_attendance
+      ),
+      totals AS (
+        SELECT COUNT(*)::numeric as total FROM students
+      ),
+      present AS (
+        SELECT COUNT(DISTINCT sa.student_id)::numeric as cnt
+        FROM student_attendance sa
+        CROSS JOIN latest_date ld
+        WHERE sa.date = ld.d AND LOWER(sa.status::text) = 'present'
+      )
+      SELECT
+        CASE WHEN (SELECT total FROM totals) = 0 OR (SELECT d FROM latest_date) IS NULL THEN 0
+        ELSE ROUND(((SELECT cnt FROM present) / (SELECT total FROM totals)) * 100, 1)
+        END as rate
+    `);
+
     return {
       totalBranches: parseInt(branchesResult.rows[0].count),
       usersByRole: usersResult.rows,
       totalStudents: parseInt(studentsResult.rows[0].count),
       allTimePayments: paymentsResult.rows[0],
-      monthlyPayments: monthlyPaymentsResult.rows[0]
+      monthlyPayments: monthlyPaymentsResult.rows[0],
+      teacherAttendanceRate: parseFloat(teacherAttendanceResult.rows[0]?.rate ?? '0'),
+      studentAttendanceRate: parseFloat(studentAttendanceResult.rows[0]?.rate ?? '0'),
     };
   }
 
@@ -381,21 +427,96 @@ class SuperAdminService {
     `, [branchId]);
 
     const studentsResult = await pool.query(`SELECT COUNT(*) as count FROM students WHERE branch_id = $1`, [branchId]);
-    
+
     const paymentsResult = await pool.query(`
       SELECT 
         COUNT(*) as total_transactions,
-        SUM(amount) as total_collected
-      FROM finance_transactions p
-      JOIN students s ON p.student_id = s.id
-      WHERE s.branch_id = $1
+        COALESCE(SUM(amount), 0) as total_collected
+      FROM finance_transactions
+      WHERE branch_id = $1
     `, [branchId]);
 
+    // Teacher count for branch
+    const teacherCountResult = await pool.query(
+      `SELECT COUNT(*)::int as count FROM users WHERE branch_id = $1 AND role = 'teacher'`,
+      [branchId]
+    );
+
+    // Teacher attendance rate for this branch (latest recorded date)
+    const teacherAttendanceResult = await pool.query(`
+      WITH latest_date AS (
+        SELECT MAX(ea.date) as d
+        FROM employee_attendance ea
+        JOIN users u ON ea.user_id = u.id
+        WHERE u.role = 'teacher' AND u.branch_id = $1
+      ),
+      totals AS (
+        SELECT COUNT(*)::numeric as total FROM users WHERE role = 'teacher' AND branch_id = $1
+      ),
+      present AS (
+        SELECT COUNT(DISTINCT ea.user_id)::numeric as cnt
+        FROM employee_attendance ea
+        JOIN users u ON ea.user_id = u.id
+        CROSS JOIN latest_date ld
+        WHERE u.role = 'teacher' AND u.branch_id = $1
+          AND ea.date = ld.d AND LOWER(ea.status) = 'present'
+      )
+      SELECT
+        CASE WHEN (SELECT total FROM totals) = 0 OR (SELECT d FROM latest_date) IS NULL THEN 0
+        ELSE ROUND(((SELECT cnt FROM present) / (SELECT total FROM totals)) * 100, 1)
+        END as rate
+    `, [branchId]);
+
+    // Financial health: yearly target vs yearly collection
+    const financialHealthResult = await pool.query(`
+      WITH target_year AS (
+        SELECT COALESCE(MAX(target_year), EXTRACT(YEAR FROM CURRENT_DATE)::int) as yr
+        FROM monthly_profit_targets WHERE branch_id = $1
+      ),
+      yearly_target AS (
+        SELECT COALESCE(SUM(target_amount), 0)::numeric as total
+        FROM monthly_profit_targets
+        WHERE branch_id = $1 AND target_year = (SELECT yr FROM target_year)
+      ),
+      yearly_collection AS (
+        SELECT COALESCE(SUM(amount), 0)::numeric as total
+        FROM finance_transactions
+        WHERE branch_id = $1
+          AND EXTRACT(YEAR FROM date)::int = (SELECT yr FROM target_year)
+      )
+      SELECT
+        (SELECT total FROM yearly_target) as yearly_target,
+        (SELECT total FROM yearly_collection) as yearly_collection,
+        CASE WHEN (SELECT total FROM yearly_target) = 0 THEN 100
+        ELSE ROUND(((SELECT total FROM yearly_collection) / (SELECT total FROM yearly_target)) * 100, 1)
+        END as health_pct,
+        (SELECT yr FROM target_year) as target_year
+    `, [branchId]);
+
+    const fh = financialHealthResult.rows[0];
+    const yearlyTarget = parseFloat(fh.yearly_target ?? '0');
+    const yearlyCollection = parseFloat(fh.yearly_collection ?? '0');
+    const financialHealthPct = parseFloat(fh.health_pct ?? '100');
+    const totalTeachers = teacherCountResult.rows[0].count;
+    const attendanceRate = parseFloat(teacherAttendanceResult.rows[0]?.rate ?? '0');
+
     return {
+      branchId,
+      branchName: branchResult.rows[0].name,
       branch: branchResult.rows[0],
       usersByRole: usersResult.rows,
       totalStudents: parseInt(studentsResult.rows[0].count),
-      payments: paymentsResult.rows[0]
+      totalTeachers,
+      totalStaff: usersResult.rows.reduce((sum: number, r: any) => sum + parseInt(r.count), 0),
+      revenue: yearlyCollection,
+      expenses: 0,
+      netProfit: yearlyCollection - yearlyTarget,
+      yearlyTarget,
+      yearlyCollection,
+      financialHealthPct,
+      attendanceRate,
+      payments: paymentsResult.rows[0],
+      isHighRisk: financialHealthPct < 70,
     };
   }
 
@@ -456,16 +577,37 @@ class SuperAdminService {
       LIMIT 10
     `);
 
-    const pendingUsersResult = await pool.query(`
-      SELECT COUNT(*) as count
-      FROM users
-      WHERE status = 'Pending'
+    // Full pending breakdown
+    const pendingStudentsResult = await pool.query(`
+      SELECT COUNT(*)::int as count FROM users
+      WHERE role = 'student' AND status = 'Pending'
     `);
+    const pendingStaffResult = await pool.query(`
+      SELECT COUNT(*)::int as count FROM users
+      WHERE role NOT IN ('student', 'parent', 'super-admin') AND status = 'Pending'
+    `);
+    const pendingFeeResult = await pool.query(`
+      SELECT COUNT(*)::int as count FROM students WHERE fee_approval_status = 'pending'
+    `);
+    const pendingLoansResult = await pool.query(`
+      SELECT COUNT(*)::int as count FROM loans WHERE status = 'pending'
+    `);
+
+    const pendingStudents = pendingStudentsResult.rows[0].count;
+    const pendingStaff = pendingStaffResult.rows[0].count;
+    const pendingFeeApprovals = pendingFeeResult.rows[0].count;
+    const pendingLoans = pendingLoansResult.rows[0].count;
+    const pendingApprovalsTotal = pendingStudents + pendingStaff + pendingFeeApprovals + pendingLoans;
 
     return {
       ...systemReport,
       recentUsers: recentUsersResult.rows,
-      pendingUsers: parseInt(pendingUsersResult.rows[0].count)
+      pendingUsers: pendingApprovalsTotal,
+      pendingApprovalsTotal,
+      pendingStudents,
+      pendingStaff,
+      pendingFeeApprovals,
+      pendingLoans,
     };
   }
 
@@ -914,6 +1056,59 @@ class SuperAdminService {
        ORDER BY a.changed_at DESC`
     );
     return result.rows;
+  }
+
+  // ─── Event Management ─────────────────────────────────────────────────────
+
+  async getEvents(branchId: string | null) {
+    let query = `
+      SELECT id, title, date, type, description, branch_id, created_at
+      FROM events
+    `;
+    const params: any[] = [];
+    if (branchId) {
+      query += ` WHERE (branch_id = $1 OR branch_id IS NULL)`;
+      params.push(branchId);
+    }
+    query += ` ORDER BY date ASC, created_at ASC`;
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  async createEvent(data: { title: string; date: string; type: string; description?: string; branchId: string | null }) {
+    const result = await pool.query(
+      `INSERT INTO events (title, date, type, description, branch_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [data.title, data.date, data.type, data.description || null, data.branchId]
+    );
+    return result.rows[0];
+  }
+
+  async updateEvent(id: string, data: { title?: string; date?: string; type?: string; description?: string; branchId?: string | null }) {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let p = 0;
+    if (data.title !== undefined) { p++; fields.push(`title = $${p}`); values.push(data.title); }
+    if (data.date !== undefined)  { p++; fields.push(`date = $${p}`);  values.push(data.date); }
+    if (data.type !== undefined)  { p++; fields.push(`type = $${p}`);  values.push(data.type); }
+    if (data.description !== undefined) { p++; fields.push(`description = $${p}`); values.push(data.description); }
+    if (data.branchId !== undefined) { p++; fields.push(`branch_id = $${p}`); values.push(data.branchId); }
+    if (fields.length === 0) throw new Error('No fields to update');
+    p++;
+    values.push(id);
+    const result = await pool.query(
+      `UPDATE events SET ${fields.join(', ')} WHERE id = $${p} RETURNING *`,
+      values
+    );
+    if (result.rows.length === 0) throw new Error('Event not found');
+    return result.rows[0];
+  }
+
+  async deleteEvent(id: string) {
+    const result = await pool.query('DELETE FROM events WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) throw new Error('Event not found');
+    return result.rows[0];
   }
 }
 

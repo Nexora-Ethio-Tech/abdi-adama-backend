@@ -222,7 +222,7 @@ class UserService {
       }
 
       if (filters.branchId) {
-        query += ` AND u.branch_id = $${paramCount}`;
+        query += ` AND (u.branch_id = $${paramCount} OR u.role = 'auditor')`;
         params.push(filters.branchId);
         paramCount++;
       }

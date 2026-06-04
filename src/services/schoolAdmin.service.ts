@@ -1480,7 +1480,7 @@ class SchoolAdminService {
     };
   }
 
-  // Get Upcoming Events for branch
+  // Get Upcoming Events for branch (includes global events)
   async getUpcomingEvents(branchId: string, limit: number = 10) {
     const result = await pool.query(
       `SELECT 
@@ -1489,15 +1489,28 @@ class SchoolAdminService {
         date,
         type,
         description,
+        branch_id,
         created_at
       FROM events
-      WHERE branch_id = $1
+      WHERE (branch_id = $1 OR branch_id IS NULL)
         AND date >= CURRENT_DATE
       ORDER BY date ASC, created_at ASC
       LIMIT $2`,
       [branchId, limit]
     );
 
+    return result.rows;
+  }
+
+  // Get ALL events for branch (for calendar view, includes global events)
+  async getEvents(branchId: string) {
+    const result = await pool.query(
+      `SELECT id, title, date, type, description, branch_id, created_at
+       FROM events
+       WHERE branch_id = $1 OR branch_id IS NULL
+       ORDER BY date ASC, created_at ASC`,
+      [branchId]
+    );
     return result.rows;
   }
 

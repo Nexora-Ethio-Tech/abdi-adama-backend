@@ -947,6 +947,17 @@ class SchoolAdminController {
     }
   }
 
+  // Get All Events (for calendar view)
+  async getEvents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const events = await schoolAdminService.getEvents(branchId!);
+      res.json({ success: true, data: events });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Create Event
   async createEvent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

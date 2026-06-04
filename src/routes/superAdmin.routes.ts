@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import superAdminController from '../controllers/superAdmin.controller';
 import { authenticate } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
@@ -148,5 +148,10 @@ router.post('/smtp-settings/test', validate(smtpTestSchema), superAdminControlle
 // System settings (branding, contact, global flags)
 router.get('/system-settings', superAdminController.getSystemSettings);
 router.put('/system-settings', validate(systemSettingsSchema), superAdminController.updateSystemSettings);
+// Events Calendar (Super Admin manages global + all branch events)
+router.get('/events', superAdminController.getEvents);
+router.post('/events', superAdminController.createEvent);
+router.patch('/events/:id', superAdminController.updateEvent);
+router.delete('/events/:id', superAdminController.deleteEvent);
 
 export default router;
