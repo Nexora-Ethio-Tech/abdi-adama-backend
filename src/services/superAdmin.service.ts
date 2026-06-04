@@ -1,6 +1,7 @@
 import pool from '../config/database';
 import { hashPassword, generateRandomPassword } from '../utils/password';
 import { sendWelcomeEmail } from '../utils/emailService';
+import { todayEthiopic } from '../utils/ethiopicUtils';
 
 // Roles that receive a welcome email on creation — must match user.service.ts
 const EMAIL_ON_CREATE_ROLES = ['school-admin', 'vice-principal', 'auditor'];
@@ -52,22 +53,52 @@ class SuperAdminService {
       branchId ? [currentMonthStart, branchId] : [currentMonthStart]
     );
 
+    // Fetch yearly collections: total amount collected in current Ethiopian Year (Pagume of Y-1 to Nehase of Y)
+    const ethTodayForYear = todayEthiopic();
+    const currentEthYearForYear = ethTodayForYear.year;
+
     const branchCollectedResult = await pool.query(
       `SELECT ft.branch_id, COALESCE(SUM(ft.amount), 0)::numeric AS collected
        FROM finance_transactions ft
-       WHERE ft.date >= $1${branchId ? ' AND ft.branch_id = $2' : ''}
+       WHERE ((ft.ethiopic_year = $1 AND LOWER(ft.ethiopic_month) = 'pagume')
+          OR (ft.ethiopic_year = $2 AND LOWER(ft.ethiopic_month) IN ('meskerem', 'tikimt', 'hidar', 'tahsas', 'tir', 'yekatit', 'megabit', 'miazia', 'ginbot', 'sene')))
+         ${branchId ? 'AND ft.branch_id = $3' : ''}
        GROUP BY ft.branch_id`,
-      branchId ? [currentMonthStart.toISOString().slice(0, 10), branchId] : [currentMonthStart.toISOString().slice(0, 10)]
+      branchId ? [currentEthYearForYear - 1, currentEthYearForYear, branchId] : [currentEthYearForYear - 1, currentEthYearForYear]
     );
 
-    const expectedResult = await pool.query(
-      `SELECT s.branch_id, COALESCE(SUM(COALESCE(s.monthly_fee, 0) + COALESCE(s.bus_fee, 0) + COALESCE(s.penalty_fee, 0)), 0)::numeric AS expected,
+    // Expected profit targets configured by super admin for the current year
+    const currentYear = new Date().getFullYear();
+    const profitTargetsRes = await pool.query(
+      `SELECT branch_id, COALESCE(SUM(target_amount), 0)::numeric AS expected
+       FROM monthly_profit_targets
+       WHERE target_year = $1
+       GROUP BY branch_id`,
+      [currentYear]
+    );
+    const profitTargetsMap = new Map<string, number>();
+    for (const row of profitTargetsRes.rows) {
+      if (row.branch_id) {
+        profitTargetsMap.set(row.branch_id, Number(row.expected));
+      }
+    }
+
+    // Fallback expected targets: sum of monthly fees for active students * 10 (yearly billing estimate for 10 teaching months)
+    const fallbackExpectedResult = await pool.query(
+      `SELECT s.branch_id, COALESCE(SUM(COALESCE(s.monthly_fee, 0) + COALESCE(s.bus_fee, 0) + COALESCE(s.penalty_fee, 0)), 0)::numeric * 10 AS expected,
               COUNT(*)::int AS students
        FROM students s
        ${branchId ? 'WHERE s.branch_id = $1' : ''}
        GROUP BY s.branch_id`,
       branchParams
     );
+
+    const fallbackMap = new Map<string, number>();
+    const studentsMap = new Map<string, number>();
+    for (const row of fallbackExpectedResult.rows) {
+      fallbackMap.set(row.branch_id, Number(row.expected));
+      studentsMap.set(row.branch_id, Number(row.students));
+    }
 
     const studentAttendanceResult = await pool.query(
       `SELECT COUNT(DISTINCT s.id)::int AS total_students,
@@ -78,25 +109,23 @@ class SuperAdminService {
       branchId ? [new Date().toISOString().slice(0, 10), branchId] : [new Date().toISOString().slice(0, 10)]
     );
 
-    // Overdue payments (students with outstanding balance and last payment > 30 days)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const overdueParams = branchId ? [branchId, thirtyDaysAgo.toISOString().slice(0, 10)] : [thirtyDaysAgo.toISOString().slice(0, 10)];
-    const overdueWhereBranch = branchId ? 'AND s.branch_id = $1' : '';
-
+    // Overdue payments using student_collections table and partial payment calculations
     const overdueResult = await pool.query(
-      `SELECT COUNT(*)::int AS overdue_count,
-              COALESCE(SUM((s.monthly_fee + s.bus_fee + s.penalty_fee) - COALESCE(p.total_paid,0)), 0)::numeric AS overdue_amount
-       FROM students s
+      `SELECT COUNT(DISTINCT sc.student_id)::int AS overdue_count,
+              COALESCE(SUM(
+                GREATEST(0, (COALESCE(s.monthly_fee, 0) + COALESCE(s.bus_fee, 0) + COALESCE(s.penalty_fee, 0)) - COALESCE(p.paid_amount, 0))
+              ), 0)::numeric AS overdue_amount
+       FROM student_collections sc
+       JOIN students s ON sc.student_id = s.id
        LEFT JOIN (
-         SELECT student_id, COALESCE(SUM(amount),0) AS total_paid, MAX(date) AS last_payment
-         FROM finance_transactions ft
-         ${branchId ? 'WHERE ft.branch_id = $1' : ''}
-         GROUP BY student_id
-       ) p ON p.student_id = s.id
-       WHERE ((s.monthly_fee + s.bus_fee + s.penalty_fee) - COALESCE(p.total_paid,0)) > 0
-         AND COALESCE(p.last_payment, s.created_at) < $${branchId ? 2 : 1}`,
-      overdueParams
+         SELECT p.student_id, p.month, COALESCE(SUM(pi.amount), 0) AS paid_amount
+         FROM payments p
+         JOIN payment_items pi ON pi.payment_id = p.id
+         GROUP BY p.student_id, p.month
+       ) p ON p.student_id = sc.student_id AND p.month = sc.month
+       WHERE sc.status = 'overdue'
+         AND ($1::UUID IS NULL OR s.branch_id = $1::UUID)`,
+      [branchId || null]
     );
 
     const staffAttendanceResult = await pool.query(
@@ -111,6 +140,33 @@ class SuperAdminService {
       branchId ? [new Date().toISOString().slice(0, 10), branchId] : [new Date().toISOString().slice(0, 10)]
     );
 
+    // Get current Ethiopian year
+    const ethToday = todayEthiopic();
+    const currentEthYear = ethToday.year;
+
+    // Daily Pulse Section: Yearly total student collections received (all 12/13 months of current Ethiopian year)
+    const studentCollectionsRes = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0)::numeric AS total
+       FROM finance_transactions
+       WHERE student_id IS NOT NULL
+         AND ethiopic_year = $1
+         AND ($2::UUID IS NULL OR branch_id = $2::UUID)`,
+      [currentEthYear, branchId || null]
+    );
+    const yearlyStudentCollections = Number(studentCollectionsRes.rows[0]?.total || 0);
+
+    // Daily Pulse Section: Yearly total staff payroll payments finalized (all 12/13 months of current Ethiopian year)
+    const staffPaymentsRes = await pool.query(
+      `SELECT COALESCE(SUM(pi.net_pay), 0)::numeric AS total
+       FROM payroll_items pi
+       JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+       WHERE pr.year = $1
+         AND pr.status = 'finalized'
+         AND ($2::UUID IS NULL OR pr.branch_id = $2::UUID)`,
+      [currentEthYear, branchId || null]
+    );
+    const yearlyStaffPayments = Number(staffPaymentsRes.rows[0]?.total || 0);
+
     const monthlyStudents = parseInt(studentsResult.rows[0]?.total_students || '0', 10);
     const previousMonthStudents = parseInt(lastMonthStudentsResult.rows[0]?.total_students || '0', 10);
     const studentAttendanceTotal = parseInt(studentAttendanceResult.rows[0]?.total_students || '0', 10);
@@ -119,13 +175,15 @@ class SuperAdminService {
     const staffAttendancePresent = parseInt(staffAttendanceResult.rows[0]?.present_staff || '0', 10);
 
     const branchMap = new Map<string, { collected: number; expected: number; students: number }>();
-    for (const row of expectedResult.rows) {
-      branchMap.set(row.branch_id, {
+    for (const branch of branchesResult.rows) {
+      const target = profitTargetsMap.get(branch.id) || fallbackMap.get(branch.id) || 0;
+      branchMap.set(branch.id, {
         collected: 0,
-        expected: Number(row.expected || 0),
-        students: Number(row.students || 0)
+        expected: target,
+        students: studentsMap.get(branch.id) || 0
       });
     }
+
     for (const row of branchCollectedResult.rows) {
       const current = branchMap.get(row.branch_id) || { collected: 0, expected: 0, students: 0 };
       current.collected = Number(row.collected || 0);
@@ -169,7 +227,9 @@ class SuperAdminService {
       lastMonthStudents: previousMonthStudents,
       enrollmentGrowth: previousMonthStudents > 0
         ? Number((((monthlyStudents - previousMonthStudents) / previousMonthStudents) * 100).toFixed(1))
-        : 0
+        : 0,
+      yearlyStudentCollections,
+      yearlyStaffPayments
     };
 
     // Attach overdue metrics
@@ -777,6 +837,8 @@ class SuperAdminService {
       targetYear
     );
 
+    // ── Student Income ─────────────────────────────────────────────────────────
+    // Sum all finance_transactions (fees, registration, bus, penalties) for the period
     const studentResult = await pool.query(
       `SELECT
          COALESCE(SUM(ft.amount), 0) AS ft_total,
@@ -800,6 +862,8 @@ class SuperAdminService {
     const studentIncome = ftTotal > 0 ? ftTotal : paymentsTotal;
     const txCount = Number(studentResult.rows[0]?.ft_count ?? 0);
 
+    // ── Staff Payout ───────────────────────────────────────────────────────────
+    // Primary: use finalized or exported payroll runs (includes net_pay + employer pension)
     const payrollResult = await pool.query(
       `SELECT
          COALESCE(SUM(total_net), 0) AS total_net,
@@ -813,11 +877,41 @@ class SuperAdminService {
       [branchId, gregYear, monthName]
     );
 
-    const staffPayout =
-      Number(payrollResult.rows[0]?.total_net ?? 0) +
-      Number(payrollResult.rows[0]?.total_pension_employer ?? 0);
-    const payrollStatus = payrollResult.rows[0]?.run_status ?? null;
-    const netProfit = studentIncome - staffPayout;
+    let staffPayout = 0;
+    let payrollStatus = payrollResult.rows[0]?.run_status ?? null;
+    let isProjected = false;
+
+    const payrollNet = Number(payrollResult.rows[0]?.total_net ?? 0);
+    const payrollPension = Number(payrollResult.rows[0]?.total_pension_employer ?? 0);
+
+    if (payrollNet > 0 || payrollStatus != null) {
+      // Finalized payroll exists — use real data
+      staffPayout = payrollNet + payrollPension;
+    } else {
+      // No payroll run yet — project from employee_payroll_profiles for ALL staff
+      // Gross cost to school = (basic + transport + housing + position) + employer_pension (11% of basic)
+      const profileResult = await pool.query(
+        `SELECT
+           COALESCE(SUM(
+             epp.basic_salary
+             + COALESCE(epp.transport_allowance, 0)
+             + COALESCE(epp.housing_allowance, 0)
+             + COALESCE(epp.position_allowance, 0)
+             + (epp.basic_salary * 0.11)
+           ), 0)::numeric AS projected_payout
+         FROM employee_payroll_profiles epp
+         JOIN users u ON u.id = epp.user_id
+         WHERE u.branch_id = $1
+           AND u.status = 'Approved'
+           AND u.role NOT IN ('student', 'parent', 'super-admin')`,
+        [branchId]
+      );
+      staffPayout = Number(profileResult.rows[0]?.projected_payout ?? 0);
+      isProjected = true;
+    }
+
+    // Suggested Target = Student Income + Staff Payout (total monthly school financial obligation)
+    const suggestedTarget = studentIncome + staffPayout;
 
     return {
       gregMonth,
@@ -827,10 +921,12 @@ class SuperAdminService {
       student_transaction_count: txCount,
       staff_payout: staffPayout,
       payroll_status: payrollStatus,
-      suggested_target: Math.max(netProfit, 0),
-      actual_net_profit: netProfit,
+      staff_payout_is_projected: isProjected,
+      suggested_target: suggestedTarget,
+      actual_net_profit: studentIncome - staffPayout,
     };
   }
+
 
   async getBranchProfitSummary(
     branchId: string,
