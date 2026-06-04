@@ -1345,22 +1345,24 @@ class SchoolAdminService {
 
     const appResult = await pool.query(
       `SELECT
-        id, branch_id, applicant_name, applicant_email, applicant_phone, digital_id, dob, gender,
-        parent_name, parent_phone, address, previous_school, grade_applying, last_grade_completed,
-        blood_group, allergies, chronic_conditions, current_medications,
-        transcript_mime_type, transcript_file_name, transcript_file_size,
-        status, notes, exam_date, exam_time, exam_location, exam_subjects, exam_notes,
-        registration_fee_status, finance_status, finance_approved_at, payment_amount, payment_reference,
-        student_user_id, parent_user_id, registration_completed_at, credentials_generated_at,
-        created_at, updated_at
-      FROM pending_applications
-      WHERE branch_id = $1
+        pa.id, pa.branch_id, pa.applicant_name, pa.applicant_email, pa.applicant_phone, pa.digital_id, pa.dob, pa.gender,
+        pa.parent_name, pa.parent_phone, pa.address, pa.previous_school, pa.grade_applying, pa.last_grade_completed,
+        pa.blood_group, pa.allergies, pa.chronic_conditions, pa.current_medications,
+        pa.transcript_mime_type, pa.transcript_file_name, pa.transcript_file_size,
+        pa.status, pa.notes,
+        pa.finance_status, pa.finance_approved_at, pa.payment_amount, pa.payment_reference,
+        pa.student_user_id, pa.parent_user_id, pa.registration_completed_at, pa.credentials_generated_at,
+        pa.created_at, pa.updated_at,
+        rec.exam_date, rec.exam_time, rec.location AS exam_location, rec.subjects AS exam_subjects, rec.notes AS exam_notes
+      FROM pending_applications pa
+      LEFT JOIN registration_exam_config rec ON rec.application_id = pa.id
+      WHERE pa.branch_id = $1
         AND (
-          student_user_id = $2
-          OR ($3::text IS NOT NULL AND digital_id IS NOT NULL AND digital_id = $3)
-          OR ($4::text IS NOT NULL AND applicant_email IS NOT NULL AND LOWER(applicant_email) = LOWER($4))
+          pa.student_user_id = $2
+          OR ($3::text IS NOT NULL AND pa.digital_id IS NOT NULL AND pa.digital_id = $3)
+          OR ($4::text IS NOT NULL AND pa.applicant_email IS NOT NULL AND LOWER(pa.applicant_email) = LOWER($4))
         )
-      ORDER BY registration_completed_at DESC NULLS LAST, created_at DESC
+      ORDER BY pa.registration_completed_at DESC NULLS LAST, pa.created_at DESC
       LIMIT 1`,
       [branchId, student.user_id, student.digital_id, student.email]
     );
