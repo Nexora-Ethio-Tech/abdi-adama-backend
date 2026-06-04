@@ -83,7 +83,7 @@ class EmployeeProfileService {
              e.bank_account, e.tin_number
       FROM users u
       LEFT JOIN employee_payroll_profiles e ON u.id = e.user_id
-      WHERE u.role NOT IN ('student', 'parent')
+      WHERE u.role NOT IN ('student', 'parent', 'super-admin')
         AND u.status = 'Approved'
         AND ($1::UUID IS NULL OR u.branch_id = $1::UUID)
       ORDER BY u.name ASC

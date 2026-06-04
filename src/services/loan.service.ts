@@ -203,7 +203,7 @@ class LoanService {
       FROM loans l
       JOIN users u ON l.employee_id = u.id
       LEFT JOIN users i ON l.issued_by = i.id
-      WHERE 1=1
+      WHERE u.role <> 'super-admin'
     `;
     const params: any[] = [];
     let paramIndex = 1;

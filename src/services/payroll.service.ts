@@ -124,7 +124,7 @@ class PayrollService {
                e.housing_allowance, e.position_allowance, e.overtime_rate_per_hour
         FROM users u
         JOIN employee_payroll_profiles e ON u.id = e.user_id
-        WHERE u.role NOT IN ('student', 'parent')
+        WHERE u.role NOT IN ('student', 'parent', 'super-admin')
           AND u.status = 'Approved'
           AND ($1::UUID IS NULL OR u.branch_id = $1::UUID)
       `;

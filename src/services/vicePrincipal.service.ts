@@ -576,7 +576,8 @@ class VicePrincipalService {
          AND u.is_active = true
          AND u.status != 'Revoked'
          AND u.role != 'student'
-         AND u.role != 'parent'`,
+         AND u.role != 'parent'
+         AND u.role != 'super-admin'`,
       [branchId]
     );
 
