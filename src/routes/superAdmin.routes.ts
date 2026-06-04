@@ -66,7 +66,7 @@ const createUserSchema = Joi.object({
   email: Joi.string().email().required(),
   role: Joi.string().required(),
   branchId: Joi.string().uuid().optional(),
-  phone: Joi.string().allow('').optional()
+  phone: Joi.string().allow('').optional(),
 });
 
 const branchGradeFeeSchema = Joi.object({

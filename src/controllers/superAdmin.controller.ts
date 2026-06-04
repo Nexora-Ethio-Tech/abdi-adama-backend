@@ -65,14 +65,15 @@ class SuperAdminController {
 
   async createUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { name, email, role, branchId, phone } = req.body;
+      const { name, email, role, branchId, phone, profileImage } = req.body;
 
       const result = await superAdminService.createUser({
         name,
         email,
         role,
         branchId,
-        phone
+        phone,
+        profileImage
       });
 
       res.status(201).json({

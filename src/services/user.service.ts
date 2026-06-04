@@ -17,7 +17,7 @@ const EMAIL_ON_CREATE_ROLES = ['school-admin', 'vice-principal', 'auditor'];
 
 class UserService {
   async createUser(userData: CreateUserDTO, createdBy: string): Promise<CreateUserResult> {
-    const { name, email, role, branchId, password, username, grade, staffProfile } = userData;
+    const { name, email, role, branchId, password, username, grade, staffProfile, profileImage } = userData;
     const userPassword = password || (PIN_BASED_ROLES.includes(role) ? generate4DigitPIN() : generateRandomPassword());
     const passwordHash = await hashPassword(userPassword);
     const autoApproveRoles = ['super-admin', 'school-admin'];
@@ -94,10 +94,10 @@ class UserService {
         const digitalId = await generateDigitalId(role, branchId || null);
 
         const userResult = await client.query<User>(
-          `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active, staff_profile)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, staff_profile, created_at`,
-          [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true, staffProfile ? JSON.stringify(staffProfile) : null]
+          `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active, staff_profile, profile_image)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, staff_profile, profile_image, created_at`,
+          [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true, staffProfile ? JSON.stringify(staffProfile) : null, profileImage || null]
         );
 
         const user = userResult.rows[0];
@@ -206,7 +206,7 @@ class UserService {
   async getUsers(filters: UserFilters = {}): Promise<User[]> {
     try {
       let query = `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role,
-           u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at,
+           u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.profile_image,
            b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON b.id = u.branch_id

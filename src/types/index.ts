@@ -36,6 +36,7 @@ export interface User {
   created_at: Date;
   updated_at: Date;
   branch_name?: string;
+  profile_image?: string | null;
 }
 
 export interface JWTPayload {
@@ -58,6 +59,7 @@ export interface CreateUserDTO {
   username?: string;
   grade?: string;
   staffProfile?: Record<string, any>;
+  profileImage?: string | null;
 }
 
 export interface LoginDTO {

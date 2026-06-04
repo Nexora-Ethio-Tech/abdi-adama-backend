@@ -341,6 +341,7 @@ class SuperAdminService {
     role: string;
     branchId?: string;
     phone?: string;
+    profileImage?: string;
   }) {
     // 1. Check if email is already taken
     const existing = await pool.query(
@@ -363,9 +364,9 @@ class SuperAdminService {
 
     // 4. Insert the new user into the database
     const result = await pool.query(
-      `INSERT INTO users (digital_id, name, email, password_hash, role, branch_id, phone, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active')
-       RETURNING id, digital_id, name, email, role, branch_id, phone, status, created_at`,
+      `INSERT INTO users (digital_id, name, email, password_hash, role, branch_id, phone, profile_image, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Active')
+       RETURNING id, digital_id, name, email, role, branch_id, phone, profile_image, status, created_at`,
       [
         digitalId,
         data.name,
@@ -374,6 +375,7 @@ class SuperAdminService {
         data.role,
         data.branchId || null,
         data.phone   || null,
+        data.profileImage || null,
       ]
     );
 

@@ -25,8 +25,12 @@ import gradingRoutes from './routes/grading.routes';
 import publicRoutes from './routes/public.routes';
 import machineRoutes from './routes/machine.routes';
 import financeRoutes from './routes/finance.routes';
+import guestRoutes from './routes/guest.routes';
 
 const app = express();
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Start SSE keepalive for real-time client connections
 startKeepalive();
@@ -127,6 +131,7 @@ app.use('/api/schedule', scheduleRoutes);
 app.use('/api/sections', sectionAssignmentRoutes);
 app.use('/api/grading-configs', gradingRoutes);
 app.use('/api/finance', financeRoutes);
+app.use('/api/guest', guestRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({

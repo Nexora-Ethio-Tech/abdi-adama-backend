@@ -67,7 +67,8 @@ export const schemas = {
     name: Joi.string().min(2).max(150).required(),
     email: Joi.string().email().required(),
     branchId: Joi.string().uuid().allow(null, '').optional(),
-    password: Joi.string().min(8).optional()
+    password: Joi.string().min(8).optional(),
+    profileImage: Joi.string().dataUri().required()
   }),
 
   updateUserStatus: Joi.object({
