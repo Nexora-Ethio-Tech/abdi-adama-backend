@@ -615,10 +615,10 @@ class SuperAdminService {
 
   private resolveEthiopianGregorianPeriod(ethiopianMonth: number, targetYear: number) {
     const gregMonth = SuperAdminService.ETHIOPIAN_TO_GREGORIAN_MONTH[ethiopianMonth] ?? 1;
-    let gregYear = targetYear;
-    if (ethiopianMonth >= 5) {
-      gregYear = targetYear + 1;
-    }
+    // targetYear is the current Gregorian year (e.g. 2026).
+    // Ethiopian months 1-4 (Meskerem–Tahsas = Sep–Dec) fall in the *previous* Gregorian year.
+    // Ethiopian months 5-13 (Tir–Pagume = Jan–Sep) fall in the *current* Gregorian year.
+    const gregYear = ethiopianMonth <= 4 ? targetYear - 1 : targetYear;
     const monthName = SuperAdminService.GREGORIAN_MONTH_NAMES[gregMonth - 1] ?? 'January';
     return { gregMonth, gregYear, monthName };
   }

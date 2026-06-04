@@ -66,7 +66,7 @@ export const schemas = {
   createAdminUser: Joi.object({
     name: Joi.string().min(2).max(150).required(),
     email: Joi.string().email().required(),
-    branchId: Joi.string().uuid().required(),
+    branchId: Joi.string().uuid().allow(null, '').optional(),
     password: Joi.string().min(8).optional()
   }),
 

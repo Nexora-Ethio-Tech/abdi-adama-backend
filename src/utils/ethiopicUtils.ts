@@ -33,12 +33,19 @@ export function gregorianToEthiopic(date: Date): EthiopicDate {
   const d = date.getDate();
   const y = date.getFullYear();
 
-  // Ethiopian year = Gregorian year - 7 if on/after Sep 11; else - 8
-  const isAfterNewYear = m > 9 || (m === 9 && d >= 11);
-  const ethYear = isAfterNewYear ? y - 7 : y - 8;
+  // Compute Julian Day Number (Gregorian)
+  const a = Math.floor((14 - m) / 12);
+  const yy = y + 4800 - a;
+  const mm = m + 12 * a - 3;
+  const jdn = d + Math.floor((153 * mm + 2) / 5) + 365 * yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045;
 
+  // Beyene-Kudlek: JDN → Ethiopian year
+  const r = (jdn - 1723856) % 1461;
+  const n = (r % 365) + 365 * Math.floor(r / 1460);
+  const ethYear = 4 * Math.floor((jdn - 1723856) / 1461) + Math.floor(r / 365) - Math.floor(r / 1460);
+
+  // Ethiopian month name mapping (unchanged)
   let ethMonth: string;
-
   if      ((m === 9  && d >= 11) || (m === 10 && d <= 10)) ethMonth = 'Meskerem';
   else if ((m === 10 && d >= 11) || (m === 11 && d <=  9)) ethMonth = 'Tikimt';
   else if ((m === 11 && d >= 10) || (m === 12 && d <=  9)) ethMonth = 'Hidar';
@@ -51,7 +58,7 @@ export function gregorianToEthiopic(date: Date): EthiopicDate {
   else if ((m === 6  && d >=  8) || (m === 7  && d <=  7)) ethMonth = 'Sene';
   else if ((m === 7  && d >=  8) || (m === 8  && d <=  6)) ethMonth = 'Hamle';
   else if ((m === 8  && d >=  7) || (m === 9  && d <=  5)) ethMonth = 'Nehase';
-  else                                                       ethMonth = 'Pagume'; // Sep 6–10
+  else                                                       ethMonth = 'Pagume';
 
   return { month: ethMonth, year: ethYear };
 }

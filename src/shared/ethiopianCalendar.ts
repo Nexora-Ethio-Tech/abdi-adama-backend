@@ -22,15 +22,17 @@ const toJdnFromGregorian = (year: number, month: number, day: number) => {
 };
 
 const jdnToEthiopian = (jdn: number): EthiopianDateParts => {
-  const r = jdn - ETHIOPIAN_EPOCH;
-  const year = Math.floor(r / 1461) * 4 + Math.floor((r % 1461) / 365) + 1;
-  const month = Math.floor(((r % 1461) % 365) / 30) + 1;
-  const day = (((r % 1461) % 365) % 30) + 1;
+  const r = (jdn - 1723856) % 1461;
+  const n = (r % 365) + 365 * Math.floor(r / 1460);
+  
+  const year = 4 * Math.floor((jdn - 1723856) / 1461) + Math.floor(r / 365) - Math.floor(r / 1460);
+  const month = Math.floor(n / 30) + 1;
+  const day = (n % 30) + 1;
   return { year, month, day };
 };
 
 const ethiopianToJdn = ({ year, month, day }: EthiopianDateParts) =>
-  ETHIOPIAN_EPOCH + 365 * (year - 1) + Math.floor(year / 4) + 30 * (month - 1) + day - 1;
+  1724220 + 365 * (year - 1) + Math.floor(year / 4) + 30 * (month - 1) + day;
 
 export const gregorianToEthiopian = (date: Date): EthiopianDateParts => {
   const jdn = toJdnFromGregorian(date.getFullYear(), date.getMonth() + 1, date.getDate());
