@@ -16,6 +16,7 @@ import parentRoutes from './routes/parentRoutes';
 import driverRoutes from './routes/driverRoutes';
 import clinicRoutes from './routes/clinicRoutes';
 import libraryRoutes from './routes/libraryRoutes';
+import guestRoutes from './routes/guest.routes';
 
 const app = express();
 
@@ -25,6 +26,9 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -85,6 +89,7 @@ app.use('/api/driver', driverRoutes);
 app.use('/api/transport', driverRoutes);
 app.use('/api/clinic', clinicRoutes);
 app.use('/api/library', libraryRoutes);
+app.use('/api/guest', guestRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({

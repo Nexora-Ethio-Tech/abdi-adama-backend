@@ -16,7 +16,7 @@ class UserService {
     try {
       await client.query('BEGIN');
 
-      const { name, email, role, branchId, password, username, grade } = userData;
+      const { name, email, role, branchId, password, username, grade, profileImage } = userData;
 
       let branchName: string | null = null;
       if (branchId) {
@@ -36,10 +36,10 @@ class UserService {
       const userUsername = username || email.split('@')[0];
 
       const userResult = await client.query<User>(
-        `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active, profile_image)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, created_at`,
-        [digitalId, userUsername, name, email, passwordHash, role, branchId, USER_STATUS.PENDING, true]
+        [digitalId, userUsername, name, email, passwordHash, role, branchId, USER_STATUS.PENDING, true, profileImage]
       );
 
       const user = userResult.rows[0];
@@ -134,7 +134,7 @@ class UserService {
       let query = `
         SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role, 
                u.branch_id, u.status, u.is_active, u.created_at,
-               b.name as branch_name
+               b.name as branch_name, u.profile_image
         FROM users u
         LEFT JOIN branches b ON b.id = u.branch_id
         WHERE 1=1

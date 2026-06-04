@@ -1,53 +1,81 @@
 import os
+import time
 import asyncio
 from contextlib import asynccontextmanager
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
-
-console = Console()
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
-import lancedb
 from sentence_transformers import SentenceTransformer
 from mistralai import Mistral
 from fastapi.middleware.cors import CORSMiddleware
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from dotenv import load_dotenv
 
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-DB_URI = "./lancedb_school_data"
+# Qdrant Imports
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
 
+load_dotenv()
 
-with console.status("[bold green]Loading Embedding Model (BAAI/bge-small-en-v1.5)...", spinner="dots"):
-    model = SentenceTransformer('BAAI/bge-small-en-v1.5')
-    console.log("[bold green]✓ Embedding Model Loaded Successfully.[/bold green]")
+# -------------------
+# ENV + CONFIG
+# -------------------
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "YOUR_API_KEY")
+COLLECTION_NAME = "abdi_adama_docs"
+
+# -------------------
+# MODELS
+# -------------------
+embedding_model = SentenceTransformer("BAAI/bge-small-en-v1.5")
 mistral_client = Mistral(api_key=MISTRAL_API_KEY)
 
-db_table = None
+# Global Qdrant Client Instance
+qdrant_db = None
 
+
+# -------------------
+# LIFESPAN STARTUP
+# -------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global db_table
+    global qdrant_db
     try:
-        if os.path.exists(DB_URI):
-            db = await lancedb.connect_async(DB_URI)
-            db_table = await db.open_table("abdi_adama_docs")
-            print("Successfully connected to LanceDB.")
+        # Runs Qdrant locally using disk-based storage
+        qdrant_db = QdrantClient(path="./qdrant_school_data")
+        
+        # Create the collection if it doesn't exist
+        if not qdrant_db.collection_exists(collection_name=COLLECTION_NAME):
+            qdrant_db.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+            )
+            print(f"Created new Qdrant Collection: {COLLECTION_NAME}")
         else:
-            print(f"ERROR: DB Path {DB_URI} not found!")
+            print(f"Opened existing Qdrant Collection: {COLLECTION_NAME}")
+
     except Exception as e:
-        print(f"Startup Error: {e}")
+        qdrant_db = None
+        print(f"Qdrant Startup Error: {e}")
     yield
 
+
+# -------------------
+# APP
+# -------------------
 app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+# -------------------
+# REQUEST MODELS
+# -------------------
 class Message(BaseModel):
     role: str
     content: str
@@ -55,58 +83,219 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
 
+class DocumentRequest(BaseModel):
+    text: str
+
+
+# -------------------
+# ROOT
+# -------------------
 @app.get("/")
 async def root():
-    return {"message": "Abdi Adama API is online"}
+    return {"message": "Abdi Adama API with Qdrant Vector DB is online"}
 
+
+# -------------------
+# CHAT (RAG)
+# -------------------
 @app.post("/chat")
 async def handle_query(request: ChatRequest):
-    if db_table is None:
-        raise HTTPException(status_code=500, detail="Database not initialized.")
+    if qdrant_db is None:
+        raise HTTPException(status_code=500, detail="Vector Database not initialized.")
 
     try:
         user_query = request.messages[-1].content
-        
-        #Generate Embedding
+
+        # Get query embedding
         query_vector = await asyncio.to_thread(
-            lambda: model.encode(user_query, normalize_embeddings=True).tolist()
+            lambda: embedding_model.encode(user_query, normalize_embeddings=True).tolist()
         )
 
-        #Search
-        search_result = await db_table.search(query_vector)
-        results = await search_result.limit(5).to_list()
+        # Search the Vector DB
+        search_response = qdrant_db.query_points(
+            collection_name=COLLECTION_NAME,
+            query=query_vector,
+            limit=5
+        )
+        search_results = search_response.points
 
-        #Filter
-        relevant_results = [r for r in results if r.get("_distance", 1.0) < 0.45]
-        final_results = relevant_results if relevant_results else results[:1]
-        context_string = "\n\n---\n\n".join([r.get("text", "") for r in final_results])
+        # Convert cosine similarity score to distance (1 - score) to match your safety threshold
+        relevant = []
+        for point in search_results:
+            distance = 1.0 - point.score
+            if distance < 0.45:
+                relevant.append(point.payload.get("text", ""))
 
-        #LLM
-        system_prompt = f"""
-            # ROLE
-            You are the "Abdi Adama School Virtual Chatbot." Your mission is to provide students, parents, and staff with accurate, helpful, and professional information based strictly on the provided school records.
+        # Fallback to top result if nothing is below the threshold distance
+        if not relevant and search_results:
+            relevant = [search_results[0].payload.get("text", "")]
 
-            # CONTEXT INFORMATION
-            The following is the only source of truth for this conversation:
-            -------------------
-            {context_string}
-            -------------------
+        context = "\n\n---\n\n".join(relevant)
 
-            # OPERATIONAL RULES
-            1. **Source Grounding**: Answer questions ONLY using the information provided in the CONTEXT above. 
-            2. **Strict Fallback**: If the answer is not explicitly mentioned in the CONTEXT, respond with: "I'm sorry, I don't have specific information regarding that in my current records. Please contact the school administration office directly for more details."
-        """
+        system_prompt = (
+            "You are a helpful school assistant.\n\n"
+            f"Context:\n{context}"
+        )
 
         response = await mistral_client.chat.complete_async(
-            model='mistral-small-latest',
+            model="mistral-small-latest",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_query}
+                {"role": "user", "content": user_query},
             ],
         )
 
         return {"content": response.choices[0].message.content}
 
     except Exception as e:
-        print(f"Runtime Error: {e}")
+        print(f"Chat Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------
+# GET DOCS
+# -------------------
+@app.get("/getdocs")
+async def get_documents(limit: int = 100):
+    if qdrant_db is None:
+        raise HTTPException(status_code=500, detail="Vector Database not initialized.")
+
+    try:
+        # Scroll API retrieves points from Qdrant
+        records, _ = qdrant_db.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=limit,
+            with_vectors=False
+        )
+
+        documents = [{"chunk_id": r.id, "text": r.payload.get("text")} for r in records]
+        return {"count": len(documents), "documents": documents}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------
+# ADD DOCS
+# -------------------
+@app.post("/postdocs")
+async def add_document(request: DocumentRequest):
+    if qdrant_db is None:
+        raise HTTPException(status_code=500, detail="Vector Database not initialized.")
+
+    try:
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            separators=["\n\n", "\n", ".", " ", ""],
+        )
+
+        chunks = splitter.split_text(request.text)
+        base_id = int(time.time() * 1000)
+
+        points = []
+
+        for i, chunk in enumerate(chunks):
+            vector = await asyncio.to_thread(
+                lambda: embedding_model.encode(chunk, normalize_embeddings=True).tolist()
+            )
+
+            # Map chunk data to Qdrant Point format
+            points.append(
+                PointStruct(
+                    id=base_id + i,
+                    vector=vector,
+                    payload={"text": chunk}
+                )
+            )
+
+        # Bulk upsert into Qdrant Collection
+        qdrant_db.upsert(
+            collection_name=COLLECTION_NAME,
+            points=points
+        )
+
+        return {
+            "message": "Document added successfully to Qdrant",
+            "chunks_created": len(chunks),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------
+# UPDATE DOC
+# -------------------
+@app.put("/docs/{chunk_id}")
+async def update_document(chunk_id: int, request: DocumentRequest):
+    if qdrant_db is None:
+        raise HTTPException(status_code=500, detail="Vector Database not initialized.")
+
+    try:
+        new_vector = await asyncio.to_thread(
+            lambda: embedding_model.encode(request.text, normalize_embeddings=True).tolist()
+        )
+
+        # Upserting a point with an existing ID updates it
+        qdrant_db.upsert(
+            collection_name=COLLECTION_NAME,
+            points=[
+                PointStruct(
+                    id=chunk_id,
+                    vector=new_vector,
+                    payload={"text": request.text}
+                )
+            ]
+        )
+
+        return {"message": f"Chunk {chunk_id} updated in Qdrant"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------
+# DELETE DOC
+# -------------------
+@app.delete("/docs/{chunk_id}")
+async def delete_document(chunk_id: int):
+    if qdrant_db is None:
+        raise HTTPException(status_code=500, detail="Vector Database not initialized.")
+
+    try:
+        # Delete specific point by ID
+        qdrant_db.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=[chunk_id]
+        )
+        return {"message": f"Chunk {chunk_id} deleted from Qdrant"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------
+# CLEAR ALL DOCS
+# -------------------
+@app.delete("/docs")
+async def clear_all_documents():
+    global qdrant_db
+
+    if qdrant_db is None:
+        raise HTTPException(status_code=500, detail="Vector Database not initialized.")
+
+    try:
+        # Recreate the collection to clear all records instantly
+        qdrant_db.delete_collection(collection_name=COLLECTION_NAME)
+        qdrant_db.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+        )
+
+        return {
+            "message": "All documents deleted from Qdrant successfully"
+        }
+
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

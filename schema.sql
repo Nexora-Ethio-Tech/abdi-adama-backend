@@ -11,6 +11,10 @@
 -- ============================================================
 -- CLEANUP (Allows re-running the script safely)
 -- ============================================================
+
+SET CLIENT_ENCODING TO 'utf8';
+
+
 DROP TABLE IF EXISTS 
     branches, school_config, users, students, emergency_contacts, teachers, 
     parents, parent_student, classes, courses, schedules, student_attendance, 
@@ -771,7 +775,7 @@ INSERT INTO branches (name, location) VALUES
 -- ============================================================
 INSERT INTO school_config (key, value_oromic, value_amharic, value_english) VALUES
     ('school_name', 'Mana Barumsaa Abdii Adaamaa', 'አብዲ አዳማ ትምህርት ቤት', 'Abdi Adama School'),
-    ('school_motto', 'ijooleen kessaan ijolee kenyaa', 'ልጆቻቹ ልጆቻችን ናቸዉ', 'Your children are our children');
+    ('school_motto', 'ijooleen kessan ijolee kenyaa', 'ልጆቻችሁ ልጆቻችን ናቸው', 'Your children are our children');
 
 -- ============================================================
 -- SEED: Default grading configurations

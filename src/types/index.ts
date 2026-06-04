@@ -56,6 +56,7 @@ export interface CreateUserDTO {
   password?: string;
   username?: string;
   grade?: string;
+  profileImage?: string | '';
 }
 
 export interface LoginDTO {
