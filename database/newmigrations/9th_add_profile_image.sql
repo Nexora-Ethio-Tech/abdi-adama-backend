@@ -1,2 +1,2 @@
-ALTER TABLE users ADD COLUMN profile_image text;
-ALTER TABLE branches ADD COLUMN profile_image text;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS profile_image text;
+ALTER TABLE public.branches ADD COLUMN IF NOT EXISTS profile_image text;
