@@ -534,7 +534,7 @@ class VicePrincipalService {
        JOIN teachers t ON gs.teacher_id = t.id
        JOIN users u ON t.user_id = u.id
        WHERE t.branch_id = $1
-       ORDER BY gs.submitted_at DESC`,
+       ORDER BY gs.academic_year DESC, gs.semester DESC, gs.submitted_at DESC`,
       [branchId]
     );
     return result.rows;
@@ -542,28 +542,40 @@ class VicePrincipalService {
 
   // Get individual student grades for a locked course grade submission
   async getSubmittedGrades(courseId: string, submissionType: string, branchId: string) {
-    // Verify course belongs to this branch
-    const courseCheck = await pool.query(
-      `SELECT c.id FROM courses c
-       JOIN classes cl ON c.class_id = cl.id
-       WHERE c.id = $1 AND cl.branch_id = $2`,
-      [courseId, branchId]
+    // Verify course belongs to this branch and find the matching finalized submission period
+    const submissionResult = await pool.query(
+      `SELECT gs.academic_year, gs.semester
+       FROM grade_submissions gs
+       JOIN teachers t ON gs.teacher_id = t.id
+       WHERE gs.course_id = $1
+         AND gs.submission_type = $2
+         AND gs.submission_stage = 'finalized'
+         AND gs.is_locked = true
+         AND t.branch_id = $3
+       ORDER BY gs.academic_year DESC, gs.semester DESC, gs.submitted_at DESC
+       LIMIT 1`,
+      [courseId, submissionType, branchId]
     );
 
-    if (courseCheck.rows.length === 0) {
-      throw new Error('Course not found or access denied');
+    if (submissionResult.rows.length === 0) {
+      throw new Error('Grade submission not found or access denied');
     }
 
-    // Include incremental (not yet locked) grades so VP sees running totals.
+    const { academic_year: academicYear, semester } = submissionResult.rows[0];
+
     const result = await pool.query(
       `SELECT g.*, u.name as student_name, u.digital_id
        FROM grades g
        JOIN students s ON g.student_id = s.id
        JOIN users u ON s.user_id = u.id
-       WHERE g.course_id = $1 AND g.type = $2 AND g.score IS NOT NULL
+       WHERE g.course_id = $1
+         AND g.type = $2
+         AND g.academic_year = $3
+         AND g.semester = $4
+         AND g.score IS NOT NULL
          AND COALESCE(g.is_finalized, false) = true
        ORDER BY u.name`,
-      [courseId, submissionType]
+      [courseId, submissionType, academicYear, semester]
     );
 
     return result.rows;
@@ -747,8 +759,9 @@ class VicePrincipalService {
       LEFT JOIN users u ON t.user_id = u.id
       JOIN classes cl ON c.class_id = cl.id
       WHERE cl.id = $1
+        AND cl.branch_id = $2
       ORDER BY c.name`,
-      [sectionId]
+      [sectionId, branchId]
     );
 
     return result.rows;
@@ -783,39 +796,44 @@ class VicePrincipalService {
        JOIN users u ON s.user_id = u.id
        JOIN classes c ON s.section_id = c.id
        WHERE c.id = $1
+         AND c.branch_id = $2
        ORDER BY u.name`,
-      [sectionId]
+      [sectionId, branchId]
     );
 
     // Get courses for the section
     const coursesResult = await pool.query(
-      `SELECT id, name, code
-       FROM courses
-       WHERE class_id = $1
-       ORDER BY name`,
-      [sectionId]
+      `SELECT c.id, c.name, c.code
+       FROM courses c
+       JOIN classes cl ON c.class_id = cl.id
+       WHERE cl.id = $1
+         AND cl.branch_id = $2
+       ORDER BY c.name`,
+      [sectionId, branchId]
     );
 
-    // Get grades for all students in this section
-    // VP Principal can ONLY see finalized grades (is_finalized = true)
-    // If no grades exist for the requested semester, try to get them from any available semester
+    // Get grades for all students in this section.
+    // VP Principal should see course-level totals built from finalized grade items.
+    // If no grades exist for the requested semester, try to get them from any available semester.
     let gradesResult = await pool.query(
       `SELECT 
-        g.id,
         g.student_id,
         g.course_id,
-        g.score,
-        g.total,
-        g.type as submission_type,
-        g.academic_year,
-        g.semester
+        COALESCE(SUM(NULLIF(COALESCE(g.score::text, ''), '')::numeric), 0) AS score,
+        COALESCE(SUM(NULLIF(COALESCE(g.total::text, ''), '')::numeric), 0) AS total,
+        MAX(g.academic_year) AS academic_year,
+        MAX(g.semester) AS semester
       FROM grades g
-      WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
-        AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
-        AND g.academic_year = $2
-        AND g.semester = $3
-        AND COALESCE(g.is_finalized, false) = true`,
-      [sectionId, activeYear, activeSem]
+      JOIN students s ON g.student_id = s.id
+      JOIN courses c ON g.course_id = c.id
+      JOIN classes cl ON s.section_id = cl.id AND c.class_id = cl.id
+      WHERE cl.id = $1
+        AND cl.branch_id = $2
+        AND g.academic_year = $3
+        AND g.semester = $4
+        AND COALESCE(g.is_finalized, false) = true
+      GROUP BY g.student_id, g.course_id`,
+      [sectionId, branchId, activeYear, activeSem]
     );
 
     // If no grades found for the requested semester, try to find what semesters have data
@@ -823,13 +841,16 @@ class VicePrincipalService {
       const availableSemesters = await pool.query(
         `SELECT DISTINCT g.semester
         FROM grades g
-        WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
-          AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
-          AND g.academic_year = $2
+        JOIN students s ON g.student_id = s.id
+        JOIN courses c ON g.course_id = c.id
+        JOIN classes cl ON s.section_id = cl.id AND c.class_id = cl.id
+        WHERE cl.id = $1
+          AND cl.branch_id = $2
+          AND g.academic_year = $3
           AND COALESCE(g.is_finalized, false) = true
         ORDER BY g.semester DESC
         LIMIT 1`,
-        [sectionId, activeYear]
+        [sectionId, branchId, activeYear]
       );
 
       // If we found grades in a different semester, fetch those instead
@@ -837,21 +858,23 @@ class VicePrincipalService {
         const availableSemester = availableSemesters.rows[0].semester;
         gradesResult = await pool.query(
           `SELECT 
-            g.id,
             g.student_id,
             g.course_id,
-            g.score,
-            g.total,
-            g.type as submission_type,
-            g.academic_year,
-            g.semester
+            COALESCE(SUM(NULLIF(COALESCE(g.score::text, ''), '')::numeric), 0) AS score,
+            COALESCE(SUM(NULLIF(COALESCE(g.total::text, ''), '')::numeric), 0) AS total,
+            MAX(g.academic_year) AS academic_year,
+            MAX(g.semester) AS semester
           FROM grades g
-          WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
-            AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
-            AND g.academic_year = $2
-            AND g.semester = $3
-            AND COALESCE(g.is_finalized, false) = true`,
-          [sectionId, activeYear, availableSemester]
+          JOIN students s ON g.student_id = s.id
+          JOIN courses c ON g.course_id = c.id
+          JOIN classes cl ON s.section_id = cl.id AND c.class_id = cl.id
+          WHERE cl.id = $1
+            AND cl.branch_id = $2
+            AND g.academic_year = $3
+            AND g.semester = $4
+            AND COALESCE(g.is_finalized, false) = true
+          GROUP BY g.student_id, g.course_id`,
+          [sectionId, branchId, activeYear, availableSemester]
         );
       }
     }
@@ -869,10 +892,8 @@ class VicePrincipalService {
     for (const grade of gradesResult.rows) {
       if (gradesMap[grade.student_id]) {
         gradesMap[grade.student_id].grades[grade.course_id] = {
-          id: grade.id,
-          score: grade.score,
-          total: grade.total,
-          submission_type: grade.submission_type
+          score: grade.score !== null ? Number(grade.score) : 0,
+          total: grade.total !== null ? Number(grade.total) : 0
         };
       }
     }
@@ -891,13 +912,14 @@ class VicePrincipalService {
     const activeYear = academicYear || this.getActiveAcademicYear();
     const activeSem = semester !== undefined ? semester : this.getActiveSemester();
 
-    // Get all students in the section
+    // Get all students in the section and branch
     const studentsResult = await pool.query(
       `SELECT s.id
        FROM students s
        JOIN classes c ON s.section_id = c.id
-       WHERE c.id = $1`,
-      [sectionId]
+       WHERE c.id = $1
+         AND c.branch_id = $2`,
+      [sectionId, branchId]
     );
 
     // Calculate totals, averages, and ranks for each student
@@ -905,46 +927,67 @@ class VicePrincipalService {
     for (const student of studentsResult.rows) {
       const gradesResult = await pool.query(
         `SELECT score, total
-         FROM grades
-         WHERE student_id = $1
-           AND COALESCE(is_finalized, false) = true
-           AND course_id IN (SELECT id FROM courses WHERE class_id = $2)
-           AND academic_year = $3
-           AND semester = $4`,
-        [student.id, sectionId, activeYear, activeSem]
+         FROM grades g
+         JOIN courses c ON g.course_id = c.id
+         JOIN classes cl ON c.class_id = cl.id
+         WHERE g.student_id = $1
+           AND COALESCE(g.is_finalized, false) = true
+           AND cl.id = $2
+           AND cl.branch_id = $3
+           AND g.academic_year = $4
+           AND g.semester = $5`,
+        [student.id, sectionId, branchId, activeYear, activeSem]
       );
 
       if (gradesResult.rows.length > 0) {
-        const total = gradesResult.rows.reduce((sum, g) => sum + (parseFloat(g.score) || 0), 0);
-        const average = total / gradesResult.rows.length;
+        // Aggregate percentages per subject/course then average across subjects
+        const courseAgg = await pool.query(
+          `SELECT c.id as course_id,
+                  COALESCE(SUM(NULLIF(COALESCE(g.score::text, ''), '')::numeric), 0) AS score,
+                  COALESCE(SUM(NULLIF(COALESCE(g.total::text, ''), '')::numeric), 0) AS total
+           FROM grades g
+           JOIN courses c ON g.course_id = c.id
+           JOIN classes cl ON c.class_id = cl.id
+           WHERE g.student_id = $1
+             AND COALESCE(g.is_finalized, false) = true
+             AND cl.id = $2
+             AND cl.branch_id = $3
+             AND g.academic_year = $4
+             AND g.semester = $5
+           GROUP BY c.id`,
+          [student.id, sectionId, branchId, activeYear, activeSem]
+        );
+
+        let sumPercent = 0;
+        let subjectCount = 0;
+
+        for (const r of courseAgg.rows) {
+          const s = parseFloat(r.score) || 0;
+          const t = parseFloat(r.total) || 0;
+          const pct = t > 0 ? (s / t) * 100 : 0;
+          sumPercent += pct;
+          subjectCount++;
+        }
+
+        const averagePct = subjectCount > 0 ? sumPercent / subjectCount : 0;
 
         results.push({
           student_id: student.id,
-          total,
-          average: parseFloat(average.toFixed(2))
+          // total is sum of subject percentages (useful for debugging/export); average is the mean percentage across subjects
+          total: parseFloat(sumPercent.toFixed(2)),
+          average: parseFloat(averagePct.toFixed(2))
         });
       }
     }
 
-    // Calculate ranks
-    results.sort((a, b) => b.total - a.total);
+    // Calculate ranks (sort by average percentage)
+    results.sort((a, b) => b.average - a.average);
     results.forEach((result, index) => {
       result.rank = index + 1;
     });
 
-    // Update the database with calculated values
-    for (const result of results) {
-      await pool.query(
-        `UPDATE grades
-         SET total = $1, average = $2, rank = $3
-         WHERE student_id = $4
-           AND course_id IN (SELECT id FROM courses WHERE class_id = $5)
-           AND academic_year = $6
-           AND semester = $7`,
-        [result.total, result.average, result.rank, result.student_id, sectionId, activeYear, activeSem]
-      );
-    }
-
+    // Return the calculated results without mutating per-grade records.
+    // The caller updates the frontend row state directly.
     return results;
   }
 

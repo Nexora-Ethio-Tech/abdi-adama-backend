@@ -1184,14 +1184,14 @@ class TeacherService {
       const subResult = await client.query(
         `INSERT INTO grade_submissions (course_id, teacher_id, submission_type, academic_year, semester, submitted_at, submitted_by, submission_stage, is_locked, updated_at)
          VALUES ($1, $2, $3, $4, $5, NOW(), $6, 'saved', FALSE, NOW())
-         ON CONFLICT (course_id, teacher_id, submission_type) 
-         DO UPDATE SET submission_stage = 'saved', academic_year = EXCLUDED.academic_year, semester = EXCLUDED.semester, updated_at = NOW(), is_locked = FALSE
+         ON CONFLICT (course_id, teacher_id, submission_type, academic_year, semester)
+         DO UPDATE SET submission_stage = 'saved', updated_at = NOW(), is_locked = FALSE
          RETURNING *`,
         [courseId, teacherId, submissionType, academicYear, semester, teacherUserId]
       );
 
       await client.query('COMMIT');
-      
+
       return {
         status: 'success',
         message: `Draft grades saved for ${academicYear} Semester ${semester}. You can edit these grades at any time until you finalize the submission. You can also submit grades for future academic periods.`,
@@ -1286,8 +1286,8 @@ class TeacherService {
       const subResult = await client.query(
         `INSERT INTO grade_submissions (course_id, teacher_id, submission_type, academic_year, semester, submitted_at, submitted_by, submission_stage, is_locked, updated_at)
          VALUES ($1, $2, $3, $4, $5, NOW(), $6, 'finalized', TRUE, NOW())
-         ON CONFLICT (course_id, teacher_id, submission_type) 
-         DO UPDATE SET submission_stage = 'finalized', academic_year = EXCLUDED.academic_year, semester = EXCLUDED.semester, is_locked = TRUE, updated_at = NOW()
+         ON CONFLICT (course_id, teacher_id, submission_type, academic_year, semester)
+         DO UPDATE SET submission_stage = 'finalized', updated_at = NOW(), is_locked = TRUE
          RETURNING *`,
         [courseId, teacherId, submissionType, academicYear, semester, teacherUserId]
       );
@@ -1302,7 +1302,7 @@ class TeacherService {
       );
 
       await client.query('COMMIT');
-      
+
       return {
         status: 'success',
         message: `✓ Grades finalized and locked for ${academicYear} Semester ${semester}. ${updatedCount} grade(s) are now visible to VP Principal. You cannot edit these grades. You can still submit grades for future academic periods.`,

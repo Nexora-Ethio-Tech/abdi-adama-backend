@@ -56,27 +56,27 @@ CREATE TABLE IF NOT EXISTS public.grade_submission_finalizations (
   FOREIGN KEY (finalized_by) REFERENCES public.users(id),
   FOREIGN KEY (course_id) REFERENCES public.courses(id)
 );
-
 -- 5. Update grade_submissions table to track stage and period
 ALTER TABLE IF EXISTS public.grade_submissions
-  ADD COLUMN IF NOT EXISTS submission_stage VARCHAR(20) DEFAULT 'saved'
-    CHECK (submission_stage IN ('saved', 'submitted', 'finalized'));
+ADD COLUMN IF NOT EXISTS submission_stage VARCHAR(20) DEFAULT 'saved' CHECK (
+    submission_stage IN ('saved', 'submitted', 'finalized')
+  );
 ALTER TABLE IF EXISTS public.grade_submissions
-  ADD COLUMN IF NOT EXISTS academic_year VARCHAR(20) DEFAULT '2025/2026';
+ADD COLUMN IF NOT EXISTS academic_year VARCHAR(20) DEFAULT '2025/2026';
 ALTER TABLE IF EXISTS public.grade_submissions
-  ADD COLUMN IF NOT EXISTS semester SMALLINT DEFAULT 2;
+ADD COLUMN IF NOT EXISTS semester SMALLINT DEFAULT 2;
 ALTER TABLE IF EXISTS public.grade_submissions
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
-
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 -- 6. Create index for efficient VP queries (looking for finalized grades only)
-CREATE INDEX IF NOT EXISTS idx_grades_finalized_by_period 
-  ON public.grades(academic_year, semester, course_id, status, is_finalized)
-  WHERE is_finalized = true;
-
+CREATE INDEX IF NOT EXISTS idx_grades_finalized_by_period ON public.grades(
+  academic_year,
+  semester,
+  course_id,
+  status,
+  is_finalized
+)
+WHERE is_finalized = true;
 -- 7. Create index for draft/submitted grade queries
-CREATE INDEX IF NOT EXISTS idx_grades_by_status_and_teacher
-  ON public.grades(status, submitted_by, academic_year, semester);
-
+CREATE INDEX IF NOT EXISTS idx_grades_by_status_and_teacher ON public.grades(status, submitted_by, academic_year, semester);
 -- 8. Ensure grade_submissions has proper indexes
-CREATE INDEX IF NOT EXISTS idx_grade_submissions_by_status
-  ON public.grade_submissions(submission_stage, course_id, teacher_id);
+CREATE INDEX IF NOT EXISTS idx_grade_submissions_by_status ON public.grade_submissions(submission_stage, course_id, teacher_id);
