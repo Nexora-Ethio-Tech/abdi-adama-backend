@@ -23,7 +23,8 @@ async function ensureSchemaExtensions(): Promise<void> {
     '7th_rename_last_grade_to_last_grade_completed.sql',
     '8th_fix_student_deletion_constraints.sql',
     '9th_add_profile_image.sql',
-    '10th_add_actual_paid_to_payroll_items.sql'
+    '10th_add_actual_paid_to_payroll_items.sql',
+    '11th_add_period_number_to_schedules.sql'
   ];
 
   for (const fileName of migrationFiles) {

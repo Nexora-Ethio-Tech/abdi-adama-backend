@@ -769,12 +769,13 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
     const courseIds = courses.map((c: any) => c.id);
     let dbGrades: any[] = [];
     try {
+      // Include not-yet-locked grades so students/parents see partial submissions immediately
       dbGrades = await fetchStudentGradeRows(
         studentRow.id,
         year,
         semester,
         courseIds,
-        true
+        false
       );
     } catch (gradeErr: any) {
       if (courseIds.length > 0) {
@@ -876,12 +877,13 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
 
     let gradeRows: any[] = [];
     try {
+      // For history view also include incremental submissions (not only locked)
       gradeRows = await fetchStudentGradeRows(
         studentRow.id,
         year,
         semester,
         courseIds,
-        true
+        false
       );
     } catch {
       if (courseIds.length > 0) {

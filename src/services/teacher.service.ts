@@ -13,7 +13,7 @@ class TeacherService {
   private async assertGradeNotLocked(client: { query: typeof pool.query }, teacherId: string, courseId: string, type: string) {
     const submissionResult = await client.query(
       `SELECT 1 FROM grade_submissions 
-       WHERE course_id = $1 AND teacher_id = $2 AND submission_type = $3`,
+       WHERE course_id = $1 AND teacher_id = $2 AND submission_type = $3 AND is_locked = true`,
       [courseId, teacherId, type]
     );
     if (submissionResult.rows[0]) {
@@ -104,7 +104,10 @@ class TeacherService {
       `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (student_id, course_id, type, academic_year, semester)
-       DO UPDATE SET score = EXCLUDED.score, total = EXCLUDED.total, weight = EXCLUDED.weight
+       DO UPDATE SET
+         score = (COALESCE(grades.score, 0) + EXCLUDED.score),
+         total = GREATEST(grades.total, EXCLUDED.total),
+         weight = COALESCE(EXCLUDED.weight, grades.weight)
        RETURNING *`,
       [data.studentId, data.courseId, data.type, data.score, data.total, data.weight, academicYear, semester]
     );
@@ -202,7 +205,10 @@ class TeacherService {
           `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (student_id, course_id, type, academic_year, semester)
-           DO UPDATE SET score = EXCLUDED.score, total = EXCLUDED.total, weight = EXCLUDED.weight
+           DO UPDATE SET
+             score = (COALESCE(grades.score, 0) + EXCLUDED.score),
+             total = GREATEST(grades.total, EXCLUDED.total),
+             weight = COALESCE(EXCLUDED.weight, grades.weight)
            RETURNING *`,
           [grade.studentId, courseId, grade.type, grade.score, grade.total, grade.weight || null, academicYear, semester]
         );

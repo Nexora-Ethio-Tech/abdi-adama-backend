@@ -553,12 +553,13 @@ class VicePrincipalService {
       throw new Error('Course not found or access denied');
     }
 
+    // Include incremental (not yet locked) grades so VP sees running totals.
     const result = await pool.query(
       `SELECT g.*, u.name as student_name, u.digital_id
        FROM grades g
        JOIN students s ON g.student_id = s.id
        JOIN users u ON s.user_id = u.id
-       WHERE g.course_id = $1 AND g.type = $2 AND g.is_submitted = true
+       WHERE g.course_id = $1 AND g.type = $2 AND g.score IS NOT NULL
        ORDER BY u.name`,
       [courseId, submissionType]
     );
@@ -784,7 +785,7 @@ class VicePrincipalService {
       [sectionId]
     );
 
-    // Get courses for the branch
+    // Get courses for the section
     const coursesResult = await pool.query(
       `SELECT id, name, code
        FROM courses
@@ -794,21 +795,60 @@ class VicePrincipalService {
     );
 
     // Get grades for all students in this section
-    const gradesResult = await pool.query(
+    // If no grades exist for the requested semester, try to get them from any available semester
+    let gradesResult = await pool.query(
       `SELECT 
         g.id,
         g.student_id,
         g.course_id,
         g.score,
         g.total,
-        g.type as submission_type
+        g.type as submission_type,
+        g.academic_year,
+        g.semester
       FROM grades g
       WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
         AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
         AND g.academic_year = $2
-        AND g.semester = $3` ,
+        AND g.semester = $3`,
       [sectionId, activeYear, activeSem]
     );
+
+    // If no grades found for the requested semester, try to find what semesters have data
+    if (gradesResult.rows.length === 0) {
+      const availableSemesters = await pool.query(
+        `SELECT DISTINCT g.semester
+        FROM grades g
+        WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
+          AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
+          AND g.academic_year = $2
+        ORDER BY g.semester DESC
+        LIMIT 1`,
+        [sectionId, activeYear]
+      );
+
+      // If we found grades in a different semester, fetch those instead
+      if (availableSemesters.rows.length > 0) {
+        const availableSemester = availableSemesters.rows[0].semester;
+        gradesResult = await pool.query(
+          `SELECT 
+            g.id,
+            g.student_id,
+            g.course_id,
+            g.score,
+            g.total,
+            g.type as submission_type,
+            g.academic_year,
+            g.semester
+          FROM grades g
+          WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
+            AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
+            AND g.academic_year = $2
+            AND g.semester = $3`,
+          [sectionId, activeYear, availableSemester]
+        );
+      }
+    }
 
     // Structure the data
     const gradesMap: Record<string, Record<string, any>> = {};
@@ -834,7 +874,10 @@ class VicePrincipalService {
     return {
       students: studentsResult.rows,
       courses: coursesResult.rows,
-      grades: Object.values(gradesMap)
+      grades: Object.values(gradesMap),
+      queriedSemester: activeSem,
+      queriedYear: activeYear,
+      availableDataSemester: gradesResult.rows.length > 0 ? gradesResult.rows[0].semester : null
     };
   }
 
