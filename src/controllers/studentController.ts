@@ -440,23 +440,57 @@ const fetchStudentGradeRows = async (
 };
 
 const loadGradingMethods = async (gradeLevel: string) => {
-  const normalized = String(gradeLevel || '').replace(/\D/g, '') || 'default';
+  const rawGrade = String(gradeLevel || '').trim();
+  const caseSort = `
+    ORDER BY
+      CASE method_id
+        WHEN 'quiz-1'         THEN 1
+        WHEN 'quiz-2'         THEN 2
+        WHEN 'test-1'         THEN 3
+        WHEN 'mid-exam'       THEN 4
+        WHEN 'mid-assignment' THEN 4
+        WHEN 'assignment'     THEN 5
+        WHEN 'final-exam'     THEN 10
+        ELSE 6
+      END ASC, created_at ASC`;
+
+  // 1. Exact match
   let configRes = await pool.query(
     `SELECT method_id, label, max_weight
      FROM grading_configs
      WHERE grade_level = $1
-     ORDER BY created_at ASC`,
-    [normalized]
+     ${caseSort}`,
+    [rawGrade]
   );
-  if (configRes.rows.length === 0) {
+  let rows = configRes.rows;
+
+  // 2. Numeric fallback (e.g. "Grade 12" -> "12")
+  if (rows.length === 0) {
+    const numericGrade = rawGrade.replace(/[^0-9]/g, '');
+    if (numericGrade && numericGrade !== rawGrade) {
+      configRes = await pool.query(
+        `SELECT method_id, label, max_weight
+         FROM grading_configs
+         WHERE grade_level = $1
+         ${caseSort}`,
+        [numericGrade]
+      );
+      rows = configRes.rows;
+    }
+  }
+
+  // 3. Default fallback
+  if (rows.length === 0) {
     configRes = await pool.query(
       `SELECT method_id, label, max_weight
        FROM grading_configs
        WHERE grade_level = 'default'
-       ORDER BY created_at ASC`
+       ${caseSort}`
     );
+    rows = configRes.rows;
   }
-  return configRes.rows.map((r: any) => ({
+
+  return rows.map((r: any) => ({
     id: r.method_id,
     label: r.label,
     maxWeight: r.max_weight,
