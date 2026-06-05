@@ -362,13 +362,13 @@ class TeacherExamService {
   // ─── Teacher exam CRUD (kept from original) ────────────────────────────────
 
   async createExam(input: any) {
-    const { teacherId, title, examType, totalMarks, duration, instructions, selectedSection, questions = [], examPassword, isLocked = false, passwordRequired = false, gradeId, subjectId, classId } = input;
+    const { teacherId, title, examType, totalMarks, duration, instructions, questions = [], gradeId, subjectId, classId } = input;
     const creatorRes = await pool.query(`SELECT id FROM users WHERE id=$1`, [teacherId]);
     const creatorId = creatorRes.rows[0]?.id || teacherId;
     const result = await pool.query(
-      `INSERT INTO online_exams (creator_id, subject_id, title, duration_minutes, is_published, start_window)
-       VALUES ($1, $2, $3, $4, FALSE, NOW()) RETURNING *`,
-      [creatorId, subjectId || null, title, duration]);
+      `INSERT INTO online_exams (creator_id, subject_id, section_id, title, duration_minutes, is_published, start_window, total_points)
+       VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), $6) RETURNING *`,
+      [creatorId, subjectId || null, classId || null, title, duration, totalMarks || 100]);
     const exam = result.rows[0];
     if (Array.isArray(questions) && questions.length > 0) {
       for (let i = 0; i < questions.length; i++) {
@@ -384,16 +384,29 @@ class TeacherExamService {
 
   async getTeacherExams(teacherId: string) {
     const result = await pool.query(
-      `SELECT oe.*, COUNT(oeq.id)::int as question_count FROM online_exams oe
+      `SELECT oe.*,
+              COUNT(oeq.id)::int as question_count,
+              co.name as subject_name,
+              cl.name as class_name,
+              cl.grade as grade_level,
+              cl.section as section_name
+       FROM online_exams oe
        LEFT JOIN online_exam_questions oeq ON oeq.exam_id = oe.id
+       LEFT JOIN courses co ON co.id = oe.subject_id
+       LEFT JOIN classes cl ON cl.id = oe.section_id
        WHERE oe.creator_id = (SELECT id FROM users WHERE id=$1)
-       GROUP BY oe.id ORDER BY oe.created_at DESC`,
+       GROUP BY oe.id, co.name, cl.name, cl.grade, cl.section
+       ORDER BY oe.created_at DESC`,
       [teacherId]);
-    return result.rows.map((e: any) => ({
+    const all = result.rows.map((e: any) => ({
       ...e,
       status: e.is_published ? 'published' : 'draft',
       questions: [],
     }));
+    return {
+      draftExams: all.filter((e: any) => !e.is_published),
+      publishedExams: all.filter((e: any) => e.is_published),
+    };
   }
 
   async getExamById(examId: string) {

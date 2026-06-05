@@ -56,7 +56,7 @@ export const schemas = {
     name: Joi.string().min(2).max(150).required(),
     email: Joi.string().email().required(),
     role: Joi.string().valid('teacher', 'student', 'parent', 'finance-clerk', 'driver', 'librarian', 'clinic-admin').required(),
-    branchId: Joi.string().uuid().optional(),
+    branchId: Joi.string().uuid().allow(null, '').optional(),
     password: Joi.string().min(8).optional(),
     grade: Joi.string().optional(),
     staffProfile: Joi.object().unknown(true).optional()
@@ -68,7 +68,15 @@ export const schemas = {
     email: Joi.string().email().required(),
     branchId: Joi.string().uuid().allow(null, '').optional(),
     password: Joi.string().min(8).optional(),
-    profileImage: Joi.string().dataUri().required()
+    profileImage: Joi.string().dataUri().allow(null, '').optional()
+  }),
+
+  createAuditorUser: Joi.object({
+    name: Joi.string().min(2).max(150).required(),
+    email: Joi.string().email().required(),
+    branchId: Joi.string().uuid().allow(null, '').optional(),
+    password: Joi.string().min(8).optional(),
+    profileImage: Joi.string().dataUri().allow(null, '').optional()
   }),
 
   updateUserStatus: Joi.object({

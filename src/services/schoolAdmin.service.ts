@@ -225,7 +225,7 @@ class SchoolAdminService {
   async assignStudentToClass(studentId: string, classId: string, branchId: string) {
     // Verify student exists and belongs to branch
     const studentCheck = await pool.query(
-      `SELECT s.id, s.user_id, u.role 
+      `SELECT s.id, s.user_id, s.section_id, u.role 
        FROM students s
        JOIN users u ON s.user_id = u.id
        WHERE s.user_id = $1 AND s.branch_id = $2`,
@@ -236,9 +236,11 @@ class SchoolAdminService {
       throw new Error('Student not found in your branch');
     }
 
-    // Verify class exists and belongs to branch
+    const prevSectionId = studentCheck.rows[0].section_id;
+
+    // Verify class exists and belongs to branch (include section column)
     const classCheck = await pool.query(
-      'SELECT id, name FROM classes WHERE id = $1 AND branch_id = $2',
+      'SELECT id, name, section FROM classes WHERE id = $1 AND branch_id = $2',
       [classId, branchId]
     );
 
@@ -246,28 +248,60 @@ class SchoolAdminService {
       throw new Error('Class not found in your branch');
     }
 
-    const className = classCheck.rows[0].name;
+    const classRow = classCheck.rows[0];
+    const className = classRow.name;
+    const classSection = classRow.section; // null for grade-level (no section)
 
-    // Update student's grade to match class name
-    const result = await pool.query(
-      `UPDATE students 
-       SET grade = $1, updated_at = NOW()
-       WHERE user_id = $2
-       RETURNING *`,
-      [className, studentId]
-    );
+    // Update student's grade and section_id atomically
+    let result;
+    if (classSection !== null && classSection !== undefined) {
+      // This is a specific section — set section_id to the class id
+      result = await pool.query(
+        `UPDATE students 
+         SET grade = $1, section_id = $2, updated_at = NOW()
+         WHERE user_id = $3
+         RETURNING *`,
+        [className, classId, studentId]
+      );
+    } else {
+      // Grade-only class (no section) — clear section_id and set grade
+      result = await pool.query(
+        `UPDATE students 
+         SET grade = $1, section_id = NULL, updated_at = NOW()
+         WHERE user_id = $2
+         RETURNING *`,
+        [className, studentId]
+      );
+    }
 
-    // Update class student count
-    await pool.query(
-      `UPDATE classes 
-       SET student_count = (SELECT COUNT(*) FROM students WHERE grade = $1 AND branch_id = $2)
-       WHERE id = $3`,
-      [className, branchId, classId]
-    );
+    // Update target class student_count correctly based on whether it has a section
+    if (classSection !== null && classSection !== undefined) {
+      await pool.query(
+        `UPDATE classes 
+         SET student_count = (SELECT COUNT(*) FROM students WHERE section_id = $1)
+         WHERE id = $2`,
+        [classId, classId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE classes 
+         SET student_count = (SELECT COUNT(*) FROM students WHERE section_id IS NULL AND grade = $1 AND branch_id = $2)
+         WHERE id = $3`,
+        [className, branchId, classId]
+      );
+    }
+
+    // If the student was previously assigned to a different section, update that class count too
+    if (prevSectionId && prevSectionId !== classId) {
+      await pool.query(
+        `UPDATE classes SET student_count = (SELECT COUNT(*) FROM students WHERE section_id = $1) WHERE id = $2`,
+        [prevSectionId, prevSectionId]
+      );
+    }
 
     return {
       student: result.rows[0],
-      class: classCheck.rows[0]
+      class: classRow
     };
   }
 
@@ -385,7 +419,10 @@ class SchoolAdminService {
       LEFT JOIN class_teachers ct ON ct.class_id = c.id
       LEFT JOIN teachers t ON ct.teacher_id = t.id
       LEFT JOIN users u ON t.user_id = u.id
-      LEFT JOIN students s ON s.grade = c.name AND s.branch_id = c.branch_id
+      LEFT JOIN students s ON s.branch_id = c.branch_id AND (
+        s.section_id = c.id
+        OR (s.section_id IS NULL AND c.section IS NULL AND s.grade = c.name)
+      )
       WHERE c.branch_id = $1
       GROUP BY c.id
       ORDER BY c.name`,
@@ -449,7 +486,10 @@ class SchoolAdminService {
     // Check if class has students
     const studentCheck = await pool.query(
       `SELECT COUNT(*) as count FROM students s
-       JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+       JOIN classes c ON s.branch_id = c.branch_id AND (
+         s.section_id = c.id
+         OR (s.section_id IS NULL AND c.section IS NULL AND s.grade = c.name)
+       )
        WHERE c.id = $1`,
       [classId]
     );
@@ -1298,7 +1338,10 @@ class SchoolAdminService {
         tu.name as teacher_name
       FROM students s
       JOIN users u ON s.user_id = u.id
-      LEFT JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+      LEFT JOIN classes c ON s.branch_id = c.branch_id AND (
+        s.section_id = c.id
+        OR (s.section_id IS NULL AND c.section IS NULL AND s.grade = c.name)
+      )
       LEFT JOIN teachers t ON c.teacher_id = t.id
       LEFT JOIN users tu ON t.user_id = tu.id
       WHERE s.user_id = $1 AND s.branch_id = $2`,
