@@ -141,58 +141,122 @@ class AuditorService {
     };
   }
 
-  // View audit trail
+
+  // View audit trail — combines finance_transactions + payment_status_logs for real data
   async getAuditTrail(branchId: string, filters?: { userId?: string; action?: string; category?: string; direction?: string; startDate?: string; endDate?: string }) {
-    let query = `
-      SELECT al.*
-      FROM audit_log al
-      WHERE al.student_id IN (
-        SELECT id FROM students WHERE branch_id = $1
-      )
-    `;
-    const params: any[] = [branchId];
-    let paramIndex = 2;
-
-    if (filters?.userId) {
-      query += ` AND al.student_id = $${paramIndex}`;
-      params.push(filters.userId);
-      paramIndex++;
-    }
-
-    if (filters?.action) {
-      query += ` AND al.action_label ILIKE $${paramIndex}`;
-      params.push(`%${filters.action}%`);
-      paramIndex++;
-    }
-
-    if (filters?.category) {
-      query += ` AND al.category = $${paramIndex}`;
-      params.push(filters.category);
-      paramIndex++;
-    }
-
-    if (filters?.direction) {
-      query += ` AND al.direction = $${paramIndex}`;
-      params.push(filters.direction);
-      paramIndex++;
-    }
+    const params1: any[] = [branchId];
+    let paramIdx1 = 2;
+    let ftWhere = '';
 
     if (filters?.startDate) {
-      query += ` AND al.timestamp >= $${paramIndex}`;
-      params.push(filters.startDate);
-      paramIndex++;
+      ftWhere += ` AND ft.date >= $${paramIdx1}`;
+      params1.push(filters.startDate);
+      paramIdx1++;
     }
-
     if (filters?.endDate) {
-      query += ` AND al.timestamp <= $${paramIndex}`;
-      params.push(filters.endDate);
-      paramIndex++;
+      ftWhere += ` AND ft.date <= $${paramIdx1}`;
+      params1.push(filters.endDate);
+      paramIdx1++;
     }
 
-    query += ` ORDER BY al.timestamp DESC LIMIT 100`;
+    // Restrict by category
+    const wantFees   = !filters?.category || filters.category === 'Fees';
+    const wantStaff  = !filters?.category || filters.category === 'Staff';
+    const wantOther  = !filters?.category || filters.category === 'Other';
+    const wantIn     = !filters?.direction || filters.direction === 'In';
+    const wantOut    = !filters?.direction || filters.direction === 'Out';
 
-    const result = await pool.query(query, params);
-    return result.rows;
+    // 1. Student payment transactions (category=Fees, direction=In)
+    const ftStudentRows = (wantFees && wantIn) ? await pool.query(`
+      SELECT
+        ft.id,
+        ft.student_id,
+        ft.student_name,
+        'N/A' AS section,
+        'Fees' AS category,
+        'In' AS direction,
+        ft.type AS action_label,
+        ft.verified_by AS modified_by,
+        ft.verified_by AS approver_name,
+        NULL AS old_value,
+        NULL AS new_value,
+        true AS status,
+        ft.date AS timestamp
+      FROM finance_transactions ft
+      WHERE ft.branch_id = $1
+        AND ft.student_id IS NOT NULL
+        ${ftWhere}
+      ORDER BY ft.date DESC
+    `, params1) : { rows: [] };
+
+    // 2. Other finance transactions (expenses/income) — category=Other
+    const params2: any[] = [branchId];
+    let paramIdx2 = 2;
+    let ftOtherWhere = '';
+    if (filters?.startDate) { ftOtherWhere += ` AND ft.date >= $${paramIdx2}`; params2.push(filters.startDate); paramIdx2++; }
+    if (filters?.endDate)   { ftOtherWhere += ` AND ft.date <= $${paramIdx2}`; params2.push(filters.endDate);   paramIdx2++; }
+
+    const ftOtherRows = (wantOther) ? await pool.query(`
+      SELECT
+        ft.id,
+        ft.student_id,
+        ft.student_name,
+        'N/A' AS section,
+        'Other' AS category,
+        CASE WHEN ft.type ILIKE '%income%' OR ft.type ILIKE '%payment%' THEN 'In' ELSE 'Out' END AS direction,
+        ft.type AS action_label,
+        ft.verified_by AS modified_by,
+        ft.verified_by AS approver_name,
+        NULL AS old_value,
+        NULL AS new_value,
+        true AS status,
+        ft.date AS timestamp
+      FROM finance_transactions ft
+      WHERE ft.branch_id = $1
+        AND ft.student_id IS NULL
+        ${ftOtherWhere}
+      ORDER BY ft.date DESC
+    `, params2) : { rows: [] };
+
+    // 3. Payroll (staff salary) entries — category=Staff, direction=Out
+    const params3: any[] = [branchId];
+    let paramIdx3 = 2;
+    let prWhere = '';
+    if (filters?.startDate) { prWhere += ` AND pr.created_at >= $${paramIdx3}`; params3.push(filters.startDate); paramIdx3++; }
+    if (filters?.endDate)   { prWhere += ` AND pr.created_at <= $${paramIdx3}`; params3.push(filters.endDate);   paramIdx3++; }
+
+    const prRows = (wantStaff && wantOut) ? await pool.query(`
+      SELECT
+        pi.id,
+        NULL AS student_id,
+        pi.employee_name AS student_name,
+        COALESCE(u_emp.role::text, 'Staff') AS section,
+        'Staff' AS category,
+        'Out' AS direction,
+        CONCAT('Salary - ', pr.month, '/', pr.year) AS action_label,
+        COALESCE(ug.name, 'System') AS modified_by,
+        COALESCE(uf.name, 'System') AS approver_name,
+        NULL AS old_value,
+        json_build_object('gross', pi.gross_salary, 'net', pi.net_pay, 'deductions', pi.total_deductions) AS new_value,
+        true AS status,
+        COALESCE(pr.finalized_at, pr.created_at) AS timestamp
+      FROM payroll_items pi
+      JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+      LEFT JOIN users ug ON pr.generated_by = ug.id
+      LEFT JOIN users uf ON pr.finalized_by = uf.id
+      LEFT JOIN users u_emp ON pi.employee_id = u_emp.id
+      WHERE pr.branch_id = $1
+        AND pr.status IN ('finalized', 'exported')
+        ${prWhere}
+      ORDER BY pr.created_at DESC
+    `, params3) : { rows: [] };
+
+    // Merge and sort all
+    const allRows = [...ftStudentRows.rows, ...ftOtherRows.rows, ...prRows.rows]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 200);
+
+    return allRows;
   }
 
   // Dashboard

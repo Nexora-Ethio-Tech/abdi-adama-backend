@@ -402,12 +402,15 @@ class FinanceClerkService {
       }
 
       // Also record a finance_transactions summary (backwards compatibility) - amount is cash collected
-      const dateStr = data.date || new Date().toISOString().slice(0, 10);
-      const ethDate = gregorianToEthiopic(new Date(dateStr));
+      // IMPORTANT: Always use the real Gregorian today for the date stored in finance_transactions.
+      // The frontend sends data.date as an Ethiopian calendar string (e.g. "2018-09-25 EC"),
+      // which must NOT be fed into new Date() — that would produce a wrong Gregorian date.
+      const actualGregorianDateStr = new Date().toISOString().slice(0, 10);
+      const ethDate = gregorianToEthiopic(new Date(actualGregorianDateStr));
       await client.query(
         `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, dateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
+        [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, actualGregorianDateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
       );
 
       // Recompute outstanding and update student_collections for the paid month
