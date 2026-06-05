@@ -98,6 +98,7 @@ router.get('/grade-submissions', teacherController.getGradeSubmissions);
 
 router.post('/grades', validate(enterGradeSchema), teacherController.enterGrades);
 router.post('/grades/bulk', validate(bulkEnterGradesSchema), teacherController.bulkEnterGrades);
+router.get('/grades/class/:classId', teacherController.getGrades); // alias: getClassGrades in frontend
 router.get('/grades/:courseId', teacherController.getGrades);
 router.patch('/grades/:id', validate(updateGradeSchema), teacherController.updateGrade);
 router.delete('/grades/:id', teacherController.deleteGrade);

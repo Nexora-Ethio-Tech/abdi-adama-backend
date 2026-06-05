@@ -48,6 +48,11 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
+    // Allow all origins in development mode to support local network device testing
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+
     // Allow requests with no origin (e.g. mobile apps, server-to-server requests, curl)
     if (!origin) {
       return callback(null, true);

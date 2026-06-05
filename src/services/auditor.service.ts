@@ -181,7 +181,8 @@ class AuditorService {
         NULL AS old_value,
         NULL AS new_value,
         true AS status,
-        ft.date AS timestamp
+        ft.date AS timestamp,
+        ft.amount AS amount
       FROM finance_transactions ft
       WHERE ft.branch_id = $1
         AND ft.student_id IS NOT NULL
@@ -210,7 +211,8 @@ class AuditorService {
         NULL AS old_value,
         NULL AS new_value,
         true AS status,
-        ft.date AS timestamp
+        ft.date AS timestamp,
+        ft.amount AS amount
       FROM finance_transactions ft
       WHERE ft.branch_id = $1
         AND ft.student_id IS NULL
@@ -239,7 +241,8 @@ class AuditorService {
         NULL AS old_value,
         json_build_object('gross', pi.gross_salary, 'net', pi.net_pay, 'deductions', pi.total_deductions) AS new_value,
         true AS status,
-        COALESCE(pr.finalized_at, pr.created_at) AS timestamp
+        COALESCE(pr.finalized_at, pr.created_at) AS timestamp,
+        pi.net_pay AS amount
       FROM payroll_items pi
       JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
       LEFT JOIN users ug ON pr.generated_by = ug.id
