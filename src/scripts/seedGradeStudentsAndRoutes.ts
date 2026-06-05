@@ -68,7 +68,7 @@ async function getOrCreateBranch(client: PoolClient) {
   }
 
   const result = await client.query(
-    'INSERT INTO branches (name, location) VALUES ($1, $2) RETURNING id',
+    'INSERT INTO branches (name, address) VALUES ($1, $2) RETURNING id',
     [BRANCH_NAME, BRANCH_LOCATION]
   );
 

@@ -1917,6 +1917,44 @@ class SchoolAdminService {
            WHERE id = $3`,
           [[], assignedClass || null, teacherId]
         );
+
+        // Ensure class_teachers table exists
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS class_teachers (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+            teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+            branch_id UUID NOT NULL,
+            assigned_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(class_id, teacher_id)
+          )
+        `);
+
+        // Clean up previous homeroom assignments for this teacher
+        await client.query(`DELETE FROM class_teachers WHERE teacher_id = $1`, [teacherId]);
+
+        // Sync with class_teachers
+        if (grades && sections) {
+          for (const grade of grades) {
+            const secList = sections[grade] || [];
+            for (const sec of secList) {
+              const clsRes = await client.query(
+                `SELECT id FROM classes WHERE branch_id = $1 AND (name = $2 OR grade = $2) AND section = $3`,
+                [branchId, grade, sec]
+              );
+              if (clsRes.rows.length > 0) {
+                const classId = clsRes.rows[0].id;
+                // Delete previous teacher for this specific class
+                await client.query(`DELETE FROM class_teachers WHERE class_id = $1`, [classId]);
+                // Insert new assignment
+                await client.query(
+                  `INSERT INTO class_teachers (class_id, teacher_id, branch_id) VALUES ($1, $2, $3) ON CONFLICT (class_id, teacher_id) DO NOTHING`,
+                  [classId, teacherId, branchId]
+                );
+              }
+            }
+          }
+        }
       } else if (promotionType === 'before-school-educator') {
         // Clear department/home teacher flags when promoting to before-school educator
         await client.query(

@@ -28,7 +28,8 @@ async function ensureSchemaExtensions(): Promise<void> {
     '12th_online_exams_schema.sql',
     '13th_online_exams_anti_cheat.sql',
     '14th_online_exams_unique_constraint.sql',
-    '15th_fix_unique_constraints.sql'
+    '15th_fix_unique_constraints.sql',
+    '16th_online_exams_auto_grading.sql'
   ];
 
   for (const fileName of migrationFiles) {

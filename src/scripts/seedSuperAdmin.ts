@@ -89,11 +89,15 @@ async function seedSuperAdmin(): Promise<void> {
         );
         
         if (branchResult.rows.length === 0) {
-          logger.error(`❌ Branch not found: ${account.branchName}`);
-          continue;
+          const insertResult = await client.query<{ id: string }>(
+            'INSERT INTO branches (name, address) VALUES ($1, $2) RETURNING id',
+            [account.branchName, 'Main Branch']
+          );
+          branchId = insertResult.rows[0].id;
+          logger.info(`🌱 Created missing branch: ${account.branchName}`);
+        } else {
+          branchId = branchResult.rows[0].id;
         }
-        
-        branchId = branchResult.rows[0].id;
       }
 
       const passwordHash = await hashPassword(account.password);

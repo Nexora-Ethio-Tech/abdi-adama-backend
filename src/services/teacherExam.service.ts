@@ -3,6 +3,25 @@ import logger from '../utils/logger';
 
 const VARIATION_CODES = ['A', 'B', 'C', 'D', 'E'];
 
+function getActiveSemester(): 1 | 2 {
+  const now = new Date();
+  const m = now.getMonth() + 1;
+  const d = now.getDate();
+  if ((m === 9 && d >= 11) || m >= 10 || m === 1) return 1;
+  if (m >= 2 && m <= 6) return 2;
+  return 2; // Jul–Sep 10 summer
+}
+
+function getActiveAcademicYear(): string {
+  const now = new Date();
+  const m = now.getMonth() + 1;
+  const d = now.getDate();
+  const gYear = now.getFullYear();
+  // After Enkutatash -> EC year = gYear - 7
+  const ecYear = (m > 9 || (m === 9 && d >= 11)) ? gYear - 7 : gYear - 8;
+  return `${ecYear + 7}/${ecYear + 8}`;
+}
+
 function shuffleArray<T>(arr: T[], seed: number): T[] {
   const a = [...arr];
   let s = seed;
@@ -40,6 +59,7 @@ class TeacherExamService {
            oe.duration_minutes,
            oe.is_published,
            oe.created_at,
+           oe.show_score,
            u.name AS teacher_name,
            COUNT(oeq.id)::int AS question_count,
            oes.status AS session_status,
@@ -54,7 +74,7 @@ class TeacherExamService {
          LEFT JOIN online_exam_questions oeq ON oeq.exam_id = oe.id
          LEFT JOIN online_exam_sessions oes ON oes.exam_id = oe.id AND oes.student_id = $1
          WHERE oe.is_published = TRUE
-         GROUP BY oe.id, u.name, oes.status, oes.terminated, oes.violation_count, oes.final_score
+         GROUP BY oe.id, u.name, oes.status, oes.terminated, oes.violation_count, oes.final_score, oe.show_score
          ORDER BY oe.created_at DESC`,
         [studentId || userId]);
 
@@ -69,7 +89,7 @@ class TeacherExamService {
           : exam.session_status === 'submitted' ? 'submitted'
           : exam.session_status === 'active' ? 'active'
           : 'available',
-        finalScore: exam.final_score !== null ? Math.round(Number(exam.final_score)) : null,
+        finalScore: (exam.final_score !== null && exam.show_score !== false) ? Math.round(Number(exam.final_score)) : null,
         violated: exam.terminated,
         violationCount: exam.violation_count,
         passwordRequired: false,
@@ -175,6 +195,9 @@ class TeacherExamService {
           instructions: '',
           teacherName: exam.teacher_name,
           passwordRequired: false,
+          showScore: exam.show_score !== false,
+          isGraded: !!exam.is_graded,
+          assessmentType: exam.assessment_type || null,
         },
         session: {
           id: session?.id || null,
@@ -183,6 +206,7 @@ class TeacherExamService {
           endTime,
           terminated: session?.terminated || false,
           violationCount: session?.violation_count || 0,
+          finalScore: session?.final_score !== undefined ? session.final_score : null,
         },
         questions,
         savedAnswers,
@@ -350,6 +374,28 @@ class TeacherExamService {
          WHERE exam_id=$2 AND student_id=$3`,
         [percentage, examId, studentId]);
 
+      // Push to gradebook if graded exam
+      const examRes = await client.query(
+        `SELECT is_graded, assessment_type, subject_id, total_points FROM online_exams WHERE id=$1`, [examId]);
+      const exam = examRes.rows[0];
+
+      if (exam && exam.is_graded && exam.subject_id && totalMarks > 0) {
+        const academicYear = getActiveAcademicYear();
+        const semester = getActiveSemester();
+
+        await client.query(
+          `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester)
+           VALUES ($1, $2, $3, $4, $5, NULL, $6, $7)
+           ON CONFLICT (student_id, course_id, type, academic_year, semester)
+           DO UPDATE SET
+             score = EXCLUDED.score,
+             total = EXCLUDED.total,
+             weight = COALESCE(EXCLUDED.weight, grades.weight)
+           RETURNING *`,
+          [studentId, exam.subject_id, exam.assessment_type || 'quiz-1', score, totalMarks, academicYear, semester]
+        );
+      }
+
       await client.query('COMMIT');
       return { score, total_marks: totalMarks, percentage: Math.round(percentage) };
     } catch (error) {
@@ -363,12 +409,16 @@ class TeacherExamService {
 
   async createExam(input: any) {
     const { teacherId, title, examType, totalMarks, duration, instructions, questions = [], gradeId, subjectId, classId } = input;
+    const showScore = input.showScore !== undefined ? input.showScore : (input.show_score !== undefined ? input.show_score : true);
+    const isGraded = input.isGraded !== undefined ? input.isGraded : (input.is_graded !== undefined ? input.is_graded : false);
+    const assessmentType = input.assessmentType !== undefined ? input.assessmentType : (input.assessment_type !== undefined ? input.assessment_type : null);
+
     const creatorRes = await pool.query(`SELECT id FROM users WHERE id=$1`, [teacherId]);
     const creatorId = creatorRes.rows[0]?.id || teacherId;
     const result = await pool.query(
-      `INSERT INTO online_exams (creator_id, subject_id, section_id, title, duration_minutes, is_published, start_window, total_points)
-       VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), $6) RETURNING *`,
-      [creatorId, subjectId || null, classId || null, title, duration, totalMarks || 100]);
+      `INSERT INTO online_exams (creator_id, subject_id, section_id, title, duration_minutes, is_published, start_window, total_points, show_score, is_graded, assessment_type)
+       VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), $6, $7, $8, $9) RETURNING *`,
+      [creatorId, subjectId || null, classId || null, title, duration, totalMarks || 100, showScore, isGraded, assessmentType]);
     const exam = result.rows[0];
     if (Array.isArray(questions) && questions.length > 0) {
       for (let i = 0; i < questions.length; i++) {
@@ -379,7 +429,16 @@ class TeacherExamService {
           [exam.id, q.text, q.type || 'options', JSON.stringify(q.options || []), q.correctOptionId || null, q.points || 1, i]);
       }
     }
-    return { id: exam.id, title: exam.title, status: 'draft', durationMinutes: exam.duration_minutes, questions };
+    return {
+      id: exam.id,
+      title: exam.title,
+      status: 'draft',
+      durationMinutes: exam.duration_minutes,
+      questions,
+      showScore: exam.show_score,
+      isGraded: exam.is_graded,
+      assessmentType: exam.assessment_type
+    };
   }
 
   async getTeacherExams(teacherId: string) {
@@ -421,14 +480,49 @@ class TeacherExamService {
   }
 
   async updateExam(examId: string, input: any) {
-    const { title, duration, questions } = input;
+    const title = input.title;
+    const duration = input.duration !== undefined ? input.duration : input.durationMinutes;
+    const totalMarks = input.totalMarks !== undefined ? input.totalMarks : input.total_points;
+    const subjectId = input.subjectId !== undefined ? input.subjectId : input.subject_id;
+    const classId = input.classId !== undefined ? input.classId : (input.class_id !== undefined ? input.class_id : input.section_id);
+    const showScore = input.showScore !== undefined ? input.showScore : input.show_score;
+    const isGraded = input.isGraded !== undefined ? input.isGraded : input.is_graded;
+    const assessmentType = input.assessmentType !== undefined ? input.assessmentType : input.assessment_type;
+    const questions = input.questions;
+
     const updates: string[] = []; const vals: any[] = []; let p = 1;
     if (title !== undefined) { updates.push(`title=$${p++}`); vals.push(title); }
-    if (duration !== undefined) { updates.push(`duration_minutes=$${p++}`); vals.push(duration); }
-    if (updates.length > 0) {
-      vals.push(examId);
-      await pool.query(`UPDATE online_exams SET ${updates.join(',')} WHERE id=$${p}`, vals);
-    }
+    if (duration !== undefined) { updates.push(`duration_minutes=$${p++}`); vals.push(Number(duration)); }
+    if (totalMarks !== undefined) { updates.push(`total_points=$${p++}`); vals.push(Number(totalMarks)); }
+    if (subjectId !== undefined) { updates.push(`subject_id=$${p++}`); vals.push(subjectId || null); }
+    if (classId !== undefined) { updates.push(`section_id=$${p++}`); vals.push(classId || null); }
+    if (showScore !== undefined) { updates.push(`show_score=$${p++}`); vals.push(!!showScore); }
+    if (isGraded !== undefined) { updates.push(`is_graded=$${p++}`); vals.push(!!isGraded); }
+    if (assessmentType !== undefined) { updates.push(`assessment_type=$${p++}`); vals.push(assessmentType || null); }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (updates.length > 0) {
+        vals.push(examId);
+        await client.query(`UPDATE online_exams SET ${updates.join(',')} WHERE id=$${p}`, vals);
+      }
+      if (questions !== undefined && Array.isArray(questions)) {
+        await client.query(`DELETE FROM online_exam_questions WHERE exam_id=$1`, [examId]);
+        for (let i = 0; i < questions.length; i++) {
+          const q = questions[i];
+          await client.query(
+            `INSERT INTO online_exam_questions (exam_id, question_text, question_type, options_json, correct_answer, points, sort_order)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [examId, q.text, q.type || 'options', JSON.stringify(q.options || []), q.correctOptionId || null, q.points || 1, i]);
+        }
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
+
     return this.getExamById(examId);
   }
 

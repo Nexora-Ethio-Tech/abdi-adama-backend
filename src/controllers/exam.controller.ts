@@ -143,7 +143,8 @@ class ExamController {
       if (!userId) { sendError(res, 'Unauthorized', 401); return; }
       const { title, courseId, courseName, category, durationMinutes, questions,
         classId, gradeId, subjectId, examType, totalMarks, duration,
-        selectedSection, examPassword, passwordRequired, instructions } = req.body;
+        selectedSection, examPassword, passwordRequired, instructions,
+        showScore, isGraded, assessmentType } = req.body;
       if (gradeId || subjectId) {
         const exam = await teacherExamService.createExam({
           teacherId: userId, classId: classId || null, gradeId: gradeId || null,
@@ -152,6 +153,9 @@ class ExamController {
           instructions: instructions || '', selectedSection: selectedSection || null,
           questions: questions || [], examPassword: examPassword || null,
           isLocked: !!examPassword, passwordRequired: passwordRequired || !!examPassword,
+          showScore: showScore !== undefined ? showScore : true,
+          isGraded: isGraded !== undefined ? isGraded : false,
+          assessmentType: assessmentType || null,
         });
         sendSuccess(res, exam, 'Exam created successfully', 201);
       } else {
