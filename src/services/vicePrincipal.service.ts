@@ -456,14 +456,14 @@ class VicePrincipalService {
 
     // Calculate course averages
     const courses = Array.from(courseMap.values()).map(course => {
-      course.average = course.totalPossible > 0 
+      course.average = course.totalPossible > 0
         ? parseFloat(((course.totalScore / course.totalPossible) * 100).toFixed(2))
         : 0;
       return course;
     });
 
     // Calculate overall average
-    const overallAverage = totalWeight > 0 
+    const overallAverage = totalWeight > 0
       ? parseFloat((totalWeightedScore / totalWeight).toFixed(2))
       : courses.length > 0
         ? parseFloat((courses.reduce((sum, c) => sum + c.average, 0) / courses.length).toFixed(2))
@@ -943,7 +943,7 @@ class VicePrincipalService {
   }
 
   // --- Teacher Leaderboard Methods ---
-  
+
   async getLeaderboard(branchId: string) {
     const result = await pool.query(
       `SELECT 
@@ -983,7 +983,7 @@ class VicePrincipalService {
       const vpRating = parseInt(row.vp_rating) || 0;
       const planRatingSum = parseFloat(row.plan_rating_sum) || 0;
       const totalPoints = studentVotes + (vpRating * 100) + planRatingSum;
-      
+
       // Parse grades_taught into a sorted unique array, stripping sections
       const extractedGrades = new Set<string>();
       if (row.grades_taught) {
@@ -999,7 +999,7 @@ class VicePrincipalService {
           }
         });
       }
-      
+
       const gradesTaught: string[] = Array.from(extractedGrades).sort((a, b) => {
         const numA = parseInt(a.replace(/\D/g, '')) || 0;
         const numB = parseInt(b.replace(/\D/g, '')) || 0;

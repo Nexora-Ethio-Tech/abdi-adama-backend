@@ -99,7 +99,7 @@ const fetchStudentWeeklySchedule = async (studentRow: {
 
   try {
     const result = await pool.query(
-    `SELECT
+      `SELECT
        s.day,
        s.time_slot,
        s.subject,
@@ -116,8 +116,8 @@ const fetchStudentWeeklySchedule = async (studentRow: {
          WHEN 'Thursday' THEN 4 WHEN 'Friday' THEN 5
        END,
        s.time_slot`,
-    [studentRow.branch_id, classMatchers]
-  );
+      [studentRow.branch_id, classMatchers]
+    );
 
     return result.rows.map((row: any) => ({
       day: row.day,
