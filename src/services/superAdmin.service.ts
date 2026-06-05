@@ -245,12 +245,12 @@ class SuperAdminService {
   }
 
   // Branch Management
-  async createBranch(data: { name: string; code: string; logoUrl?: string; phone?: string; email?: string; address?: string }) {
+  async createBranch(data: { name: string; code: string; logoUrl?: string; phone?: string; email?: string; address?: string, profile_image?: string }) {
     const result = await pool.query(
-      `INSERT INTO branches (name, code, logo_url, phone, email, address)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO branches (name, code, logo_url, phone, email, address, profile_image)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [data.name, data.code, data.logoUrl || null, data.phone || null, data.email || null, data.address || null]
+      [data.name, data.code, data.logoUrl || null, data.phone || null, data.email || null, data.address || null, data.profile_image || null]
     );
     return result.rows[0];
   }

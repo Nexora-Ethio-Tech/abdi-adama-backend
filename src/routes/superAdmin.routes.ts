@@ -17,7 +17,8 @@ const branchSchema = Joi.object({
   logoUrl: Joi.string().uri().allow(''),
   phone: Joi.string().allow(''),
   email: Joi.string().email().allow(''),
-  address: Joi.string().allow('')
+  address: Joi.string().allow(''),
+  profile_image: Joi.string().uri().allow('')
 });
 
 const academicYearSchema = Joi.object({
