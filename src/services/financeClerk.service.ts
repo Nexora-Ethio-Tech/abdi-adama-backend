@@ -66,6 +66,74 @@ class FinanceClerkService {
     return `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
   }
 
+  async syncStudentCollectionsAcrossAllMonths(client: any, studentId: string, branchId: string) {
+    const studentRes = await client.query(
+      `SELECT s.id, s.grade, s.branch_id, s.is_bus_user, s.created_at, s.penalty_fee,
+         COALESCE(
+           NULLIF(s.monthly_fee, 0),
+           (
+             SELECT monthly_fee FROM branch_grade_fees 
+             WHERE branch_id = s.branch_id 
+               AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+             LIMIT 1
+           ),
+           0
+         ) AS monthly_fee,
+         CASE WHEN s.is_bus_user = TRUE THEN
+           COALESCE(
+             NULLIF(s.bus_fee, 0),
+             (
+               SELECT bus_fee FROM branch_grade_fees 
+               WHERE branch_id = s.branch_id 
+                 AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+               LIMIT 1
+             ),
+             0
+           )
+         ELSE 0 END AS bus_fee
+       FROM students s
+       WHERE s.id = $1`,
+      [studentId]
+    );
+
+    if (studentRes.rows.length === 0) return;
+    const student = studentRes.rows[0];
+
+    const existingMonthsRes = await client.query(
+      `SELECT DISTINCT month FROM student_collections WHERE student_id = $1`,
+      [studentId]
+    );
+    const months = existingMonthsRes.rows.map((r: any) => r.month as string);
+
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    if (!months.includes(currentMonth)) {
+      months.push(currentMonth);
+    }
+
+    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+    const now = new Date();
+
+    for (const month of months) {
+      const outstandingTotal = await this.computeMonthlyOutstanding(client, student, branchId, month, now);
+      const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
+      let status = 'in_collections';
+      if (outstandingTotal <= 0) {
+        status = 'cleared';
+      } else if (now > dueDate) {
+        status = 'overdue';
+      }
+
+      await client.query(
+        `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (student_id, month)
+         DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
+        [studentId, month, dueDate.toISOString().slice(0, 10), status]
+      );
+    }
+  }
+
+
   private async getPenaltyDueForMonth(client: any, student: any, month: string, now = new Date()) {
     const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
     const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
@@ -732,7 +800,20 @@ class FinanceClerkService {
       [branchId]
     );
 
-    return result.rows;
+    if (result.rows.length > 0) {
+      return result.rows;
+    }
+
+    // Fallback to branch_grade_fees if financial_policies is empty
+    const fallbackResult = await pool.query(
+      `SELECT grade_level, monthly_fee AS monthly_tuition, registration_fee, bus_fee, 
+              0 AS penalty_rate, 'Current' AS academic_year, branch_id
+       FROM branch_grade_fees
+       WHERE branch_id = $1
+       ORDER BY grade_level`,
+      [branchId]
+    );
+    return fallbackResult.rows;
   }
 
   /** Resolve registration fee from DB (grade-specific → global setting → branch policy). */
@@ -850,6 +931,19 @@ class FinanceClerkService {
 
       let policyFee = Number(policyResult.rows[0]?.bus_fee || 0);
       if (policyFee <= 0) {
+        // Fallback to branch_grade_fees
+        const normalizedGrade = student.grade ? student.grade.replace(/\D/g, '') : '';
+        const gradeFeeResult = await client.query(
+          `SELECT bus_fee FROM branch_grade_fees
+           WHERE branch_id = $1
+             AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = $2
+           LIMIT 1`,
+          [data.branchId, normalizedGrade]
+        );
+        policyFee = Number(gradeFeeResult.rows[0]?.bus_fee || 0);
+      }
+
+      if (policyFee <= 0) {
         throw new Error('No valid transport fee policy configured for this student grade');
       }
 
@@ -895,6 +989,8 @@ class FinanceClerkService {
          WHERE id = $2`,
         [policyFee, data.studentId]
       );
+
+      await this.syncStudentCollectionsAcrossAllMonths(client, data.studentId, data.branchId);
 
       await client.query('COMMIT');
 
@@ -994,6 +1090,8 @@ class FinanceClerkService {
         ]
       );
 
+      await this.syncStudentCollectionsAcrossAllMonths(client, data.studentId, data.branchId);
+
       await client.query('COMMIT');
 
       return {
@@ -1069,18 +1167,31 @@ class FinanceClerkService {
     paramCount++;
     values.push(studentId);
 
-    const result = await pool.query(
-      `UPDATE students SET ${fields.join(', ')}, updated_at = NOW()
-       WHERE id = $${paramCount}
-       RETURNING *`,
-      values
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE students SET ${fields.join(', ')}, updated_at = NOW()
+         WHERE id = $${paramCount}
+         RETURNING *`,
+        values
+      );
 
-    if (result.rows.length === 0) {
-      throw new Error('Student not found');
+      if (result.rows.length === 0) {
+        throw new Error('Student not found');
+      }
+
+      const student = result.rows[0];
+      await this.syncStudentCollectionsAcrossAllMonths(client, student.id, student.branch_id);
+
+      await client.query('COMMIT');
+      return student;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    return result.rows[0];
   }
 
   // Get dashboard statistics
