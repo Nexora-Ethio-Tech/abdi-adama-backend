@@ -19,6 +19,10 @@ async function ensureSchemaExtensions(): Promise<void> {
     '3rd_online_exams_and_ratings.sql',
     '4thfix_schedule_varchar_limits.sql',
     '5th_fix_varchar10_limits.sql',
+    '6th_fix_user_deletion_constraints.sql',
+    '6th_fix_user_deletion_constraints.sql',
+    '8th_fix_student_deletion_constraints.sql',
+    '9th_add_profile_image.sql'
   ];
 
   for (const fileName of migrationFiles) {
