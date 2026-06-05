@@ -55,15 +55,11 @@ router.get('/', roleGuard([UserRole.TEACHER, UserRole.SCHOOL_ADMIN]), async (req
   try {
     const userId = (req as any).user?.id;
 
-    const exams = await teacherExamService.getTeacherExams(userId);
-
-    // Separate draft and published exams
-    const draftExams = exams.filter(e => e.status === 'draft');
-    const publishedExams = exams.filter(e => e.status === 'published');
+    const result = await teacherExamService.getTeacherExams(userId);
 
     res.json({
       success: true,
-      data: { draftExams, publishedExams }
+      data: result
     });
   } catch (error) {
     logger.error('Error fetching exams:', error);

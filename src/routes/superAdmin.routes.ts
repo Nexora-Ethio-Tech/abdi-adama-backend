@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import superAdminController from '../controllers/superAdmin.controller';
 import { authenticate } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
@@ -96,9 +96,26 @@ router.get('/profit-targets', roleGuard([UserRole.SUPER_ADMIN, UserRole.SCHOOL_A
 router.use(roleGuard([UserRole.SUPER_ADMIN]));
 
 // User Management
+// Ensure auditors (global role) don't fail UUID validation for branchId by
+// normalizing non-string / missing values to null before Joi validation.
+const normalizeBranchForAuditor = (req: Request, _res: Response, next: NextFunction) => {
+  try {
+    const v = req.body?.branchId;
+    if (v === undefined || v === null || v === '') {
+      req.body.branchId = null;
+    } else if (typeof v !== 'string') {
+      // If the client sent a non-string (number/object/boolean), normalize to null
+      req.body.branchId = null;
+    }
+  } catch (err) {
+    req.body.branchId = null;
+  }
+  next();
+};
+
 router.post('/create-school-admin', validate(schemas.createAdminUser), superAdminController.createSchoolAdmin);
 router.post('/create-vice-principal', validate(schemas.createAdminUser), superAdminController.createVicePrincipal);
-router.post('/create-auditor', validate(schemas.createAdminUser), superAdminController.createAuditor);
+router.post('/create-auditor', normalizeBranchForAuditor, validate(schemas.createAuditorUser), superAdminController.createAuditor);
 router.post('/users', validate(createUserSchema), superAdminController.createUser);
 router.get('/users', superAdminController.getAllUsers);
 router.get('/users/:id', superAdminController.getUserById);

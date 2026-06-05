@@ -70,8 +70,8 @@ app.use(cors({
 }));
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'production' ? 100 : 2000,
+  windowMs: 7 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 100000 : 200000,
   message: {
     success: false,
     error: {
@@ -83,7 +83,7 @@ const limiter = rateLimit({
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'production' ? 5 : 50,
+  max: process.env.NODE_ENV === 'production' ? 500 : 500,
   message: {
     success: false,
     error: {

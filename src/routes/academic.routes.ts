@@ -173,7 +173,10 @@ router.delete('/sections/:id', async (req: AuthRequest, res: Response) => {
     // Check if section has students enrolled
     const studentCheck = await pool.query(
       `SELECT COUNT(*) as count FROM students s
-       JOIN classes c ON s.grade = c.name AND s.branch_id = c.branch_id
+       JOIN classes c ON s.branch_id = c.branch_id AND (
+         s.section_id = c.id
+         OR (s.section_id IS NULL AND c.section IS NULL AND s.grade = c.name)
+       )
        WHERE c.id = $1`,
       [sectionId]
     );

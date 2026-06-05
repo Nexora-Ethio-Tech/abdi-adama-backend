@@ -165,11 +165,8 @@ class ExamController {
     try {
       const userId = (req.user as any)?.id || (req.user as any)?.user_id || (req.user as any)?.userId;
       if (!userId) { sendError(res, 'Unauthorized', 401); return; }
-      const exams = await teacherExamService.getTeacherExams(userId);
-      sendSuccess(res, {
-        draftExams: exams.filter(e => e.status === 'draft'),
-        publishedExams: exams.filter(e => e.status === 'published'),
-      });
+      const result = await teacherExamService.getTeacherExams(userId);
+      sendSuccess(res, result);
     } catch (error: any) { next(error); }
   }
 

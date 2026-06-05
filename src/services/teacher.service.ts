@@ -1340,11 +1340,13 @@ class TeacherService {
       }
 
       const result = await pool.query(
-        `SELECT DISTINCT c.id, c.name, c.code, cl.id as class_id, cl.name as class_name, cl.grade as grade_level
+        `SELECT DISTINCT c.id, c.name, c.code,
+                cl.id as class_id, cl.name as class_name,
+                cl.grade as grade_level, cl.section as section_name
          FROM courses c
          LEFT JOIN classes cl ON c.class_id = cl.id
          WHERE c.teacher_id = $1
-         ORDER BY cl.name ASC, c.name ASC`,
+         ORDER BY cl.name ASC, cl.section ASC, c.name ASC`,
         [teacherResult.rows[0].id]
       );
       return result.rows;
