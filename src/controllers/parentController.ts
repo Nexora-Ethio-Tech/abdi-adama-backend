@@ -60,7 +60,7 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
          u.name AS "fullName",
          s.grade,
          CASE WHEN COUNT(sa.*) = 0 THEN 'N/A' ELSE ROUND(COUNT(sa.*) FILTER (WHERE sa.status = 'present')::numeric / COUNT(sa.*) * 100, 1)::text || '%' END AS attendance,
-         COALESCE('Avg Grade: ' || ss.avg_grade::text, 'Pending Results') AS performance,
+         COALESCE('Rank: ' || ss.academic_rank::text, 'Pending Results') AS performance,
          COALESCE(course_count, 0) AS course_count,
          '[]'::json AS courses
        FROM parent_student ps
@@ -76,7 +76,7 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
          GROUP BY e.student_id
        ) AS course_stats ON course_stats.student_id = s.id
        WHERE ps.parent_id = $1
-       GROUP BY s.id, u.name, s.grade, ss.avg_grade, course_count
+       GROUP BY s.id, u.name, s.grade, ss.academic_rank, course_count
        ORDER BY u.name ASC`,
       [parentId]
     );
@@ -104,16 +104,7 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
          'Logistics'::text AS category,
          n.driver_name AS "driverName"
        FROM logistics_notices n
-       WHERE n.deleted_at IS NULL
-         AND n.created_at > NOW() - INTERVAL '30 days'
-         AND n.sender_id IN (
-           SELECT r.driver_id
-           FROM routes r
-           JOIN student_routes rm ON r.id = rm.route_id
-           WHERE rm.student_id IN (
-             SELECT student_id FROM parent_student WHERE parent_id = $1
-           )
-         )
+       WHERE n.created_at > NOW() - INTERVAL '30 days'
 
        UNION ALL
 
