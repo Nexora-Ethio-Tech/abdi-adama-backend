@@ -99,7 +99,7 @@ const fetchStudentWeeklySchedule = async (studentRow: {
 
   try {
     const result = await pool.query(
-    `SELECT
+      `SELECT
        s.day,
        s.time_slot,
        s.subject,
@@ -116,8 +116,8 @@ const fetchStudentWeeklySchedule = async (studentRow: {
          WHEN 'Thursday' THEN 4 WHEN 'Friday' THEN 5
        END,
        s.time_slot`,
-    [studentRow.branch_id, classMatchers]
-  );
+      [studentRow.branch_id, classMatchers]
+    );
 
     return result.rows.map((row: any) => ({
       day: row.day,
@@ -769,12 +769,13 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
     const courseIds = courses.map((c: any) => c.id);
     let dbGrades: any[] = [];
     try {
+      // Include not-yet-locked grades so students/parents see partial submissions immediately
       dbGrades = await fetchStudentGradeRows(
         studentRow.id,
         year,
         semester,
         courseIds,
-        true
+        false
       );
     } catch (gradeErr: any) {
       if (courseIds.length > 0) {
@@ -876,12 +877,13 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
 
     let gradeRows: any[] = [];
     try {
+      // For history view also include incremental submissions (not only locked)
       gradeRows = await fetchStudentGradeRows(
         studentRow.id,
         year,
         semester,
         courseIds,
-        true
+        false
       );
     } catch {
       if (courseIds.length > 0) {
