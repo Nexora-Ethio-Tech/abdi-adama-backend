@@ -770,9 +770,9 @@ class ScheduleService {
       // Insert the chosen schedule
       for (const entry of chosen) {
         await client.query(
-          `INSERT INTO schedules (teacher_id, day, time_slot, class_name, subject)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [entry.teacherId, entry.day, entry.timeSlot, entry.className, entry.subject]
+          `INSERT INTO schedules (teacher_id, day, time_slot, period_number, class_name, subject)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [entry.teacherId, entry.day, entry.timeSlot, entry.period, entry.className, entry.subject]
         );
       }
 
@@ -859,7 +859,7 @@ class ScheduleService {
            WHEN 'Monday' THEN 1 WHEN 'Tuesday' THEN 2 WHEN 'Wednesday' THEN 3
            WHEN 'Thursday' THEN 4 WHEN 'Friday' THEN 5
          END,
-         s.time_slot, s.class_name`,
+         COALESCE(s.period_number, 99), s.time_slot, s.class_name`,
       [branchId]
     );
     return result.rows;

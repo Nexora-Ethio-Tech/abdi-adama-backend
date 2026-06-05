@@ -948,8 +948,11 @@ class TeacherService {
     }
 
     const result = await pool.query(
-      `SELECT * FROM schedules
-       WHERE teacher_id = $1
+      `SELECT s.*, u.name AS teacher_name
+       FROM schedules s
+       JOIN teachers t ON s.teacher_id = t.id
+       JOIN users u ON t.user_id = u.id
+       WHERE s.teacher_id = $1
        ORDER BY 
          CASE day
            WHEN 'Monday' THEN 1
@@ -960,7 +963,7 @@ class TeacherService {
            WHEN 'Saturday' THEN 6
            WHEN 'Sunday' THEN 7
          END,
-         time_slot`,
+         COALESCE(s.period_number, 99), s.time_slot`,
       [teacherResult.rows[0].id]
     );
 
