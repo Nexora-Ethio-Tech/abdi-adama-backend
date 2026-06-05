@@ -169,8 +169,7 @@ const computeFirstSemesterAverage = async (
       const legacy = await pool.query(
         `SELECT g.course_id, g.type, g.score
          FROM grades g
-         WHERE g.student_id = $1 AND g.course_id = ANY($2::uuid[]) AND g.score IS NOT NULL
-         ${SUBMITTED_GRADE_FILTER}`,
+         WHERE g.student_id = $1 AND g.course_id = ANY($2::uuid[]) AND g.score IS NOT NULL`,
         [studentRow.id, courseIds]
       );
       gradeRows = legacy.rows;
@@ -784,8 +783,7 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
            FROM grades g
            WHERE g.student_id = $1
              AND g.course_id = ANY($2::uuid[])
-             AND g.score IS NOT NULL
-             ${SUBMITTED_GRADE_FILTER}`,
+             AND g.score IS NOT NULL`,
           [studentRow.id, courseIds]
         );
         dbGrades = legacy.rows;
@@ -892,8 +890,7 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
            FROM grades g
            WHERE g.student_id = $1
              AND g.course_id = ANY($2::uuid[])
-             AND g.score IS NOT NULL
-             ${SUBMITTED_GRADE_FILTER}`,
+             AND g.score IS NOT NULL`,
           [studentRow.id, courseIds]
         );
         gradeRows = legacy.rows;

@@ -41,9 +41,11 @@ class TeacherController {
   // Enter grades
   async enterGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      const teacherUserId = req.user!.id;
       const { studentId, courseId, type, score, total, weight } = req.body;
 
       const grade = await teacherService.enterGrade({
+        teacherUserId,
         studentId,
         courseId,
         type,

@@ -87,8 +87,9 @@ class TeacherService {
     }));
   }
 
-  // Enter grade
+  // Enter grade (single student)
   async enterGrade(data: {
+    teacherUserId?: string;
     studentId: string;
     courseId: string;
     type: string;
@@ -100,19 +101,53 @@ class TeacherService {
   }) {
     const academicYear = data.academicYear || '2025/2026';
     const semester = data.semester ?? 2;
-    const result = await pool.query(
-      `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (student_id, course_id, type, academic_year, semester)
-       DO UPDATE SET
-         score = (COALESCE(grades.score, 0) + EXCLUDED.score),
-         total = GREATEST(grades.total, EXCLUDED.total),
-         weight = COALESCE(EXCLUDED.weight, grades.weight)
-       RETURNING *`,
-      [data.studentId, data.courseId, data.type, data.score, data.total, data.weight, academicYear, semester]
-    );
 
-    return result.rows[0];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // If a teacher is entering grades, validate ownership and lock status
+      if (data.teacherUserId) {
+        const teacherResult = await client.query(
+          'SELECT id FROM teachers WHERE user_id = $1',
+          [data.teacherUserId]
+        );
+        if (teacherResult.rows.length === 0) throw new Error('Teacher not found');
+        const teacherId = teacherResult.rows[0].id;
+
+        const courseResult = await client.query(
+          'SELECT teacher_id FROM courses WHERE id = $1',
+          [data.courseId]
+        );
+        if (courseResult.rows.length === 0) throw new Error('Course not found');
+        if (courseResult.rows[0].teacher_id !== teacherId) {
+          throw new Error('You can only enter grades for courses you teach');
+        }
+
+        await this.assertGradesNotLocked(client);
+        await this.assertGradeNotLocked(client, teacherId, data.courseId, data.type);
+      }
+
+      const result = await client.query(
+        `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (student_id, course_id, type, academic_year, semester)
+         DO UPDATE SET
+           score = EXCLUDED.score,
+           total = GREATEST(grades.total, EXCLUDED.total),
+           weight = COALESCE(EXCLUDED.weight, grades.weight)
+         RETURNING *`,
+        [data.studentId, data.courseId, data.type, data.score, data.total, data.weight, academicYear, semester]
+      );
+
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Bulk enter grades
@@ -206,7 +241,7 @@ class TeacherService {
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (student_id, course_id, type, academic_year, semester)
            DO UPDATE SET
-             score = (COALESCE(grades.score, 0) + EXCLUDED.score),
+             score = EXCLUDED.score,
              total = GREATEST(grades.total, EXCLUDED.total),
              weight = COALESCE(EXCLUDED.weight, grades.weight)
            RETURNING *`,
