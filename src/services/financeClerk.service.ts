@@ -150,9 +150,9 @@ class FinanceClerkService {
 
     // Now we are past the deadline. Let's see if the student paid their base fees on time.
     const monthlyDue = Number(student.monthly_fee || 0);
-    const busDue     = student.is_bus_user ? Number(student.bus_fee || 0) : 0;
-    const regDue     = await this.getRegistrationDueForMonth(client, student.id, student.branch_id, month);
-    const baseDue    = monthlyDue + busDue + regDue;
+    const busDue = student.is_bus_user ? Number(student.bus_fee || 0) : 0;
+    const regDue = await this.getRegistrationDueForMonth(client, student.id, student.branch_id, month);
+    const baseDue = monthlyDue + busDue + regDue;
 
     // Sum all payments and aid usages made on or before the deadline
     const onTimePaidRes = await client.query(
@@ -525,84 +525,84 @@ class FinanceClerkService {
     const client = await pool.connect();
     try {
 
-    // Fee types to report
-    const penaltyDue = await this.getPenaltyDueForMonth(client, student, targetMonth);
-    const registrationDue = await this.getRegistrationDueForMonth(client, studentId, student.branch_id, targetMonth);
-    const feeTypes = [
-      { key: 'monthly', label: 'Monthly Tuition', due: Number(student.monthly_fee || 0) },
-      { key: 'registration', label: 'Registration Fee', due: registrationDue },
-      { key: 'bus', label: 'Bus Fee', due: Number(student.bus_fee || 0) },
-      { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
-    ];
+      // Fee types to report
+      const penaltyDue = await this.getPenaltyDueForMonth(client, student, targetMonth);
+      const registrationDue = await this.getRegistrationDueForMonth(client, studentId, student.branch_id, targetMonth);
+      const feeTypes = [
+        { key: 'monthly', label: 'Monthly Tuition', due: Number(student.monthly_fee || 0) },
+        { key: 'registration', label: 'Registration Fee', due: registrationDue },
+        { key: 'bus', label: 'Bus Fee', due: Number(student.bus_fee || 0) },
+        { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
+      ];
 
-    const feesWithPaid: any[] = [];
-    const paidFees: string[] = [];
-    let totalDue = 0;
-    let totalPaid = 0;
+      const feesWithPaid: any[] = [];
+      const paidFees: string[] = [];
+      let totalDue = 0;
+      let totalPaid = 0;
 
-    for (const ft of feeTypes) {
-      totalDue += Number(ft.due || 0);
-      const paidRes = await pool.query(
-        `SELECT COALESCE(SUM(pi.amount),0) as paid
+      for (const ft of feeTypes) {
+        totalDue += Number(ft.due || 0);
+        const paidRes = await pool.query(
+          `SELECT COALESCE(SUM(pi.amount),0) as paid
          FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
          WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
-        [studentId, targetMonth, ft.key]
-      );
-      let paid = Number(paidRes.rows[0].paid || 0);
-      // Include aid usages in monthly tuition paid total
-      if (ft.key === 'monthly') {
-        const aidRes2 = await pool.query(
-          `SELECT COALESCE(SUM(amount),0) AS paid FROM student_aid_usages WHERE student_id=$1 AND month=$2`,
-          [studentId, targetMonth]
+          [studentId, targetMonth, ft.key]
         );
-        paid += Number(aidRes2.rows[0].paid || 0);
+        let paid = Number(paidRes.rows[0].paid || 0);
+        // Include aid usages in monthly tuition paid total
+        if (ft.key === 'monthly') {
+          const aidRes2 = await pool.query(
+            `SELECT COALESCE(SUM(amount),0) AS paid FROM student_aid_usages WHERE student_id=$1 AND month=$2`,
+            [studentId, targetMonth]
+          );
+          paid += Number(aidRes2.rows[0].paid || 0);
+        }
+        const remaining = Math.max(0, Number(ft.due || 0) - paid);
+
+        totalPaid += paid;
+        feesWithPaid.push({
+          feeType: ft.key,
+          label: ft.label,
+          due: Number(ft.due || 0),
+          paid,
+          remaining,
+          isFullyPaid: Number(ft.due || 0) > 0 && remaining === 0
+        });
+
+        if (Number(ft.due || 0) > 0 && remaining === 0) {
+          paidFees.push(ft.key);
+        }
       }
-      const remaining = Math.max(0, Number(ft.due || 0) - paid);
-      
-      totalPaid += paid;
-      feesWithPaid.push({
-        feeType: ft.key,
-        label: ft.label,
-        due: Number(ft.due || 0),
-        paid,
-        remaining,
-        isFullyPaid: Number(ft.due || 0) > 0 && remaining === 0
-      });
 
-      if (Number(ft.due || 0) > 0 && remaining === 0) {
-        paidFees.push(ft.key);
-      }
-    }
+      // Also pull collection status
+      const collRes = await pool.query(`SELECT status, due_date FROM student_collections WHERE student_id = $1 AND month = $2`, [studentId, targetMonth]);
+      const collection = collRes.rows[0] || null;
 
-    // Also pull collection status
-    const collRes = await pool.query(`SELECT status, due_date FROM student_collections WHERE student_id = $1 AND month = $2`, [studentId, targetMonth]);
-    const collection = collRes.rows[0] || null;
-
-    // Pull aid allocations summary for the student
-    const aidRes = await pool.query(
-      `SELECT COALESCE(SUM(approved_amount),0)::numeric AS approved_total, COALESCE(SUM(used_amount),0)::numeric AS used_total
+      // Pull aid allocations summary for the student
+      const aidRes = await pool.query(
+        `SELECT COALESCE(SUM(approved_amount),0)::numeric AS approved_total, COALESCE(SUM(used_amount),0)::numeric AS used_total
        FROM student_aids WHERE student_id = $1 AND status = 'active'`,
-      [studentId]
-    );
-    const approvedAidTotal = Number(aidRes.rows[0]?.approved_total || 0);
-    const aidUsed = Number(aidRes.rows[0]?.used_total || 0);
-    const aidRemaining = Math.max(0, approvedAidTotal - aidUsed);
+        [studentId]
+      );
+      const approvedAidTotal = Number(aidRes.rows[0]?.approved_total || 0);
+      const aidUsed = Number(aidRes.rows[0]?.used_total || 0);
+      const aidRemaining = Math.max(0, approvedAidTotal - aidUsed);
 
-    return {
-      student: { id: student.id, name: student.name, parent_phone: student.parent_phone },
-      usesTransport: !!student.is_bus_user,
-      month: targetMonth,
-      fees: feesWithPaid,
-      paidFees,
-      totalDue,
-      totalPaid,
-      totalRemaining: Math.max(0, totalDue - totalPaid),
-      // Aid summary
-      approvedAidTotal,
-      aidUsed,
-      aidRemaining,
-      collection
-    };
+      return {
+        student: { id: student.id, name: student.name, parent_phone: student.parent_phone },
+        usesTransport: !!student.is_bus_user,
+        month: targetMonth,
+        fees: feesWithPaid,
+        paidFees,
+        totalDue,
+        totalPaid,
+        totalRemaining: Math.max(0, totalDue - totalPaid),
+        // Aid summary
+        approvedAidTotal,
+        aidUsed,
+        aidRemaining,
+        collection
+      };
 
     } finally {
       client.release();
