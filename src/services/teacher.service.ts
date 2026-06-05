@@ -228,7 +228,15 @@ class TeacherService {
       `SELECT 
         g.*,
         u.name as student_name, u.digital_id,
-        s.grade
+        s.grade,
+        (
+          COALESCE(g.is_submitted, false) = true
+          OR EXISTS (
+            SELECT 1 FROM grade_submissions gs
+            WHERE gs.course_id = g.course_id
+              AND gs.submission_type = g.type
+          )
+        ) AS is_submitted
       FROM grades g
       JOIN students s ON g.student_id = s.id
       JOIN users u ON s.user_id = u.id
