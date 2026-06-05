@@ -16,16 +16,17 @@ router.get('/my-payslips', payrollController.getMyPayslips);
 router.get('/notifications', employeeProfileController.getMyNotifications);
 router.patch('/notifications/:id/read', employeeProfileController.markNotificationRead);
 
-// Liability and report routes (super-admin and auditor only)
+// Liability and report routes (super-admin and auditor)
 router.get('/liability', roleGuard([UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.getSchoolLiability);
 router.get('/export/:id', roleGuard([UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.exportPayroll);
 router.get('/custom-export', roleGuard([UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.customExport);
 
-// Administrative modification/viewing routes
-router.post('/generate', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), payrollController.generatePayroll);
+// Payroll generation, deletion, and finalization — Auditor role only
+// (Super admin is read-only on the payroll ledger)
+router.post('/generate', roleGuard([UserRole.AUDITOR]), payrollController.generatePayroll);
 router.get('/runs', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.getPayrollRuns);
 router.get('/runs/:id', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.getPayrollRun);
-router.delete('/runs/:id', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), payrollController.deletePayrollRun);
-router.patch('/runs/:id/finalize', roleGuard([UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.finalizePayroll);
+router.delete('/runs/:id', roleGuard([UserRole.AUDITOR]), payrollController.deletePayrollRun);
+router.patch('/runs/:id/finalize', roleGuard([UserRole.AUDITOR]), payrollController.finalizePayroll);
 
 export default router;

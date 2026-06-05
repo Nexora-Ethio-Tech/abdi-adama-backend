@@ -16,22 +16,37 @@ const feeReductionStatusSchema = Joi.object({
   status: Joi.string().valid('pending', 'approved', 'rejected', 'Pending', 'Approved', 'Rejected').required()
 });
 
-// View payments (READ ONLY)
+// List all branches (for branch selector on Auditor dashboard)
+router.get('/branches', auditorController.getBranches);
+
+// Dashboard (accepts ?branchId= for auditor)
+router.get('/dashboard', auditorController.getDashboard);
+
+// Student payments (READ ONLY) — accepts ?branchId=
 router.get('/payments', auditorController.getPayments);
 
-// View fee reduction requests
+// Fee reduction requests — accepts ?branchId=
 router.get('/fee-reductions', auditorController.getFeeReductionRequests);
 
 // Approve/Reject fee reduction (ONLY write permission)
 router.patch('/fee-reductions/:id/status', validate(feeReductionStatusSchema), auditorController.updateFeeReductionStatus);
 
-// View financial reports
+// Financial report — accepts ?branchId=
 router.get('/financial-report', auditorController.getFinancialReport);
 
-// View audit trail
+// Audit trail — accepts ?branchId=
 router.get('/audit-trail', auditorController.getAuditTrail);
 
-// Dashboard
-router.get('/dashboard', auditorController.getDashboard);
+// Student fee collections (pending + overdue) — accepts ?branchId=
+router.get('/collections', auditorController.getCollections);
+
+// Staff payroll runs summary — accepts ?branchId=
+router.get('/payroll-summary', auditorController.getPayrollSummary);
+
+// Staff loans — accepts ?branchId=
+router.get('/loans-summary', auditorController.getLoansSummary);
+
+// Other (non-student) transactions: expenses, income — accepts ?branchId=
+router.get('/other-transactions', auditorController.getOtherTransactions);
 
 export default router;

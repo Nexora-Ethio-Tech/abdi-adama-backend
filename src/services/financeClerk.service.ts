@@ -19,20 +19,24 @@ class FinanceClerkService {
     return { allocations: rows, totalRemaining };
   }
   private async getRegistrationDueForMonth(client: any, studentId: string, branchId: string, targetMonth: string): Promise<number> {
+    // 1. Fetch the student's enrollment date
+    const enrollRes = await client.query(`SELECT created_at FROM students WHERE id = $1`, [studentId]);
+    if (enrollRes.rows.length === 0) return 0;
+    const enrollmentMonth = this.getStudentEnrollmentMonth(enrollRes.rows[0].created_at);
+
+    // Registration fee is only due in the student's enrollment month
+    if (targetMonth !== enrollmentMonth) return 0;
+
+    // 2. Check if already paid in any month
     const regPaidRes = await client.query(
       `SELECT 1
        FROM payments p
        JOIN payment_items pi ON pi.payment_id = p.id
-       WHERE p.student_id = $1
-         AND pi.fee_type = 'registration'
-         AND COALESCE(p.month, '') <= $2
+       WHERE p.student_id = $1 AND pi.fee_type = 'registration'
        LIMIT 1`,
-      [studentId, targetMonth]
+      [studentId]
     );
-
-    if (regPaidRes.rows.length > 0) {
-      return 0;
-    }
+    if (regPaidRes.rows.length > 0) return 0;
 
     const reg = await this.getGlobalRegistrationFee(branchId).catch(() => ({ amount: 0 }));
     return Number(reg.amount || 0);
@@ -56,24 +60,139 @@ class FinanceClerkService {
     return ethiopianToGregorianDate({ year: ethDate.year, month: ethDate.month, day });
   }
 
-  private async getPenaltyDueForMonth(client: any, student: any, month: string, now = new Date()) {
-    const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
-    const defaultPenalty = Number(student.penalty_fee || 0) || penaltyRate;
-    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
-    const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
-    return now > dueDate ? defaultPenalty : 0;
+  private getStudentEnrollmentMonth(createdAt: Date | string): string {
+    const dateObj = typeof createdAt === 'string' ? new Date(createdAt) : createdAt;
+    const ethDate = gregorianToEthiopian(dateObj);
+    return `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
   }
 
-  private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string) {
+  async syncStudentCollectionsAcrossAllMonths(client: any, studentId: string, branchId: string) {
+    const studentRes = await client.query(
+      `SELECT s.id, s.grade, s.branch_id, s.is_bus_user, s.created_at, s.penalty_fee,
+         COALESCE(
+           NULLIF(s.monthly_fee, 0),
+           (
+             SELECT monthly_fee FROM branch_grade_fees 
+             WHERE branch_id = s.branch_id 
+               AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+             LIMIT 1
+           ),
+           0
+         ) AS monthly_fee,
+         CASE WHEN s.is_bus_user = TRUE THEN
+           COALESCE(
+             NULLIF(s.bus_fee, 0),
+             (
+               SELECT bus_fee FROM branch_grade_fees 
+               WHERE branch_id = s.branch_id 
+                 AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+               LIMIT 1
+             ),
+             0
+           )
+         ELSE 0 END AS bus_fee
+       FROM students s
+       WHERE s.id = $1`,
+      [studentId]
+    );
+
+    if (studentRes.rows.length === 0) return;
+    const student = studentRes.rows[0];
+
+    const existingMonthsRes = await client.query(
+      `SELECT DISTINCT month FROM student_collections WHERE student_id = $1`,
+      [studentId]
+    );
+    const months = existingMonthsRes.rows.map((r: any) => r.month as string);
+
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    if (!months.includes(currentMonth)) {
+      months.push(currentMonth);
+    }
+
+    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+    const now = new Date();
+
+    for (const month of months) {
+      const outstandingTotal = await this.computeMonthlyOutstanding(client, student, branchId, month, now);
+      const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
+      let status = 'in_collections';
+      if (outstandingTotal <= 0) {
+        status = 'cleared';
+      } else if (now > dueDate) {
+        status = 'overdue';
+      }
+
+      await client.query(
+        `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (student_id, month)
+         DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
+        [studentId, month, dueDate.toISOString().slice(0, 10), status]
+      );
+    }
+  }
+
+
+  private async getPenaltyDueForMonth(client: any, student: any, month: string, now = new Date()) {
+    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+    const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
+
+    // If today (now) is before or on the deadline, no penalty is due yet
+    if (now <= dueDate) {
+      return 0;
+    }
+
+    // Safeguard: If student enrolled after the deadline of the billing month, do not charge penalty for this month
+    if (student.created_at && new Date(student.created_at) > dueDate) {
+      return 0;
+    }
+
+    // Now we are past the deadline. Let's see if the student paid their base fees on time.
+    const monthlyDue = Number(student.monthly_fee || 0);
+    const busDue = student.is_bus_user ? Number(student.bus_fee || 0) : 0;
+    const regDue = await this.getRegistrationDueForMonth(client, student.id, student.branch_id, month);
+    const baseDue = monthlyDue + busDue + regDue;
+
+    // Sum all payments and aid usages made on or before the deadline
+    const onTimePaidRes = await client.query(
+      `SELECT COALESCE(
+         (SELECT SUM(pi.amount)
+          FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+          WHERE p.student_id = $1 AND p.month = $2 AND p.date <= $3),
+         0
+       ) + COALESCE(
+         (SELECT SUM(sau.amount)
+          FROM student_aid_usages sau
+          LEFT JOIN payments p ON sau.payment_id = p.id
+          WHERE sau.student_id = $1 AND sau.month = $2 AND (p.date IS NULL OR p.date <= $3)),
+         0
+       ) AS total_on_time`,
+      [student.id, month, dueDate.toISOString().slice(0, 10)]
+    );
+    const onTimePaid = Number(onTimePaidRes.rows[0].total_on_time || 0);
+
+    // If onTimePaid covers baseDue, no penalty applies
+    if (onTimePaid >= baseDue) {
+      return 0;
+    }
+
+    // Otherwise, penalty applies
+    const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
+    const defaultPenalty = Number(student.penalty_fee || 0) || penaltyRate;
+    return defaultPenalty;
+  }
+
+  private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string, now = new Date()) {
     const feeTypes = ['monthly', 'bus', 'penalty', 'registration'];
     let outstandingTotal = 0;
 
-    const penaltyDue = await this.getPenaltyDueForMonth(client, student, month);
+    const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
 
     for (const ft of feeTypes) {
       let due = 0;
       if (ft === 'monthly') due = Number(student.monthly_fee || 0);
-      else if (ft === 'bus') due = Number(student.bus_fee || 0);
+      else if (ft === 'bus') due = student.is_bus_user ? Number(student.bus_fee || 0) : 0;
       else if (ft === 'penalty') due = penaltyDue;
       else if (ft === 'registration') due = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
 
@@ -84,7 +203,17 @@ class FinanceClerkService {
         [student.id, month, ft]
       );
 
-      const paid = Number(paidRes.rows[0].paid || 0);
+      let paid = Number(paidRes.rows[0].paid || 0);
+      if (ft === 'monthly') {
+        const aidPaidRes = await client.query(
+          `SELECT COALESCE(SUM(amount),0) as paid
+           FROM student_aid_usages
+           WHERE student_id = $1 AND month = $2`,
+          [student.id, month]
+        );
+        paid += Number(aidPaidRes.rows[0].paid || 0);
+      }
+
       outstandingTotal += Math.max(0, due - paid);
     }
 
@@ -107,7 +236,7 @@ class FinanceClerkService {
 
       // Lock student row and fetch fees (standard fallbacks from branch_grade_fees if not overridden)
       const studentRes = await client.query(
-        `SELECT s.id, s.grade, s.branch_id, s.parent_phone, u.name,
+        `SELECT s.id, s.grade, s.branch_id, s.parent_phone, u.name, s.is_bus_user, s.created_at,
            COALESCE(
              NULLIF(s.monthly_fee, 0),
              (
@@ -118,16 +247,18 @@ class FinanceClerkService {
              ),
              0
            ) AS monthly_fee,
-           COALESCE(
-             NULLIF(s.bus_fee, 0),
-             (
-               SELECT bus_fee FROM branch_grade_fees 
-               WHERE branch_id = s.branch_id 
-                 AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
-               LIMIT 1
-             ),
-             0
-           ) AS bus_fee,
+           CASE WHEN s.is_bus_user = TRUE THEN
+             COALESCE(
+               NULLIF(s.bus_fee, 0),
+               (
+                 SELECT bus_fee FROM branch_grade_fees 
+                 WHERE branch_id = s.branch_id 
+                   AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+                 LIMIT 1
+               ),
+               0
+             )
+           ELSE 0 END AS bus_fee,
            s.penalty_fee
          FROM students s JOIN users u ON s.user_id = u.id
          WHERE s.id = $1 FOR UPDATE`,
@@ -141,7 +272,9 @@ class FinanceClerkService {
       const student = studentRes.rows[0];
 
       // Enforce constraint: Penalty fees must be paid in full before paying other fees
-      const penaltyDue = await this.getPenaltyDueForMonth(client, student, data.month);
+      // Use the payment's own date as "now" so the penalty is anchored to when they actually paid
+      const paymentNow = data.date ? new Date(data.date) : new Date();
+      const penaltyDue = await this.getPenaltyDueForMonth(client, student, data.month, paymentNow);
       const penaltyPaidRes = await client.query(
         `SELECT COALESCE(SUM(pi.amount), 0) AS paid
          FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
@@ -180,7 +313,7 @@ class FinanceClerkService {
         let dueForType = 0;
         if (feeType === 'monthly') dueForType = Number(student.monthly_fee || 0);
         else if (feeType === 'bus') dueForType = Number(student.bus_fee || 0);
-        else if (feeType === 'penalty') dueForType = await this.getPenaltyDueForMonth(client, student, data.month);
+        else if (feeType === 'penalty') dueForType = await this.getPenaltyDueForMonth(client, student, data.month, paymentNow);
         else if (feeType === 'registration') {
           dueForType = await this.getRegistrationDueForMonth(client, data.studentId, data.branchId, data.month);
         } else {
@@ -269,15 +402,18 @@ class FinanceClerkService {
       }
 
       // Also record a finance_transactions summary (backwards compatibility) - amount is cash collected
-      const dateStr = data.date || new Date().toISOString().slice(0, 10);
-      const ethDate = gregorianToEthiopic(new Date(dateStr));
+      // IMPORTANT: Always use the real Gregorian today for the date stored in finance_transactions.
+      // The frontend sends data.date as an Ethiopian calendar string (e.g. "2018-09-25 EC"),
+      // which must NOT be fed into new Date() — that would produce a wrong Gregorian date.
+      const actualGregorianDateStr = new Date().toISOString().slice(0, 10);
+      const ethDate = gregorianToEthiopic(new Date(actualGregorianDateStr));
       await client.query(
         `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, dateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
+        [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, actualGregorianDateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
       );
 
-      // Recompute outstanding and update student_collections
+      // Recompute outstanding and update student_collections for the paid month
       const outstandingTotal = await this.computeMonthlyOutstanding(client, student, data.branchId, data.month);
       const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
       const dueDate = this.getPaymentDueDateForMonth(data.month, deadlineDay);
@@ -292,6 +428,27 @@ class FinanceClerkService {
          ON CONFLICT (student_id, month) DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
         [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
       );
+
+      // Also re-sync every OTHER overdue month for this student so paying the final balance
+      // immediately removes the student from the Overdue tab.
+      const otherOverdueRes = await client.query(
+        `SELECT month FROM student_collections
+         WHERE student_id = $1 AND status = 'overdue' AND month <> $2`,
+        [data.studentId, data.month]
+      );
+      for (const row of otherOverdueRes.rows) {
+        const otherMonth: string = row.month;
+        const otherOutstanding = await this.computeMonthlyOutstanding(client, student, data.branchId, otherMonth);
+        const otherDueDate = this.getPaymentDueDateForMonth(otherMonth, deadlineDay);
+        let otherStatus = 'in_collections';
+        if (otherOutstanding <= 0) otherStatus = 'cleared';
+        else if (now > otherDueDate) otherStatus = 'overdue';
+        await client.query(
+          `UPDATE student_collections SET status = $1, updated_at = NOW()
+           WHERE student_id = $2 AND month = $3`,
+          [otherStatus, data.studentId, otherMonth]
+        );
+      }
 
       await client.query('COMMIT');
 
@@ -330,9 +487,9 @@ class FinanceClerkService {
   async getStudentOutstanding(studentId: string, month?: string) {
     const targetMonth = month || new Date().toISOString().slice(0, 7);
 
-    // Fetch student fees
+    // Fetch student fees - bus fee is 0 if student doesn't use transport
     const studentRes = await pool.query(
-      `SELECT s.id, s.grade, s.is_bus_user, s.branch_id, s.parent_phone, u.name,
+      `SELECT s.id, s.grade, s.is_bus_user, s.branch_id, s.parent_phone, s.created_at, u.name,
          COALESCE(
            NULLIF(s.monthly_fee, 0),
            (
@@ -343,16 +500,18 @@ class FinanceClerkService {
            ),
            0
          ) AS monthly_fee,
-         COALESCE(
-           NULLIF(s.bus_fee, 0),
-           (
-             SELECT bus_fee FROM branch_grade_fees 
-             WHERE branch_id = s.branch_id 
-               AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
-             LIMIT 1
-           ),
-           0
-         ) AS bus_fee,
+         CASE WHEN s.is_bus_user = TRUE THEN
+           COALESCE(
+             NULLIF(s.bus_fee, 0),
+             (
+               SELECT bus_fee FROM branch_grade_fees 
+               WHERE branch_id = s.branch_id 
+                 AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+               LIMIT 1
+             ),
+             0
+           )
+         ELSE 0 END AS bus_fee,
          s.penalty_fee
        FROM students s JOIN users u ON s.user_id = u.id
        WHERE s.id = $1`,
@@ -362,79 +521,92 @@ class FinanceClerkService {
     if (studentRes.rows.length === 0) throw new Error('Student not found');
     const student = studentRes.rows[0];
 
-    // Fee types to report
-    const penaltyDue = await this.getPenaltyDueForMonth(pool, student, targetMonth);
-    const feeTypes = [
-      { key: 'monthly', label: 'Monthly Tuition', due: Number(student.monthly_fee || 0) },
-      { key: 'registration', label: 'Registration Fee', due: 0 },
-      { key: 'bus', label: 'Bus Fee', due: Number(student.bus_fee || 0) },
-      { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
-    ];
+    // Acquire a client for methods that need transactional context
+    const client = await pool.connect();
+    try {
 
-    const registrationFee = await this.resolveRegistrationFee(student.branch_id, student.grade);
-    feeTypes.find((f) => f.key === 'registration')!.due = registrationFee.amount;
+      // Fee types to report
+      const penaltyDue = await this.getPenaltyDueForMonth(client, student, targetMonth);
+      const registrationDue = await this.getRegistrationDueForMonth(client, studentId, student.branch_id, targetMonth);
+      const feeTypes = [
+        { key: 'monthly', label: 'Monthly Tuition', due: Number(student.monthly_fee || 0) },
+        { key: 'registration', label: 'Registration Fee', due: registrationDue },
+        { key: 'bus', label: 'Bus Fee', due: Number(student.bus_fee || 0) },
+        { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
+      ];
 
-    const feesWithPaid: any[] = [];
-    const paidFees: string[] = [];
-    let totalDue = 0;
-    let totalPaid = 0;
+      const feesWithPaid: any[] = [];
+      const paidFees: string[] = [];
+      let totalDue = 0;
+      let totalPaid = 0;
 
-    for (const ft of feeTypes) {
-      totalDue += Number(ft.due || 0);
-      const paidRes = await pool.query(
-        `SELECT COALESCE(SUM(pi.amount),0) as paid
+      for (const ft of feeTypes) {
+        totalDue += Number(ft.due || 0);
+        const paidRes = await pool.query(
+          `SELECT COALESCE(SUM(pi.amount),0) as paid
          FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
          WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
-        [studentId, targetMonth, ft.key]
-      );
-      const paid = Number(paidRes.rows[0].paid || 0);
-      const remaining = Math.max(0, Number(ft.due || 0) - paid);
-      
-      totalPaid += paid;
-      feesWithPaid.push({
-        feeType: ft.key,
-        label: ft.label,
-        due: Number(ft.due || 0),
-        paid,
-        remaining,
-        isFullyPaid: Number(ft.due || 0) > 0 && remaining === 0,
-        source: ft.key === 'registration' ? registrationFee.source : undefined
-      });
+          [studentId, targetMonth, ft.key]
+        );
+        let paid = Number(paidRes.rows[0].paid || 0);
+        // Include aid usages in monthly tuition paid total
+        if (ft.key === 'monthly') {
+          const aidRes2 = await pool.query(
+            `SELECT COALESCE(SUM(amount),0) AS paid FROM student_aid_usages WHERE student_id=$1 AND month=$2`,
+            [studentId, targetMonth]
+          );
+          paid += Number(aidRes2.rows[0].paid || 0);
+        }
+        const remaining = Math.max(0, Number(ft.due || 0) - paid);
 
-      if (Number(ft.due || 0) > 0 && remaining === 0) {
-        paidFees.push(ft.key);
+        totalPaid += paid;
+        feesWithPaid.push({
+          feeType: ft.key,
+          label: ft.label,
+          due: Number(ft.due || 0),
+          paid,
+          remaining,
+          isFullyPaid: Number(ft.due || 0) > 0 && remaining === 0
+        });
+
+        if (Number(ft.due || 0) > 0 && remaining === 0) {
+          paidFees.push(ft.key);
+        }
       }
-    }
 
-    // Also pull collection status
-    const collRes = await pool.query(`SELECT status, due_date FROM student_collections WHERE student_id = $1 AND month = $2`, [studentId, targetMonth]);
-    const collection = collRes.rows[0] || null;
+      // Also pull collection status
+      const collRes = await pool.query(`SELECT status, due_date FROM student_collections WHERE student_id = $1 AND month = $2`, [studentId, targetMonth]);
+      const collection = collRes.rows[0] || null;
 
-    // Pull aid allocations summary for the student
-    const aidRes = await pool.query(
-      `SELECT COALESCE(SUM(approved_amount),0)::numeric AS approved_total, COALESCE(SUM(used_amount),0)::numeric AS used_total
+      // Pull aid allocations summary for the student
+      const aidRes = await pool.query(
+        `SELECT COALESCE(SUM(approved_amount),0)::numeric AS approved_total, COALESCE(SUM(used_amount),0)::numeric AS used_total
        FROM student_aids WHERE student_id = $1 AND status = 'active'`,
-      [studentId]
-    );
-    const approvedAidTotal = Number(aidRes.rows[0]?.approved_total || 0);
-    const aidUsed = Number(aidRes.rows[0]?.used_total || 0);
-    const aidRemaining = Math.max(0, approvedAidTotal - aidUsed);
+        [studentId]
+      );
+      const approvedAidTotal = Number(aidRes.rows[0]?.approved_total || 0);
+      const aidUsed = Number(aidRes.rows[0]?.used_total || 0);
+      const aidRemaining = Math.max(0, approvedAidTotal - aidUsed);
 
-    return {
-      student: { id: student.id, name: student.name, parent_phone: student.parent_phone },
-      usesTransport: !!student.is_bus_user,
-      month: targetMonth,
-      fees: feesWithPaid,
-      paidFees,
-      totalDue,
-      totalPaid,
-      totalRemaining: Math.max(0, totalDue - totalPaid),
-      // Aid summary
-      approvedAidTotal,
-      aidUsed,
-      aidRemaining,
-      collection
-    };
+      return {
+        student: { id: student.id, name: student.name, parent_phone: student.parent_phone },
+        usesTransport: !!student.is_bus_user,
+        month: targetMonth,
+        fees: feesWithPaid,
+        paidFees,
+        totalDue,
+        totalPaid,
+        totalRemaining: Math.max(0, totalDue - totalPaid),
+        // Aid summary
+        approvedAidTotal,
+        aidUsed,
+        aidRemaining,
+        collection
+      };
+
+    } finally {
+      client.release();
+    }
   }
 
   // Get students with fee information
@@ -448,7 +620,7 @@ class FinanceClerkService {
 
     let query = `
       SELECT 
-        s.id, s.grade, s.branch_id,
+        s.id, s.grade, s.branch_id, s.is_bus_user,
         COALESCE(
           NULLIF(s.monthly_fee, 0),
           (
@@ -459,18 +631,21 @@ class FinanceClerkService {
           ),
           0
         ) AS monthly_fee,
-        COALESCE(
-          NULLIF(s.bus_fee, 0),
-          (
-            SELECT bus_fee FROM branch_grade_fees 
-            WHERE branch_id = s.branch_id 
-              AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
-            LIMIT 1
-          ),
-          0
-        ) AS bus_fee,
+        CASE WHEN s.is_bus_user = TRUE THEN
+          COALESCE(
+            NULLIF(s.bus_fee, 0),
+            (
+              SELECT bus_fee FROM branch_grade_fees 
+              WHERE branch_id = s.branch_id 
+                AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+              LIMIT 1
+            ),
+            0
+          )
+        ELSE 0 END AS bus_fee,
         s.penalty_fee,
         s.fee_status, s.fee_approval_status, s.fee_notes, s.requested_aid_amount,
+        s.parent_phone,
         u.name, u.email, u.digital_id,
         sc.status AS collection_status
       FROM students s
@@ -511,12 +686,17 @@ class FinanceClerkService {
     const isPastDeadline = new Date() > dueDate;
 
     return result.rows.map((student: any) => {
+      // Students without a collection record are still within their billing period → Pending
+      const collStatus = student.collection_status || 'in_collections';
+
       let penalty = Number(student.penalty_fee || 0);
-      if (penalty === 0 && isPastDeadline && student.collection_status !== 'cleared') {
+      // Only attach a non-zero penalty if we are past the deadline AND the student hasn't cleared their balance
+      if (penalty === 0 && isPastDeadline && collStatus !== 'cleared') {
         penalty = penaltyRate;
       }
       return {
         ...student,
+        collection_status: collStatus,
         penalty_fee: penalty
       };
     });
@@ -623,7 +803,20 @@ class FinanceClerkService {
       [branchId]
     );
 
-    return result.rows;
+    if (result.rows.length > 0) {
+      return result.rows;
+    }
+
+    // Fallback to branch_grade_fees if financial_policies is empty
+    const fallbackResult = await pool.query(
+      `SELECT grade_level, monthly_fee AS monthly_tuition, registration_fee, bus_fee, 
+              0 AS penalty_rate, 'Current' AS academic_year, branch_id
+       FROM branch_grade_fees
+       WHERE branch_id = $1
+       ORDER BY grade_level`,
+      [branchId]
+    );
+    return fallbackResult.rows;
   }
 
   /** Resolve registration fee from DB (grade-specific → global setting → branch policy). */
@@ -741,6 +934,19 @@ class FinanceClerkService {
 
       let policyFee = Number(policyResult.rows[0]?.bus_fee || 0);
       if (policyFee <= 0) {
+        // Fallback to branch_grade_fees
+        const normalizedGrade = student.grade ? student.grade.replace(/\D/g, '') : '';
+        const gradeFeeResult = await client.query(
+          `SELECT bus_fee FROM branch_grade_fees
+           WHERE branch_id = $1
+             AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = $2
+           LIMIT 1`,
+          [data.branchId, normalizedGrade]
+        );
+        policyFee = Number(gradeFeeResult.rows[0]?.bus_fee || 0);
+      }
+
+      if (policyFee <= 0) {
         throw new Error('No valid transport fee policy configured for this student grade');
       }
 
@@ -786,6 +992,8 @@ class FinanceClerkService {
          WHERE id = $2`,
         [policyFee, data.studentId]
       );
+
+      await this.syncStudentCollectionsAcrossAllMonths(client, data.studentId, data.branchId);
 
       await client.query('COMMIT');
 
@@ -885,6 +1093,8 @@ class FinanceClerkService {
         ]
       );
 
+      await this.syncStudentCollectionsAcrossAllMonths(client, data.studentId, data.branchId);
+
       await client.query('COMMIT');
 
       return {
@@ -960,18 +1170,31 @@ class FinanceClerkService {
     paramCount++;
     values.push(studentId);
 
-    const result = await pool.query(
-      `UPDATE students SET ${fields.join(', ')}, updated_at = NOW()
-       WHERE id = $${paramCount}
-       RETURNING *`,
-      values
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE students SET ${fields.join(', ')}, updated_at = NOW()
+         WHERE id = $${paramCount}
+         RETURNING *`,
+        values
+      );
 
-    if (result.rows.length === 0) {
-      throw new Error('Student not found');
+      if (result.rows.length === 0) {
+        throw new Error('Student not found');
+      }
+
+      const student = result.rows[0];
+      await this.syncStudentCollectionsAcrossAllMonths(client, student.id, student.branch_id);
+
+      await client.query('COMMIT');
+      return student;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    return result.rows[0];
   }
 
   // Get dashboard statistics
@@ -1020,46 +1243,142 @@ class FinanceClerkService {
     };
   }
 
-  // Get overdue payments
+  // Get overdue payments - returns all students with ANY overdue month, with itemised unpaid amounts
   async getOverduePayments(branchId: string) {
-    const month = new Date().toISOString().slice(0, 7);
-    await this.syncCollectionStatusesForMonth(month, branchId);
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    // Sync the current month so newly overdue students are flagged
+    await this.syncCollectionStatusesForMonth(currentMonth, branchId);
 
-    const result = await pool.query(
-      `SELECT 
-        s.id, s.grade, s.branch_id,
-        COALESCE(
-          NULLIF(s.monthly_fee, 0),
-          (
-            SELECT monthly_fee FROM branch_grade_fees 
-            WHERE branch_id = s.branch_id 
-              AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
-            LIMIT 1
-          ),
-          0
-        ) AS monthly_fee,
-        COALESCE(
-          NULLIF(s.bus_fee, 0),
-          (
-            SELECT bus_fee FROM branch_grade_fees 
-            WHERE branch_id = s.branch_id 
-              AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
-            LIMIT 1
-          ),
-          0
-        ) AS bus_fee,
-        s.penalty_fee,
-        u.name, u.email, u.digital_id, s.parent_phone
-      FROM student_collections sc
-      JOIN students s ON s.id = sc.student_id
-      JOIN users u ON s.user_id = u.id
-      WHERE s.branch_id = $1 AND sc.month = $2 AND sc.status = 'overdue'
-      ORDER BY u.name`,
-      [branchId, month]
+    // 1. Fetch all overdue records for this branch
+    const overdueRecs = await pool.query(
+      `SELECT sc.student_id, sc.month
+       FROM student_collections sc
+       JOIN students s ON s.id = sc.student_id
+       WHERE s.branch_id = $1 AND sc.status = 'overdue'
+       ORDER BY sc.student_id, sc.month`,
+      [branchId]
     );
 
-    return result.rows;
+    if (overdueRecs.rows.length === 0) return [];
+
+    // 2. Distinct student IDs
+    const studentIds: string[] = [...new Set(overdueRecs.rows.map((r: any) => r.student_id as string))];
+
+    // 3. Student details
+    const studentsRes = await pool.query(
+      `SELECT s.id, s.grade, s.branch_id, s.is_bus_user, s.parent_phone, s.created_at, s.penalty_fee,
+         COALESCE(
+           NULLIF(s.monthly_fee, 0),
+           (SELECT monthly_fee FROM branch_grade_fees
+            WHERE branch_id = s.branch_id
+              AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+            LIMIT 1),
+           0
+         ) AS monthly_fee,
+         CASE WHEN s.is_bus_user = TRUE THEN
+           COALESCE(
+             NULLIF(s.bus_fee, 0),
+             (SELECT bus_fee FROM branch_grade_fees
+              WHERE branch_id = s.branch_id
+                AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+              LIMIT 1),
+             0
+           )
+         ELSE 0 END AS bus_fee,
+         u.name, u.email, u.digital_id
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       WHERE s.id = ANY($1)`,
+      [studentIds]
+    );
+
+    const client = await pool.connect();
+    try {
+      const results: any[] = [];
+
+      for (const student of studentsRes.rows) {
+        // All overdue months for this student (sorted ascending = oldest first)
+        const overdue_months: string[] = overdueRecs.rows
+          .filter((r: any) => r.student_id === student.id)
+          .map((r: any) => r.month as string);
+
+        const mFee = Number(student.monthly_fee || 0);
+        const bFee = Number(student.bus_fee || 0);
+
+        let monthly_unpaid = 0;
+        let bus_unpaid = 0;
+        let penalty_unpaid = 0;
+        let registration_unpaid = 0;
+
+        for (const m of overdue_months) {
+          // Monthly (cash + aid)
+          const mPaidRes = await client.query(
+            `SELECT COALESCE(
+               (SELECT SUM(pi.amount) FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+                WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'monthly'), 0
+             ) + COALESCE(
+               (SELECT SUM(amount) FROM student_aid_usages WHERE student_id = $1 AND month = $2), 0
+             ) AS paid`,
+            [student.id, m]
+          );
+          monthly_unpaid += Math.max(0, mFee - Number(mPaidRes.rows[0].paid || 0));
+
+          // Bus
+          if (bFee > 0) {
+            const bPaidRes = await client.query(
+              `SELECT COALESCE(SUM(pi.amount),0) AS paid FROM payments p
+               JOIN payment_items pi ON pi.payment_id = p.id
+               WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'bus'`,
+              [student.id, m]
+            );
+            bus_unpaid += Math.max(0, bFee - Number(bPaidRes.rows[0].paid || 0));
+          }
+
+          // Penalty
+          const penaltyDue = await this.getPenaltyDueForMonth(client, student, m);
+          const pPaidRes = await client.query(
+            `SELECT COALESCE(SUM(pi.amount),0) AS paid FROM payments p
+             JOIN payment_items pi ON pi.payment_id = p.id
+             WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'penalty'`,
+            [student.id, m]
+          );
+          penalty_unpaid += Math.max(0, penaltyDue - Number(pPaidRes.rows[0].paid || 0));
+
+          // Registration (only due in enrollment month)
+          const regDue = await this.getRegistrationDueForMonth(client, student.id, student.branch_id, m);
+          if (regDue > 0) {
+            const rPaidRes = await client.query(
+              `SELECT COALESCE(SUM(pi.amount),0) AS paid FROM payments p
+               JOIN payment_items pi ON pi.payment_id = p.id
+               WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'registration'`,
+              [student.id, m]
+            );
+            registration_unpaid += Math.max(0, regDue - Number(rPaidRes.rows[0].paid || 0));
+          }
+        }
+
+        // Only include if there is still an actual unpaid balance
+        const total_unpaid = monthly_unpaid + bus_unpaid + penalty_unpaid + registration_unpaid;
+        if (total_unpaid <= 0) continue; // fully paid – skip
+
+        results.push({
+          ...student,
+          collection_status: 'overdue',
+          overdue_months,           // e.g. ["2018-01","2018-02"] oldest first
+          monthly_unpaid,
+          bus_unpaid,
+          penalty_unpaid,
+          registration_unpaid,
+          total_unpaid
+        });
+      }
+
+      return results.sort((a: any, b: any) => a.name.localeCompare(b.name));
+    } finally {
+      client.release();
+    }
   }
+
 
   async syncCollectionStatusesForMonth(month: string, branchId?: string) {
     const client = await pool.connect();
@@ -1074,7 +1393,7 @@ class FinanceClerkService {
       }
 
       const studentsRes = await client.query(
-        `SELECT s.id, s.grade, s.branch_id, s.penalty_fee,
+        `SELECT s.id, s.grade, s.branch_id, s.penalty_fee, s.is_bus_user, s.created_at,
            COALESCE(
              NULLIF(s.monthly_fee, 0),
              (
@@ -1085,16 +1404,18 @@ class FinanceClerkService {
              ),
              0
            ) AS monthly_fee,
-           COALESCE(
-             NULLIF(s.bus_fee, 0),
-             (
-               SELECT bus_fee FROM branch_grade_fees 
-               WHERE branch_id = s.branch_id 
-                 AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
-               LIMIT 1
-             ),
-             0
-           ) AS bus_fee
+           CASE WHEN s.is_bus_user = TRUE THEN
+             COALESCE(
+               NULLIF(s.bus_fee, 0),
+               (
+                 SELECT bus_fee FROM branch_grade_fees 
+                 WHERE branch_id = s.branch_id 
+                   AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+                 LIMIT 1
+               ),
+               0
+             )
+           ELSE 0 END AS bus_fee
          FROM students s
          WHERE 1=1 ${where}`,
         params
