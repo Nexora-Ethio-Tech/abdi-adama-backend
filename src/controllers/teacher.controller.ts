@@ -351,6 +351,64 @@ class TeacherController {
     }
   }
 
+  // REFINED WORKFLOW: Save Draft Grades
+  // Draft grades remain editable and visible to teacher, student, parent (NOT VP)
+  async saveDraftGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const { courseId, submissionType, academicYear, semester, sectionId, subjectId } = req.body;
+
+      if (!courseId || !submissionType) {
+        res.status(400).json({ success: false, message: 'courseId and submissionType are required' });
+        return;
+      }
+
+      const result = await teacherService.saveDraftGrades(
+        teacherUserId,
+        courseId,
+        submissionType,
+        { academicYear, semester, sectionId, subjectId }
+      );
+
+      res.status(200).json({
+        success: true,
+        data: result,
+        message: result.message
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // REFINED WORKFLOW: Finalize Grade Submission
+  // Finalizes submission: grades locked, visible to VP, not editable
+  async finalizeGradeSubmission(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const { courseId, submissionType, academicYear, semester, sectionId, subjectId } = req.body;
+
+      if (!courseId || !submissionType) {
+        res.status(400).json({ success: false, message: 'courseId and submissionType are required' });
+        return;
+      }
+
+      const result = await teacherService.finalizeGradeSubmission(
+        teacherUserId,
+        courseId,
+        submissionType,
+        { academicYear, semester, sectionId, subjectId }
+      );
+
+      res.status(200).json({
+        success: true,
+        data: result,
+        message: result.message
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Get department heads
   async getDepartmentHeads(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

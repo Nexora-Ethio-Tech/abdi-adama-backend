@@ -288,6 +288,7 @@ class VicePrincipalService {
       JOIN courses c ON g.course_id = c.id
       JOIN students s ON g.student_id = s.id
       WHERE s.branch_id = $1
+        AND COALESCE(g.is_finalized, false) = true
     `;
 
     const params: any[] = [branchId];
@@ -560,6 +561,7 @@ class VicePrincipalService {
        JOIN students s ON g.student_id = s.id
        JOIN users u ON s.user_id = u.id
        WHERE g.course_id = $1 AND g.type = $2 AND g.score IS NOT NULL
+         AND COALESCE(g.is_finalized, false) = true
        ORDER BY u.name`,
       [courseId, submissionType]
     );
@@ -795,6 +797,7 @@ class VicePrincipalService {
     );
 
     // Get grades for all students in this section
+    // VP Principal can ONLY see finalized grades (is_finalized = true)
     // If no grades exist for the requested semester, try to get them from any available semester
     let gradesResult = await pool.query(
       `SELECT 
@@ -810,7 +813,8 @@ class VicePrincipalService {
       WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
         AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
         AND g.academic_year = $2
-        AND g.semester = $3`,
+        AND g.semester = $3
+        AND COALESCE(g.is_finalized, false) = true`,
       [sectionId, activeYear, activeSem]
     );
 
@@ -822,6 +826,7 @@ class VicePrincipalService {
         WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
           AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
           AND g.academic_year = $2
+          AND COALESCE(g.is_finalized, false) = true
         ORDER BY g.semester DESC
         LIMIT 1`,
         [sectionId, activeYear]
@@ -844,7 +849,8 @@ class VicePrincipalService {
           WHERE g.student_id IN (SELECT id FROM students WHERE section_id = $1)
             AND g.course_id IN (SELECT id FROM courses WHERE class_id = $1)
             AND g.academic_year = $2
-            AND g.semester = $3`,
+            AND g.semester = $3
+            AND COALESCE(g.is_finalized, false) = true`,
           [sectionId, activeYear, availableSemester]
         );
       }
@@ -901,7 +907,7 @@ class VicePrincipalService {
         `SELECT score, total
          FROM grades
          WHERE student_id = $1
-           AND is_submitted = true
+           AND COALESCE(is_finalized, false) = true
            AND course_id IN (SELECT id FROM courses WHERE class_id = $2)
            AND academic_year = $3
            AND semester = $4`,

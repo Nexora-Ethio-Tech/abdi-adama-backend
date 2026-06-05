@@ -92,8 +92,10 @@ const communicationLogSchema = Joi.object({
 router.post('/attendance', validate(markAttendanceSchema), teacherController.markAttendance);
 router.get('/attendance/:classId', teacherController.getAttendance);
 
-// Grade locking & submissions
+// Grade locking & submissions - REFINED WORKFLOW
 router.post('/grades/submit-course', teacherController.submitCourseGrades);
+router.post('/grades/save-draft', teacherController.saveDraftGrades);
+router.post('/grades/finalize-submission', teacherController.finalizeGradeSubmission);
 router.get('/grade-submissions', teacherController.getGradeSubmissions);
 
 router.post('/grades', validate(enterGradeSchema), teacherController.enterGrades);

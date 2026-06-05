@@ -29,9 +29,8 @@ const fetchLogisticsAnnouncementsForStudent = async (studentId: string) => {
        'Logistics'::text AS category,
        n.driver_name AS "driverName"
      FROM logistics_notices n
-     WHERE n.deleted_at IS NULL
-       AND n.created_at > NOW() - INTERVAL '60 days'
-       AND n.sender_id IN (
+     WHERE n.created_at > NOW() - INTERVAL '60 days'
+       AND n.driver_id IN (
          SELECT r.driver_id
          FROM routes r
          JOIN student_routes rm ON r.id = rm.route_id

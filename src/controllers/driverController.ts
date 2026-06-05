@@ -88,34 +88,24 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
     );
     const driverName = driverResult.rows[0]?.name || 'Driver';
 
-    // Auto-expire after 5 days
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 5);
-    expiresAt.setHours(23, 59, 59, 999);
-
-    const branchId = req.user?.branch_id || '1';
-
     const result = await pool.query(
-      `INSERT INTO logistics_notices (sender_id, content, message, title, stations, expires_at, branch_id, driver_name, category, published_at, timestamp, created_at)
-       VALUES ($1, $2, $2, $3, $4, $5, $6, $7, 'Logistics', NOW(), NOW(), CURRENT_TIMESTAMP)
+      `INSERT INTO logistics_notices (driver_id, title, content, stations, driver_name, category, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'Logistics', CURRENT_TIMESTAMP)
        RETURNING *`,
-      [identity_id, content, title || 'Logistics Update', stations || null, expiresAt, branchId, driverName]
+      [identity_id, title || 'Logistics Update', content, stations || null, driverName]
     );
 
     const notice = result.rows[0];
     const noticePayload = {
       id: notice.id,
       title: notice.title || 'Logistics Update',
-      content: notice.message,
+      content: notice.content,
       stations: notice.stations,
-      driverName,
-      time: notice.timestamp,
-      published_at: notice.published_at,
+      driverName: notice.driver_name,
+      time: notice.created_at,
       category: 'Logistics',
       priority: 'Normal',
-      expires_at: notice.expires_at,
-      branchId: notice.branch_id,
-      senderId: identity_id
+      driverId: notice.driver_id
     };
     const broadcastPayload = {
       ...noticePayload,
@@ -206,7 +196,7 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
 
   try {
     const checkResult = await pool.query(
-      'SELECT sender_id, branch_id FROM logistics_notices WHERE id = $1',
+      'SELECT driver_id FROM logistics_notices WHERE id = $1',
       [id]
     );
 
@@ -217,22 +207,18 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
     const notice = checkResult.rows[0];
     const role = req.user?.role;
     const identityId = req.user?.identity_id;
+    const branchId = req.user?.branch_id;
 
     // Normalize role for comparison
     const normalizedRole = role?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
 
-    // 1. Branch Isolation (Admin/SchoolAdmin/Driver must be in the same branch)
-    if (notice.branch_id !== branchId) {
-      return sendError(res, 'You do not have permission to delete notices from another branch.', 403);
-    }
-
-    // 2. Ownership Isolation for Drivers (strict)
-    if (normalizedRole === 'driver' && notice.sender_id !== identityId) {
+    // Ownership Isolation for Drivers (strict)
+    if (normalizedRole === 'driver' && notice.driver_id !== identityId) {
       return sendError(res, 'You can only delete your own notices.', 403);
     }
 
     const deleteResult = await pool.query(
-      'UPDATE logistics_notices SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id',
+      'DELETE FROM logistics_notices WHERE id = $1 RETURNING id',
       [id]
     );
 
@@ -240,7 +226,7 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
       return sendError(res, 'Notice could not be deleted.', 500);
     }
 
-    // 3. Broadcast deletion event to all connected clients (immediate real-time sync)
+    // Broadcast deletion event to all connected clients (immediate real-time sync)
     // Find assigned students' user_ids for the driver posting this notice
     const manifestResult = await pool.query(
       `SELECT s.user_id 
@@ -248,13 +234,13 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
        JOIN routes r ON r.id = rm.route_id 
        JOIN students s ON s.id = rm.student_id
        WHERE r.driver_id = $1`,
-      [notice.sender_id]
+      [notice.driver_id]
     );
     const assignedStudentUserIds = manifestResult.rows.map(r => r.user_id);
 
     // Broadcast to all relevant roles (drivers, students, parents, admins, VP, super admin)
     const allowedRoles = ['Driver', 'Student', 'Parent', 'Admin', 'SchoolAdmin', 'VicePrincipal', 'SuperAdmin'];
-    broadcast('NOTICE_DELETED', { id, deletedBy: user_id, deletedAt: new Date().toISOString() }, notice.branch_id, allowedRoles, assignedStudentUserIds);
+    broadcast('NOTICE_DELETED', { id, deletedBy: user_id, deletedAt: new Date().toISOString() }, branchId, allowedRoles, assignedStudentUserIds);
 
     return sendSuccess(res, null, 'Notice deleted successfully.');
   } catch (err: any) {

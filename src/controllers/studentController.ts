@@ -228,9 +228,8 @@ const fetchLogisticsAnnouncementsForStudent = async (studentId: string) => {
        'Logistics'::text AS category,
        n.driver_name AS "driverName"
      FROM logistics_notices n
-     WHERE n.deleted_at IS NULL
-       AND n.created_at > NOW() - INTERVAL '60 days'
-       AND n.sender_id IN (
+     WHERE n.created_at > NOW() - INTERVAL '60 days'
+       AND n.driver_id IN (
          SELECT r.driver_id
          FROM routes r
          JOIN student_routes rm ON r.id = rm.route_id
@@ -402,16 +401,9 @@ const fetchHistoricalCourses = async (
   return [];
 };
 
-/** Only grades the teacher has submitted and locked for release to students. */
+/** Only grades the teacher has FINALIZED and locked for release to students. */
 const SUBMITTED_GRADE_FILTER = `
-  AND (
-    COALESCE(g.is_submitted, false) = true
-    OR EXISTS (
-      SELECT 1 FROM grade_submissions gs
-      WHERE gs.course_id = g.course_id
-        AND gs.submission_type = g.type
-    )
-  )`;
+  AND COALESCE(g.is_finalized, false) = true`;
 
 const fetchStudentGradeRows = async (
   studentId: string,

@@ -10,14 +10,32 @@ class TeacherService {
     }
   }
 
-  private async assertGradeNotLocked(client: { query: typeof pool.query }, teacherId: string, courseId: string, type: string) {
+  private async assertGradeNotLocked(
+    client: { query: typeof pool.query },
+    teacherId: string,
+    courseId: string,
+    type: string,
+    academicYear?: string,
+    semester?: number
+  ) {
+    const conditions = ['course_id = $1', 'teacher_id = $2', 'submission_type = $3', 'is_locked = true'];
+    const params: any[] = [courseId, teacherId, type];
+
+    if (academicYear) {
+      conditions.push(`academic_year = $${params.length + 1}`);
+      params.push(academicYear);
+    }
+    if (semester !== undefined) {
+      conditions.push(`semester = $${params.length + 1}`);
+      params.push(semester);
+    }
+
     const submissionResult = await client.query(
-      `SELECT 1 FROM grade_submissions 
-       WHERE course_id = $1 AND teacher_id = $2 AND submission_type = $3 AND is_locked = true`,
-      [courseId, teacherId, type]
+      `SELECT 1 FROM grade_submissions WHERE ${conditions.join(' AND ')} LIMIT 1`,
+      params
     );
     if (submissionResult.rows[0]) {
-      throw new Error(`Grades for this course and assessment type "${type}" have already been submitted and locked.`);
+      throw new Error(`Grades for this course, assessment type "${type}", and academic period have already been submitted and locked.`);
     }
   }
 
@@ -124,18 +142,21 @@ class TeacherService {
           throw new Error('You can only enter grades for courses you teach');
         }
 
-        await this.assertGradesNotLocked(client);
-        await this.assertGradeNotLocked(client, teacherId, data.courseId, data.type);
+        await this.assertGradesNotGloballyLocked(client);
+        await this.assertGradeNotLocked(client, teacherId, data.courseId, data.type, academicYear, semester);
       }
 
       const result = await client.query(
-        `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester, status, is_submitted, is_finalized)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', false, false)
          ON CONFLICT (student_id, course_id, type, academic_year, semester)
          DO UPDATE SET
            score = EXCLUDED.score,
            total = GREATEST(grades.total, EXCLUDED.total),
-           weight = COALESCE(EXCLUDED.weight, grades.weight)
+           weight = COALESCE(EXCLUDED.weight, grades.weight),
+           status = 'draft',
+           is_submitted = false,
+           is_finalized = false
          RETURNING *`,
         [data.studentId, data.courseId, data.type, data.score, data.total, data.weight, academicYear, semester]
       );
@@ -212,10 +233,27 @@ class TeacherService {
         }
       }
 
-      // Check if grades are locked for this course and type (already submitted)
+      // Check if grades are locked for this course and type (already submitted) within the academic period
+      const academicYear = options?.academicYear || '2025/2026';
+      const semester = options?.semester ?? 2;
       const uniqueTypes = Array.from(new Set(grades.map(g => g.type)));
       for (const type of uniqueTypes) {
-        await this.assertGradeNotLocked(client, teacher.id, courseId, type);
+        await this.assertGradeNotLocked(client, teacher.id, courseId, type, academicYear, semester);
+      }
+
+      // Additional check: prevent bulk entry of any grades that are already finalized for this period
+      const finalizedCheckResult = await client.query(
+        `SELECT COUNT(*)::int as count FROM grades 
+         WHERE course_id = $1 
+           AND academic_year = $2 
+           AND semester = $3 
+           AND is_finalized = true 
+         LIMIT 1`,
+        [courseId, academicYear, semester]
+      );
+
+      if (finalizedCheckResult.rows[0].count > 0) {
+        throw new Error(`Cannot edit: Some or all grades for ${academicYear} Semester ${semester} have been finalized. You can only edit grades for future academic periods.`);
       }
 
       // Validate all grades
@@ -233,17 +271,18 @@ class TeacherService {
 
       // Bulk upsert grades (scoped by academic year + semester)
       const insertedGrades = [];
-      const academicYear = options?.academicYear || '2025/2026';
-      const semester = options?.semester ?? 2;
       for (const grade of grades) {
         const result = await client.query(
-          `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester, status, is_submitted, is_finalized)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', false, false)
            ON CONFLICT (student_id, course_id, type, academic_year, semester)
            DO UPDATE SET
              score = EXCLUDED.score,
              total = GREATEST(grades.total, EXCLUDED.total),
-             weight = COALESCE(EXCLUDED.weight, grades.weight)
+             weight = COALESCE(EXCLUDED.weight, grades.weight),
+             status = 'draft',
+             is_submitted = false,
+             is_finalized = false
            RETURNING *`,
           [grade.studentId, courseId, grade.type, grade.score, grade.total, grade.weight || null, academicYear, semester]
         );
@@ -316,6 +355,12 @@ class TeacherService {
 
       const grade = gradeResult.rows[0];
 
+      // Check if grade is finalized (locked from editing)
+      if (grade.is_finalized) {
+        throw new Error(`This grade has been finalized for ${grade.academic_year} Semester ${grade.semester} and cannot be edited. Only draft grades can be updated.`);
+      }
+
+      // Legacy check for is_submitted
       if (grade.is_submitted) {
         throw new Error('This grade has been submitted and locked, and cannot be updated.');
       }
@@ -1068,8 +1113,20 @@ class TeacherService {
     };
   }
 
-  // Submit all grades for a course and lock them
+  // Submit all grades for a course and lock them (alias of finalize workflow)
   async submitCourseGrades(teacherUserId: string, courseId: string, submissionType: string) {
+    return this.finalizeGradeSubmission(teacherUserId, courseId, submissionType);
+  }
+
+  // REFINED WORKFLOW: Save Draft (editable, partial submission)
+  // Draft grades visible to: Teacher, Student, Parent (NOT VP)
+  // Draft grades remain editable until finalized for that specific academic period
+  async saveDraftGrades(teacherUserId: string, courseId: string, submissionType: string, options?: {
+    academicYear?: string;
+    semester?: number;
+    sectionId?: string;
+    subjectId?: string;
+  }) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1084,6 +1141,7 @@ class TeacherService {
         throw new Error('Teacher not found');
       }
       const teacherId = teacherResult.rows[0].id;
+      const branchId = teacherResult.rows[0].branch_id;
 
       // 2. Verify teacher owns this course
       const courseResult = await client.query(
@@ -1096,38 +1154,161 @@ class TeacherService {
       }
 
       if (courseResult.rows[0].teacher_id !== teacherId) {
-        throw new Error('You can only submit grades for courses you teach');
+        throw new Error('You can only save grades for courses you teach');
       }
 
-      // 3. Check if already submitted
-      const checkSubResult = await client.query(
-        `SELECT 1 FROM grade_submissions 
-         WHERE course_id = $1 AND teacher_id = $2 AND submission_type = $3`,
-        [courseId, teacherId, submissionType]
+      const academicYear = options?.academicYear || '2025/2026';
+      const semester = options?.semester ?? 2;
+
+      // 3. Check if grades are finalized for THIS SPECIFIC academic period
+      // Finalized grades cannot be edited. But teachers can still work on future periods.
+      const finalizedCheck = await client.query(
+        `SELECT 1 FROM grades 
+         WHERE course_id = $1 
+           AND type = $2 
+           AND academic_year = $3 
+           AND semester = $4 
+           AND is_finalized = true 
+         LIMIT 1`,
+        [courseId, submissionType, academicYear, semester]
       );
 
-      if (checkSubResult.rows.length > 0) {
-        throw new Error('Grades for this course and type have already been submitted and locked.');
+      if (finalizedCheck.rows.length > 0) {
+        throw new Error(`Grades for ${academicYear} Semester ${semester} have been finalized and locked. You cannot edit them.`);
       }
 
-      // 4. Update all matching grades to is_submitted = true
-      await client.query(
-        `UPDATE grades 
-         SET is_submitted = true, submitted_at = NOW(), submitted_by = $1
-         WHERE course_id = $2 AND type = $3`,
-        [teacherUserId, courseId, submissionType]
-      );
+      await this.assertGradesNotGloballyLocked(client);
 
-      // 5. Insert into grade_submissions
-      const insertResult = await client.query(
-        `INSERT INTO grade_submissions (course_id, teacher_id, submission_type, submitted_at, submitted_by, is_locked)
-         VALUES ($1, $2, $3, NOW(), $4, TRUE)
+      // 4. Create/update grade submission record as 'saved' (not yet fully submitted)
+      // Note: No locks are created for draft submissions, allowing future period editing
+      const subResult = await client.query(
+        `INSERT INTO grade_submissions (course_id, teacher_id, submission_type, academic_year, semester, submitted_at, submitted_by, submission_stage, is_locked, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW(), $6, 'saved', FALSE, NOW())
+         ON CONFLICT (course_id, teacher_id, submission_type) 
+         DO UPDATE SET submission_stage = 'saved', academic_year = EXCLUDED.academic_year, semester = EXCLUDED.semester, updated_at = NOW(), is_locked = FALSE
          RETURNING *`,
-        [courseId, teacherId, submissionType, teacherUserId]
+        [courseId, teacherId, submissionType, academicYear, semester, teacherUserId]
       );
 
       await client.query('COMMIT');
-      return insertResult.rows[0];
+      
+      return {
+        status: 'success',
+        message: `Draft grades saved for ${academicYear} Semester ${semester}. You can edit these grades at any time until you finalize the submission. You can also submit grades for future academic periods.`,
+        submission: subResult.rows[0]
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // REFINED WORKFLOW: Final Submit (locks grades, makes visible to VP)
+  // REFINED WORKFLOW: Final Submit (locks grades, makes visible to VP)
+  // Finalized grades visible to: Teacher, Student, Parent, VP Principal
+  // Once finalized, grades are locked and cannot be edited by the teacher
+  // Only the specific academic period is locked; future periods remain editable
+  async finalizeGradeSubmission(teacherUserId: string, courseId: string, submissionType: string, options?: {
+    academicYear?: string;
+    semester?: number;
+    sectionId?: string;
+    subjectId?: string;
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Get teacher record
+      const teacherResult = await client.query(
+        'SELECT id, branch_id FROM teachers WHERE user_id = $1',
+        [teacherUserId]
+      );
+
+      if (teacherResult.rows.length === 0) {
+        throw new Error('Teacher not found');
+      }
+      const teacherId = teacherResult.rows[0].id;
+      const branchId = teacherResult.rows[0].branch_id;
+
+      // 2. Verify teacher owns this course
+      const courseResult = await client.query(
+        'SELECT teacher_id FROM courses WHERE id = $1',
+        [courseId]
+      );
+
+      if (courseResult.rows.length === 0) {
+        throw new Error('Course not found');
+      }
+
+      if (courseResult.rows[0].teacher_id !== teacherId) {
+        throw new Error('You can only finalize grades for courses you teach');
+      }
+
+      // 3. Extract academic year and semester
+      const academicYear = options?.academicYear || '2025/2026';
+      const semester = options?.semester ?? 2;
+
+      // 4. Check if already finalized for this specific academic period
+      const alreadyFinalized = await client.query(
+        `SELECT 1 FROM grades 
+         WHERE course_id = $1 
+           AND type = $2 
+           AND academic_year = $3 
+           AND semester = $4 
+           AND is_finalized = true 
+         LIMIT 1`,
+        [courseId, submissionType, academicYear, semester]
+      );
+
+      if (alreadyFinalized.rows.length > 0) {
+        throw new Error(`Grades for ${academicYear} Semester ${semester} have already been finalized.`);
+      }
+
+      await this.assertGradesNotGloballyLocked(client);
+
+      // 5. Mark all draft/submitted grades as finalized FOR THIS SPECIFIC PERIOD
+      const updateResult = await client.query(
+        `UPDATE grades 
+         SET is_submitted = true, is_finalized = true, submitted_at = NOW(), submitted_by = $1, status = 'finalized'
+         WHERE course_id = $2 
+           AND type = $3 
+           AND academic_year = $4 
+           AND semester = $5
+         RETURNING id`,
+        [teacherUserId, courseId, submissionType, academicYear, semester]
+      );
+
+      const updatedCount = updateResult.rowCount;
+
+      // 6. Update/create grade submission record as 'finalized' and locked
+      const subResult = await client.query(
+        `INSERT INTO grade_submissions (course_id, teacher_id, submission_type, academic_year, semester, submitted_at, submitted_by, submission_stage, is_locked, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW(), $6, 'finalized', TRUE, NOW())
+         ON CONFLICT (course_id, teacher_id, submission_type) 
+         DO UPDATE SET submission_stage = 'finalized', academic_year = EXCLUDED.academic_year, semester = EXCLUDED.semester, is_locked = TRUE, updated_at = NOW()
+         RETURNING *`,
+        [courseId, teacherId, submissionType, academicYear, semester, teacherUserId]
+      );
+
+      // 7. Create granular lock for this specific period ONLY
+      // This prevents editing grades for this period but allows future periods to be edited
+      await client.query(
+        `INSERT INTO grade_submission_locks (academic_year, semester, course_id, grading_component, locked_by, branch_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (academic_year, semester, course_id, grading_component, branch_id) DO NOTHING`,
+        [academicYear, semester, courseId, submissionType, teacherUserId, branchId]
+      );
+
+      await client.query('COMMIT');
+      
+      return {
+        status: 'success',
+        message: `✓ Grades finalized and locked for ${academicYear} Semester ${semester}. ${updatedCount} grade(s) are now visible to VP Principal. You cannot edit these grades. You can still submit grades for future academic periods.`,
+        updatedCount: updatedCount,
+        submission: subResult.rows[0]
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
