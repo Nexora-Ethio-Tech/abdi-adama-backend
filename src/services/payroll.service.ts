@@ -120,7 +120,7 @@ class PayrollService {
 
       // 3. Fetch all approved employees with valid payroll profiles
       const employeesQuery = `
-        SELECT u.id as user_id, u.name, e.basic_salary, e.transport_allowance, 
+        SELECT u.id as user_id, u.name, u.digital_id, e.basic_salary, e.transport_allowance, 
                e.housing_allowance, e.position_allowance, e.overtime_rate_per_hour
         FROM users u
         JOIN employee_payroll_profiles e ON u.id = e.user_id
@@ -207,24 +207,52 @@ class PayrollService {
         const empDeductions = penaltyAmount + loanDeduction + incomeTax + pension.employee;
         const netPay = grossSalary - empDeductions;
 
-        // Save payroll item
+        // ─── ACTUAL PAYMENT LOOKUP ──────────────────────────────────────────────
+        // Query finance_transactions to find real salary disbursements for this
+        // employee in the selected Ethiopian month. We match on:
+        //   • student_id IS NULL   (not a student payment — these are staff transactions)
+        //   • type = 'Expense'     (money going out = salary paid)
+        //   • ethiopic_month + ethiopic_year matching the selected period
+        //   • employee name or digital_id appears in the student_name description field
+        const txRes = await client.query(
+          `SELECT COALESCE(SUM(amount), 0) as total_paid
+           FROM finance_transactions
+           WHERE student_id IS NULL
+             AND type = 'Expense'
+             AND LOWER(ethiopic_month) = LOWER($1)
+             AND ethiopic_year = $2
+             AND (
+               LOWER(student_name) LIKE LOWER($3)
+               OR LOWER(student_name) LIKE LOWER($4)
+               OR LOWER(student_name) = LOWER($5)
+             )`,
+          [month, year, `%${emp.name}%`, `%${emp.digital_id}%`, emp.name]
+        );
+        const actualPaid = Number(txRes.rows[0].total_paid || 0);
+        const paymentStatus = actualPaid > 0 ? 'paid' : 'unpaid';
+        // ────────────────────────────────────────────────────────────────────────
+
+        // Save payroll item — net_pay is the theoretical computed amount;
+        // actual_paid reflects what was truly disbursed from finance records.
         await client.query(
           `INSERT INTO payroll_items (
             payroll_run_id, employee_id, employee_name, basic_salary, transport_allowance, housing_allowance,
             position_allowance, overtime_hours, overtime_amount, gross_salary, absent_days, penalty_amount,
-            loan_deduction, taxable_income, income_tax, pension_employee, pension_employer, total_deductions, net_pay
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+            loan_deduction, taxable_income, income_tax, pension_employee, pension_employer, total_deductions,
+            net_pay, actual_paid, payment_status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
           [
             runId, empId, emp.name, basicSalary, transportAllowance, housingAllowance,
             positionAllowance, overtimeHours, overtimeAmount, grossSalary, absentDays, penaltyAmount,
-            loanDeduction, taxableIncome, incomeTax, pension.employee, pension.employer, empDeductions, netPay
+            loanDeduction, taxableIncome, incomeTax, pension.employee, pension.employer, empDeductions,
+            netPay, actualPaid, paymentStatus
           ]
         );
 
-        // Aggregate run totals
+        // Aggregate run totals — only count actual disbursements in total_net
         totalGross += grossSalary;
         totalDeductions += empDeductions;
-        totalNet += netPay;
+        totalNet += actualPaid;  // Sum of what was actually paid, not theoretical
         totalTax += incomeTax;
         totalPensionEmployee += pension.employee;
         totalPensionEmployer += pension.employer;
