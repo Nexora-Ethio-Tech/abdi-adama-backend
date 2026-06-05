@@ -25,7 +25,10 @@ async function ensureSchemaExtensions(): Promise<void> {
     '9th_add_profile_image.sql',
     '10th_add_actual_paid_to_payroll_items.sql',
     '11th_add_period_number_to_schedules.sql',
-    '12th_online_exams_schema.sql'
+    '12th_online_exams_schema.sql',
+    '13th_online_exams_anti_cheat.sql',
+    '14th_online_exams_unique_constraint.sql',
+    '15th_fix_unique_constraints.sql'
   ];
 
   for (const fileName of migrationFiles) {
