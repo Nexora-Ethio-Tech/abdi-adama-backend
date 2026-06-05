@@ -171,61 +171,86 @@ class AuditorController {
       }
 
       let query = `
-        SELECT
-          (sc.student_id::text || '-' || sc.month) AS id,
-          sc.student_id,
-          sc.month,
-          u.name AS student_name,
-          u.digital_id,
-          s.grade,
-          SPLIT_PART(sc.month, '-', 2) AS billing_month,
-          CAST(SPLIT_PART(sc.month, '-', 1) AS integer) AS billing_year,
-          (
-            COALESCE(s.monthly_fee, 0) +
-            CASE WHEN s.is_bus_user = TRUE THEN COALESCE(s.bus_fee, 0) ELSE 0 END +
-            COALESCE(s.penalty_fee, 0)
-          ) AS total_amount,
-          COALESCE((
-            SELECT SUM(p.total_amount)
-            FROM payments p
-            WHERE p.student_id = sc.student_id AND p.month = sc.month
-          ), 0) AS amount_paid,
-          (
-            (
-              COALESCE(s.monthly_fee, 0) +
-              CASE WHEN s.is_bus_user = TRUE THEN COALESCE(s.bus_fee, 0) ELSE 0 END +
-              COALESCE(s.penalty_fee, 0)
-            ) -
+        WITH base_collections AS (
+          SELECT
+            (sc.student_id::text || '-' || sc.month) AS id,
+            sc.student_id,
+            sc.month,
+            u.name AS student_name,
+            u.digital_id,
+            s.grade,
+            SPLIT_PART(sc.month, '-', 2) AS billing_month,
+            CAST(SPLIT_PART(sc.month, '-', 1) AS integer) AS billing_year,
+            CASE WHEN sc.month LIKE '%-13' THEN
+              COALESCE(
+                (
+                  SELECT registration_fee FROM branch_grade_fees 
+                  WHERE branch_id = s.branch_id 
+                    AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+                  LIMIT 1
+                ),
+                (
+                  SELECT CAST(value AS numeric) FROM finance_settings 
+                  WHERE key IN ('student_registration_fee', 'registration_fee')
+                  ORDER BY CASE key WHEN 'student_registration_fee' THEN 1 ELSE 2 END
+                  LIMIT 1
+                ),
+                0
+              )
+            ELSE
+              COALESCE(NULLIF(s.monthly_fee, 0), (
+                SELECT monthly_fee FROM branch_grade_fees 
+                WHERE branch_id = s.branch_id 
+                  AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+                LIMIT 1
+              ), 0) +
+              CASE WHEN s.is_bus_user = TRUE THEN
+                COALESCE(NULLIF(s.bus_fee, 0), (
+                  SELECT bus_fee FROM branch_grade_fees 
+                  WHERE branch_id = s.branch_id 
+                    AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+                  LIMIT 1
+                ), 0)
+              ELSE 0 END +
+              CASE WHEN sc.status = 'overdue' THEN COALESCE(s.penalty_fee, (
+                SELECT CAST(value AS numeric) FROM finance_settings WHERE key = 'student_late_penalty_rate' LIMIT 1
+              ), 0) ELSE 0 END
+            END AS total_amount,
             COALESCE((
               SELECT SUM(p.total_amount)
               FROM payments p
               WHERE p.student_id = sc.student_id AND p.month = sc.month
-            ), 0)
-          ) AS balance,
-          CASE
-            WHEN sc.status = 'cleared' THEN 'Paid'
-            WHEN sc.status = 'overdue' THEN 'Overdue'
-            ELSE 'Pending'
-          END AS status,
-          sc.due_date,
-          sc.updated_at
-        FROM student_collections sc
-        JOIN students s ON sc.student_id = s.id
-        JOIN users u ON s.user_id = u.id
-        WHERE s.branch_id = $1
+            ), 0) AS amount_paid,
+            CASE
+              WHEN sc.status = 'cleared' THEN 'Paid'
+              WHEN sc.status = 'overdue' THEN 'Overdue'
+              ELSE 'Pending'
+            END AS status,
+            sc.due_date,
+            sc.updated_at
+          FROM student_collections sc
+          JOIN students s ON sc.student_id = s.id
+          JOIN users u ON s.user_id = u.id
+          WHERE s.branch_id = $1
+        )
+        SELECT 
+          id, student_id, month, student_name, digital_id, grade, billing_month, billing_year,
+          total_amount, amount_paid, (total_amount - amount_paid) AS balance, status, due_date, updated_at
+        FROM base_collections
+        WHERE 1=1
       `;
       const params: any[] = [branchId];
 
       if (status) {
-        query += ` AND sc.status = $2`;
+        query += ` AND status = $2`;
         params.push(
-          status === 'Paid' ? 'cleared' :
-          status === 'Overdue' ? 'overdue' :
-          'in_collections'
+          status === 'Paid' ? 'Paid' :
+          status === 'Overdue' ? 'Overdue' :
+          'Pending'
         );
       }
 
-      query += ` ORDER BY sc.updated_at DESC, billing_year DESC, billing_month DESC`;
+      query += ` ORDER BY updated_at DESC, billing_year DESC, billing_month DESC`;
 
       const result = await pool.query(query, params);
 
@@ -233,6 +258,13 @@ class AuditorController {
         const monthStr = row.month || '';
         const [year, monthIndex] = monthStr.split('-').map(Number);
         if (year && monthIndex) {
+          if (monthIndex === 13) {
+            return {
+              ...row,
+              billing_month: 'Pagume',
+              billing_year: year
+            };
+          }
           const dateObj = new Date(year, monthIndex - 1, 1);
           const ethDate = gregorianToEthiopic(dateObj);
           return {

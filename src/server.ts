@@ -5,7 +5,7 @@ import pool from './config/database';
 import logger from './utils/logger';
 import ensureScheduleSchema from './scripts/ensureScheduleSchema';
 import financeClerkService from './services/financeClerk.service';
-
+import { gregorianToEthiopian } from './shared/ethiopianCalendar';
 
 const PORT = process.env.PORT || 5000;
 
@@ -18,7 +18,12 @@ async function ensureSchemaExtensions(): Promise<void> {
     '2ndmigration_super_admin_seed.sql',
     '3rd_online_exams_and_ratings.sql',
     '4thfix_schedule_varchar_limits.sql',
-    '5th_fix_varchar10_limits.sql'
+    '5th_fix_varchar10_limits.sql',
+    '6th_fix_user_deletion_constraints.sql',
+    '7th_rename_last_grade_to_last_grade_completed.sql',
+    '8th_fix_student_deletion_constraints.sql',
+    '9th_add_profile_image.sql',
+    '10th_add_actual_paid_to_payroll_items.sql'
   ];
 
   for (const fileName of migrationFiles) {
@@ -61,7 +66,7 @@ async function bootstrap(): Promise<void> {
         for (const [key, value] of Object.entries(defaults)) {
           // Only insert when key is missing; preserve any existing admin-provided values
           await pool.query(
-            `INSERT INTO email_config (key, value, updated_by, updated_at)
+            `INSERT INTO public.email_config (key, value, updated_by, updated_at)
                VALUES ($1, $2, 'system', NOW())
                ON CONFLICT (key) DO NOTHING`,
             [key, value]
@@ -75,12 +80,30 @@ async function bootstrap(): Promise<void> {
 
     await ensureEmailConfigDefaults();
 
-    // Keep monthly collections statuses fresh for current month
+    // Keep monthly collection statuses fresh for the current month.
+    // We sync TWO month strings each run during Pagume:
+    //   1. The Gregorian YYYY-MM  (always — baseline cron)
+    //   2. The Ethiopian YYYY-13  (only during Pagume = Ethiopian month 13, Sep 6-10)
+    //      This ensures every active student gets a collection record for the Pagume
+    //      month so the annual Registration Fee billing appears in the dashboard.
     const runCollectionsSync = async () => {
       try {
-        const month = new Date().toISOString().slice(0, 7);
-        await financeClerkService.syncCollectionStatusesForMonth(month);
-        logger.info(`✅ Finance collections sync completed for ${month}`);
+        const now = new Date();
+        const gregMonth = now.toISOString().slice(0, 7);
+        const ethDate = gregorianToEthiopian(now);
+
+        await financeClerkService.syncCollectionStatusesForMonth(gregMonth);
+        logger.info(`✅ Finance collections sync completed for Gregorian ${gregMonth}`);
+
+        // Only sync the Ethiopian month string during Pagume (month 13).
+        // For months 1-12 the Gregorian cron covers billing; adding Ethiopian strings
+        // for those months would use them as if they were Gregorian (year ~2018) and
+        // produce due dates 8 years in the past, incorrectly marking students overdue.
+        if (ethDate.month === 13) {
+          const pagume = `${ethDate.year}-13`;
+          await financeClerkService.syncCollectionStatusesForMonth(pagume);
+          logger.info(`✅ Finance collections sync completed for Pagume ${pagume}`);
+        }
       } catch (err: any) {
         logger.warn(`⚠️ Finance collections sync failed: ${err.message}`);
       }
@@ -88,6 +111,7 @@ async function bootstrap(): Promise<void> {
 
     await runCollectionsSync();
     const collectionsSyncInterval = setInterval(runCollectionsSync, 60 * 60 * 1000);
+
 
     const server = app.listen(PORT, () => {
       logger.info(`🚀 Server running on port ${PORT}`);

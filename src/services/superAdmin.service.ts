@@ -374,7 +374,7 @@ class SuperAdminService {
         hashedPassword,
         data.role,
         data.branchId || null,
-        data.phone   || null,
+        data.phone || null,
         data.profileImage || null,
       ]
     );
@@ -396,7 +396,7 @@ class SuperAdminService {
 
   async getSystemReport() {
     const branchesResult = await pool.query(`SELECT COUNT(*) as count FROM branches`);
-    
+
     const usersResult = await pool.query(`
       SELECT role, COUNT(*) as count
       FROM users
@@ -404,7 +404,7 @@ class SuperAdminService {
     `);
 
     const studentsResult = await pool.query(`SELECT COUNT(*) as count FROM students`);
-    
+
     const paymentsResult = await pool.query(`
       SELECT 
         COUNT(*) as total_transactions,
@@ -596,7 +596,7 @@ class SuperAdminService {
 
   async activateGlobalAcademicYear(yearId: string) {
     await pool.query(`UPDATE academic_years SET is_active = false WHERE is_active = true`);
-    
+
     const result = await pool.query(
       `UPDATE academic_years SET is_active = true WHERE id = $1 RETURNING *`,
       [yearId]
@@ -631,7 +631,7 @@ class SuperAdminService {
 
   async getDashboard() {
     const systemReport = await this.getSystemReport();
-    
+
     const recentUsersResult = await pool.query(`
       SELECT id, digital_id, name, email, role, status, created_at
       FROM users
@@ -1028,7 +1028,7 @@ class SuperAdminService {
   async getSmtpSettings() {
     const SMTP_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_from'];
     const result = await pool.query(
-      `SELECT key, value, updated_by, updated_at FROM email_config WHERE key = ANY($1) ORDER BY key`,
+      `SELECT key, value, updated_by, updated_at FROM public.email_config WHERE key = ANY($1) ORDER BY key`,
       [SMTP_KEYS]
     );
 
@@ -1063,13 +1063,13 @@ class SuperAdminService {
       if (value === undefined || value === null) continue;
 
       const currentResult = await pool.query(
-        `SELECT value FROM email_config WHERE key = $1`,
+        `SELECT value FROM public.email_config WHERE key = $1`,
         [key]
       );
       const oldValue = currentResult.rows[0]?.value ?? null;
 
       await pool.query(
-        `INSERT INTO email_config (key, value, updated_by, updated_at)
+        `INSERT INTO public.email_config (key, value, updated_by, updated_at)
          VALUES ($1, $2, $3, NOW())
          ON CONFLICT (key) DO UPDATE
          SET value = $2, updated_by = $3, updated_at = NOW()`,
@@ -1079,7 +1079,7 @@ class SuperAdminService {
       const auditValue = key === 'smtp_pass' ? '••••••••' : value;
       const auditOld = key === 'smtp_pass' ? '••••••••' : oldValue;
       await pool.query(
-        `INSERT INTO email_config_audit (config_key, old_value, new_value, changed_by, changed_by_name)
+        `INSERT INTO public.email_config_audit (config_key, old_value, new_value, changed_by, changed_by_name)
          VALUES ($1, $2, $3, $4, $5)`,
         [key, auditOld, auditValue, userId, userName]
       );
@@ -1190,8 +1190,8 @@ class SuperAdminService {
     const values: any[] = [];
     let p = 0;
     if (data.title !== undefined) { p++; fields.push(`title = $${p}`); values.push(data.title); }
-    if (data.date !== undefined)  { p++; fields.push(`date = $${p}`);  values.push(data.date); }
-    if (data.type !== undefined)  { p++; fields.push(`type = $${p}`);  values.push(data.type); }
+    if (data.date !== undefined) { p++; fields.push(`date = $${p}`); values.push(data.date); }
+    if (data.type !== undefined) { p++; fields.push(`type = $${p}`); values.push(data.type); }
     if (data.description !== undefined) { p++; fields.push(`description = $${p}`); values.push(data.description); }
     if (data.branchId !== undefined) { p++; fields.push(`branch_id = $${p}`); values.push(data.branchId); }
     if (fields.length === 0) throw new Error('No fields to update');

@@ -18,28 +18,68 @@ class FinanceClerkService {
     const totalRemaining = rows.reduce((s: number, r: any) => s + Number(r.remaining || 0), 0);
     return { allocations: rows, totalRemaining };
   }
+  /**
+   * Returns the registration fee due for a given billing month.
+   *
+   * Two cases:
+   *   A) First-time admission: due in the student's Ethiopian enrollment month only,
+   *      and only if they have never paid a registration fee before.
+   *   B) Annual Pagume charge: due every year when targetMonth is an Ethiopian Pagume
+   *      month (ends in "-13"), provided:
+   *        • The student was NOT enrolled during this same Pagume period (they pay
+   *          via the admission flow instead).
+   *        • They have not already paid the registration fee for this specific Pagume year.
+   *
+   * Registration fees NEVER contribute to penalty calculations — see getPenaltyDueForMonth.
+   */
   private async getRegistrationDueForMonth(client: any, studentId: string, branchId: string, targetMonth: string): Promise<number> {
-    // 1. Fetch the student's enrollment date
-    const enrollRes = await client.query(`SELECT created_at FROM students WHERE id = $1`, [studentId]);
+    const enrollRes = await client.query(`SELECT created_at, grade FROM students WHERE id = $1`, [studentId]);
     if (enrollRes.rows.length === 0) return 0;
-    const enrollmentMonth = this.getStudentEnrollmentMonth(enrollRes.rows[0].created_at);
 
-    // Registration fee is only due in the student's enrollment month
-    if (targetMonth !== enrollmentMonth) return 0;
+    const student = enrollRes.rows[0];
+    const enrollmentMonth = this.getStudentEnrollmentMonth(student.created_at);
+    const [targetYear, targetMonthNum] = targetMonth.split('-').map(Number);
+    const isPagume = targetMonthNum === 13;
 
-    // 2. Check if already paid in any month
-    const regPaidRes = await client.query(
-      `SELECT 1
-       FROM payments p
-       JOIN payment_items pi ON pi.payment_id = p.id
-       WHERE p.student_id = $1 AND pi.fee_type = 'registration'
-       LIMIT 1`,
-      [studentId]
-    );
-    if (regPaidRes.rows.length > 0) return 0;
+    if (isPagume) {
+      // ── Case B: Annual Pagume charge ──────────────────────────────────────────
+      // Skip if the student enrolled during this exact Pagume period
+      // (their admission fee covers it via the normal registration workflow).
+      if (enrollmentMonth === targetMonth) return 0;
 
-    const reg = await this.getGlobalRegistrationFee(branchId).catch(() => ({ amount: 0 }));
-    return Number(reg.amount || 0);
+      // Check if already paid for this Pagume billing month
+      const pagumeYearPaidRes = await client.query(
+        `SELECT 1
+         FROM payments p
+         JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1
+           AND p.month = $2
+           AND pi.fee_type = 'registration'
+         LIMIT 1`,
+        [studentId, targetMonth]
+      );
+      if (pagumeYearPaidRes.rows.length > 0) return 0;
+
+      const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
+      return Number(reg.amount || 0);
+    } else {
+      // ── Case A: First-time admission month charge ─────────────────────────────
+      if (targetMonth !== enrollmentMonth) return 0;
+
+      // Check if already paid a registration fee in any month
+      const regPaidRes = await client.query(
+        `SELECT 1
+         FROM payments p
+         JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND pi.fee_type = 'registration'
+         LIMIT 1`,
+        [studentId]
+      );
+      if (regPaidRes.rows.length > 0) return 0;
+
+      const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
+      return Number(reg.amount || 0);
+    }
   }
 
   private async getFinanceSettingNumber(key: string, defaultValue = 0): Promise<number> {
@@ -54,6 +94,16 @@ class FinanceClerkService {
 
   private getPaymentDueDateForMonth(month: string, deadlineDay: number) {
     const [year, monthIndex] = month.split('-').map(Number);
+
+    // Pagume is Ethiopian month 13 (Sep 6-10/11 Gregorian). There is no Gregorian
+    // month whose index is 13, so new Date(year, 12, 1) would silently overflow to
+    // January of the next Gregorian year, producing a completely wrong due date.
+    // Handle Pagume directly in the Ethiopian calendar instead.
+    if (monthIndex === 13) {
+      const day = Math.min(Math.max(1, deadlineDay), this.getEthiopianMonthLength(year, 13));
+      return ethiopianToGregorianDate({ year, month: 13, day });
+    }
+
     const firstOfMonth = new Date(year, monthIndex - 1, 1);
     const ethDate = gregorianToEthiopian(firstOfMonth);
     const day = Math.min(Math.max(1, deadlineDay), this.getEthiopianMonthLength(ethDate.year, ethDate.month));
@@ -110,6 +160,14 @@ class FinanceClerkService {
       months.push(currentMonth);
     }
 
+    const ethDate = gregorianToEthiopian(new Date());
+    if (ethDate.month === 13) {
+      const pagume = `${ethDate.year}-13`;
+      if (!months.includes(pagume)) {
+        months.push(pagume);
+      }
+    }
+
     const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
     const now = new Date();
 
@@ -149,10 +207,11 @@ class FinanceClerkService {
     }
 
     // Now we are past the deadline. Let's see if the student paid their base fees on time.
+    // NOTE: Registration fees are intentionally EXCLUDED from baseDue — they never trigger
+    // a late penalty regardless of when they are paid (business rule: no penalty on reg fee).
     const monthlyDue = Number(student.monthly_fee || 0);
     const busDue = student.is_bus_user ? Number(student.bus_fee || 0) : 0;
-    const regDue = await this.getRegistrationDueForMonth(client, student.id, student.branch_id, month);
-    const baseDue = monthlyDue + busDue + regDue;
+    const baseDue = monthlyDue + busDue;
 
     // Sum all payments and aid usages made on or before the deadline
     const onTimePaidRes = await client.query(
@@ -188,12 +247,14 @@ class FinanceClerkService {
     let outstandingTotal = 0;
 
     const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
+    const [_, monthNum] = month.split('-').map(Number);
+    const isPagume = monthNum === 13;
 
     for (const ft of feeTypes) {
       let due = 0;
-      if (ft === 'monthly') due = Number(student.monthly_fee || 0);
-      else if (ft === 'bus') due = student.is_bus_user ? Number(student.bus_fee || 0) : 0;
-      else if (ft === 'penalty') due = penaltyDue;
+      if (ft === 'monthly') due = isPagume ? 0 : Number(student.monthly_fee || 0);
+      else if (ft === 'bus') due = (isPagume || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+      else if (ft === 'penalty') due = isPagume ? 0 : penaltyDue;
       else if (ft === 'registration') due = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
 
       const paidRes = await client.query(
@@ -526,12 +587,15 @@ class FinanceClerkService {
     try {
 
       // Fee types to report
-      const penaltyDue = await this.getPenaltyDueForMonth(client, student, targetMonth);
+      const [_, monthNum] = targetMonth.split('-').map(Number);
+      const isPagume = monthNum === 13;
+
+      const penaltyDue = isPagume ? 0 : await this.getPenaltyDueForMonth(client, student, targetMonth);
       const registrationDue = await this.getRegistrationDueForMonth(client, studentId, student.branch_id, targetMonth);
       const feeTypes = [
-        { key: 'monthly', label: 'Monthly Tuition', due: Number(student.monthly_fee || 0) },
+        { key: 'monthly', label: 'Monthly Tuition', due: isPagume ? 0 : Number(student.monthly_fee || 0) },
         { key: 'registration', label: 'Registration Fee', due: registrationDue },
-        { key: 'bus', label: 'Bus Fee', due: Number(student.bus_fee || 0) },
+        { key: 'bus', label: 'Bus Fee', due: (isPagume || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0) },
         { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
       ];
 
