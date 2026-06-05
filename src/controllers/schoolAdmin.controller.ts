@@ -1171,7 +1171,18 @@ class SchoolAdminController {
   async getGradingConfigs(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const result = await pool.query(
-        'SELECT grade_level, method_id, label, max_weight FROM grading_configs ORDER BY grade_level, created_at'
+        `SELECT grade_level, method_id, label, max_weight FROM grading_configs
+         ORDER BY grade_level,
+           CASE method_id
+             WHEN 'quiz-1'         THEN 1
+             WHEN 'quiz-2'         THEN 2
+             WHEN 'test-1'         THEN 3
+             WHEN 'mid-exam'       THEN 4
+             WHEN 'mid-assignment' THEN 4
+             WHEN 'assignment'     THEN 5
+             WHEN 'final-exam'     THEN 10
+             ELSE 6
+           END ASC, created_at ASC`
       );
 
       const configsMap: Record<string, Array<{ id: string; label: string; maxWeight: number }>> = {};
