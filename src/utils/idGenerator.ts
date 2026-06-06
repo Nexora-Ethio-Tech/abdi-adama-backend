@@ -2,7 +2,11 @@ import pool from '../config/database';
 import { DIGITAL_ID_PREFIX, BRANCH_CODES } from '../config/constants';
 import { UserRole } from '../types';
 
-const existsDigitalId = async (digitalId: string): Promise<boolean> => {
+// 1. In-memory registry to track IDs currently being checked or generated.
+const reservedIds = new Set<string>();
+
+// 2. Helper to check the actual database.
+const checkDbExists = async (digitalId: string): Promise<boolean> => {
   const res = await pool.query('SELECT 1 FROM users WHERE digital_id = $1 LIMIT 1', [digitalId]);
   return res.rows.length > 0;
 };
@@ -18,14 +22,37 @@ export const generateDigitalId = async (role: UserRole, branchId: string | null 
   const buildAndEnsureUnique = async (build: (seq: number) => string, startSeq = 1) => {
     let seq = startSeq;
     let candidate = build(seq);
-    // Loop until we find a candidate that does not exist.
-    // Note: this reduces collisions but doesn't fully eliminate race conditions under heavy concurrency.
-    // For strong guarantees consider a DB sequence or INSERT ... ON CONFLICT flow.
-    while (await existsDigitalId(candidate)) {
-      seq += 1;
-      candidate = build(seq);
+
+    while (true) {
+      // Synchronously check if another concurrent request has already claimed this ID.
+      // Because Node.js is single-threaded, this synchronous check completely
+      // eliminates the race condition locally without needing a database lock.
+      if (reservedIds.has(candidate)) {
+        seq += 1;
+        candidate = build(seq);
+        continue;
+      }
+
+      // Claim the ID synchronously BEFORE yielding to the async database query.
+      reservedIds.add(candidate);
+
+      // Now it's safe to check the database.
+      const inDb = await checkDbExists(candidate);
+
+      if (inDb) {
+        // If it was already in the DB, loop again.
+        seq += 1;
+        candidate = build(seq);
+        continue;
+      }
+
+      // We found an available ID. 
+      // Clear the memory lock after 60 seconds to prevent memory leaks.
+      // (60s is more than enough time for your application to finish the INSERT).
+      setTimeout(() => reservedIds.delete(candidate), 60000);
+
+      return candidate;
     }
-    return candidate;
   };
 
   if (role === UserRole.SUPER_ADMIN) {

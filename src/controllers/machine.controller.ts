@@ -6,7 +6,7 @@ class MachineController {
     try {
       // Basic security key check
       const apiKey = req.headers['x-api-key'];
-      if (apiKey !== process.env.MACHINE_API_KEY && apiKey !== 'abdi_adama_zk_secure_key_2026') {
+      if (apiKey !== process.env.MACHINE_API_KEY) {
         res.status(401).json({ success: false, message: 'Unauthorized' });
         return;
       }
