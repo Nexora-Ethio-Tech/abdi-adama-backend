@@ -52,3 +52,22 @@ export const ethiopianToGregorianDate = (parts: EthiopianDateParts): Date => {
   const year = b * 100 + d - 4800 + Math.floor(m / 10);
   return new Date(year, month - 1, day);
 };
+
+export function getCurrentECYear(): number {
+  return gregorianToEthiopian(new Date()).year;
+}
+
+export function getCurrentSemester(): 1 | 2 {
+  const month = new Date().getMonth() + 1; // 1-based (1=Jan, 12=Dec)
+  const day = new Date().getDate();
+  // Sep 11 to Jan 31 → First Semester
+  if ((month === 9 && day >= 11) || month >= 10 || month === 1) return 1;
+  // Feb 1 to Jun 30 → Second Semester
+  if (month >= 2 && month <= 6) return 2;
+  // Jul–Sep 10: summer / between years → treat as 2
+  return 2;
+}
+
+export function formatSemester(semester: 1 | 2): string {
+  return semester === 1 ? 'First Semester' : 'Second Semester';
+}

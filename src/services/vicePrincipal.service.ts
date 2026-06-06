@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import { getCurrentECYear, getCurrentSemester, formatSemester } from '../shared/ethiopianCalendar';
 
 class VicePrincipalService {
   // Absence Queue Management
@@ -470,22 +471,43 @@ class VicePrincipalService {
         ? parseFloat((courses.reduce((sum, c) => sum + c.average, 0) / courses.length).toFixed(2))
         : 0;
 
+    // Calculate student's rank in their grade
+    let studentRank = 0;
+    if (student.grade) {
+      const rankResult = await pool.query(
+        `SELECT COUNT(DISTINCT s.id) + 1 as rank
+         FROM students s
+         WHERE s.branch_id = $1
+           AND s.grade = $2
+           AND s.status = 'active'
+         LIMIT 1`,
+        [branchId, student.grade]
+      );
+      studentRank = rankResult.rows.length > 0 ? rankResult.rows[0].rank : 0;
+    }
+
+    // Get current academic year and semester
+    const currentECYear = getCurrentECYear();
+    const currentSemester = getCurrentSemester();
+    const academicYearDisplay = `${currentECYear} E.C.`;
+    const semesterDisplay = formatSemester(currentSemester);
+
     return {
-      student: {
-        id: student.id,
-        name: student.name,
-        email: student.email,
-        digitalId: student.digital_id,
-        grade: student.grade,
-        status: student.status
-      },
-      courses,
-      summary: {
-        totalCourses: courses.length,
-        totalGrades: gradesResult.rows.length,
-        overallAverage,
-        gradeStatus: overallAverage >= 50 ? 'Passing' : 'Needs Improvement'
-      }
+      studentId: student.id,
+      studentName: student.name,
+      className: student.grade,
+      academicYear: academicYearDisplay,
+      semester: semesterDisplay,
+      overallAverage: overallAverage,
+      overallRank: studentRank,
+      courses: courses.map(course => ({
+        courseId: course.courseId,
+        courseName: course.courseName,
+        courseCode: course.courseCode,
+        teacherId: course.teacherId,
+        teacherName: course.teacherName,
+        grades: course.grades
+      }))
     };
   }
 

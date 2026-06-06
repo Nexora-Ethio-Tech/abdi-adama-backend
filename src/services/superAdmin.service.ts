@@ -245,12 +245,12 @@ class SuperAdminService {
   }
 
   // Branch Management
-  async createBranch(data: { name: string; code: string; logoUrl?: string; phone?: string; email?: string; address?: string, profile_image?: string }) {
+  async createBranch(data: { name: string; code: string; logoUrl?: string; phone?: string; email?: string; address?: string }) {
     const result = await pool.query(
-      `INSERT INTO branches (name, code, logo_url, phone, email, address, profile_image)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO branches (name, code, logo_url, phone, email, address)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [data.name, data.code, data.logoUrl || null, data.phone || null, data.email || null, data.address || null, data.profile_image || null]
+      [data.name, data.code, data.logoUrl || null, data.phone || null, data.email || null, data.address || null]
     );
     return result.rows[0];
   }
@@ -341,7 +341,6 @@ class SuperAdminService {
     role: string;
     branchId?: string;
     phone?: string;
-    profileImage?: string;
   }) {
     // 1. Check if email is already taken
     const existing = await pool.query(
@@ -364,9 +363,9 @@ class SuperAdminService {
 
     // 4. Insert the new user into the database
     const result = await pool.query(
-      `INSERT INTO users (digital_id, name, email, password_hash, role, branch_id, phone, profile_image, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Active')
-       RETURNING id, digital_id, name, email, role, branch_id, phone, profile_image, status, created_at`,
+      `INSERT INTO users (digital_id, name, email, password_hash, role, branch_id, phone, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active')
+       RETURNING id, digital_id, name, email, role, branch_id, phone, status, created_at`,
       [
         digitalId,
         data.name,
@@ -375,7 +374,6 @@ class SuperAdminService {
         data.role,
         data.branchId || null,
         data.phone || null,
-        data.profileImage || null,
       ]
     );
 
@@ -1028,7 +1026,7 @@ class SuperAdminService {
   async getSmtpSettings() {
     const SMTP_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_from'];
     const result = await pool.query(
-      `SELECT key, value, updated_by, updated_at FROM public.email_config WHERE key = ANY($1) ORDER BY key`,
+      `SELECT key, value, updated_by, updated_at FROM email_config WHERE key = ANY($1) ORDER BY key`,
       [SMTP_KEYS]
     );
 
@@ -1063,13 +1061,13 @@ class SuperAdminService {
       if (value === undefined || value === null) continue;
 
       const currentResult = await pool.query(
-        `SELECT value FROM public.email_config WHERE key = $1`,
+        `SELECT value FROM email_config WHERE key = $1`,
         [key]
       );
       const oldValue = currentResult.rows[0]?.value ?? null;
 
       await pool.query(
-        `INSERT INTO public.email_config (key, value, updated_by, updated_at)
+        `INSERT INTO email_config (key, value, updated_by, updated_at)
          VALUES ($1, $2, $3, NOW())
          ON CONFLICT (key) DO UPDATE
          SET value = $2, updated_by = $3, updated_at = NOW()`,
@@ -1079,7 +1077,7 @@ class SuperAdminService {
       const auditValue = key === 'smtp_pass' ? '••••••••' : value;
       const auditOld = key === 'smtp_pass' ? '••••••••' : oldValue;
       await pool.query(
-        `INSERT INTO public.email_config_audit (config_key, old_value, new_value, changed_by, changed_by_name)
+        `INSERT INTO email_config_audit (config_key, old_value, new_value, changed_by, changed_by_name)
          VALUES ($1, $2, $3, $4, $5)`,
         [key, auditOld, auditValue, userId, userName]
       );
