@@ -24,7 +24,7 @@ const toJdnFromGregorian = (year: number, month: number, day: number) => {
 const jdnToEthiopian = (jdn: number): EthiopianDateParts => {
   const r = (jdn - 1723856) % 1461;
   const n = (r % 365) + 365 * Math.floor(r / 1460);
-  
+
   const year = 4 * Math.floor((jdn - 1723856) / 1461) + Math.floor(r / 365) - Math.floor(r / 1460);
   const month = Math.floor(n / 30) + 1;
   const day = (n % 30) + 1;
