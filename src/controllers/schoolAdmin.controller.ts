@@ -1105,6 +1105,17 @@ class SchoolAdminController {
     }
   }
 
+  // Returns distinct course names grouped with grade level (for HoD promotion modal)
+  async getCoursesWithGrade(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const courses = await schoolAdminService.getCoursesWithGrade(branchId!);
+      res.json({ success: true, data: courses });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async createSubject(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;

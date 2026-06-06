@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import teacherService from '../services/teacher.service';
+import { performAllCleanups } from '../shared/cleanupUtils';
 
 class TeacherController {
   // Mark attendance (bulk)
@@ -199,6 +200,9 @@ class TeacherController {
     try {
       const teacherId = req.user!.id;
       const { status } = req.query;
+
+      // Automatically trigger cleanup of expired plans first
+      await performAllCleanups().catch(() => {});
 
       const plans = await teacherService.getTeacherPlans(teacherId, status as string);
 
@@ -434,6 +438,9 @@ class TeacherController {
     try {
       const teacherUserId = req.user!.id;
       const { status } = req.query;
+
+      // Automatically trigger cleanup of expired plans first
+      await performAllCleanups().catch(() => {});
 
       const plans = await teacherService.getDeptPlans(teacherUserId, status as string);
 

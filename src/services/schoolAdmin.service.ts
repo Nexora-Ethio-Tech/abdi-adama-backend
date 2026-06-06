@@ -699,6 +699,32 @@ class SchoolAdminService {
     return result.rows;
   }
 
+  // Returns distinct course names with their associated grade level (for HoD promotion modal)
+  async getCoursesWithGrade(branchId: string) {
+    const result = await pool.query(
+      `SELECT DISTINCT
+         c.name,
+         c.code,
+         -- Normalize grade_level: if it's a plain number (e.g. "10"), prefix with "Grade "
+         CASE
+           WHEN COALESCE(cl.grade, '') ~ '^[0-9]+$' THEN 'Grade ' || COALESCE(cl.grade, cl.name)
+           WHEN COALESCE(cl.grade, '') = '' THEN
+             CASE
+               WHEN cl.name ~ '^[0-9]+$' THEN 'Grade ' || cl.name
+               ELSE cl.name
+             END
+           ELSE cl.grade
+         END AS grade_level
+       FROM public.courses c
+       JOIN public.classes cl ON c.class_id = cl.id
+       WHERE cl.branch_id = $1
+         AND c.name IS NOT NULL
+       ORDER BY grade_level, c.name`,
+      [branchId]
+    );
+    return result.rows;
+  }
+
   // Schedule Management
   async createSchedule(data: {
     teacherId: string;

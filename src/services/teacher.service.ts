@@ -656,17 +656,111 @@ class TeacherService {
     });
   }
 
+  // ────────────────────────────────────────────────────────
+  // Helper: find the Head of Department teacher ID that matches
+  // a given subject name + grade combination within a branch.
+  // Returns a teachers.id (UUID) or null if no HoD found.
+  private async resolveDeptHeadId(
+    subjectName: string | null | undefined,
+    courseId: string | null | undefined,
+    branchId: string
+  ): Promise<string | null> {
+    // Determine the subject name and grade from the course record if courseId given
+    let grade: string | null = null;
+    let resolvedSubject = subjectName || null;
+
+    if (courseId) {
+      const courseRes = await pool.query(
+        `SELECT c.name AS course_name,
+                cl.name AS class_grade,
+                cl.grade AS class_grade2
+         FROM courses c
+         LEFT JOIN classes cl ON c.class_id = cl.id
+         WHERE c.id = $1`,
+        [courseId]
+      );
+      if (courseRes.rows.length > 0) {
+        const row = courseRes.rows[0];
+        resolvedSubject = resolvedSubject || row.course_name;
+        grade = row.class_grade2 || row.class_grade || null;
+      }
+    }
+
+    if (!resolvedSubject) return null;
+
+    // Normalize grade for JSON ? operator comparison
+    // The staff_profile stores grades as "Grade 10"; the classes table stores as "10" or "Grade 10"
+    // Build both forms to match against staff_profile.promotion.grades
+    let gradeForJson = grade; // raw value from DB
+    let gradeNormalized: string | null = null;
+    if (grade) {
+      gradeNormalized = /^\d+$/.test(grade.trim()) ? `Grade ${grade.trim()}` : grade.trim();
+    }
+
+    // Find the HoD who covers this subject AND grade
+    // Use case-insensitive match on subject, check both raw and "Grade N" form for grade
+    const hodQuery = await pool.query(
+      `SELECT t.id
+       FROM public.teachers t
+       JOIN public.users u ON t.user_id = u.id
+       WHERE u.branch_id = $1
+         AND u.staff_profile->'promotion'->>'promotionType' = 'head-of-department'
+         AND u.staff_profile->'promotion'->'subjects' @> to_jsonb(LOWER($2::text))
+         ${gradeNormalized ? `AND (
+           u.staff_profile->'promotion'->'grades' ? $3
+           OR u.staff_profile->'promotion'->'grades' ? $4
+         )` : ''}
+       LIMIT 1`,
+      gradeNormalized
+        ? [branchId, resolvedSubject.toLowerCase(), gradeNormalized, grade || '']
+        : [branchId, resolvedSubject.toLowerCase()]
+    );
+
+    if (hodQuery.rows.length > 0) {
+      return hodQuery.rows[0].id;
+    }
+
+    // Fallback: subject match only (ignore grade), in case grades array wasn't populated
+    const fallbackRes = await pool.query(
+      `SELECT t.id
+       FROM public.teachers t
+       JOIN public.users u ON t.user_id = u.id
+       WHERE u.branch_id = $1
+         AND u.staff_profile->'promotion'->>'promotionType' = 'head-of-department'
+         AND u.staff_profile->'promotion'->'subjects' @> to_jsonb(LOWER($2::text))
+       LIMIT 1`,
+      [branchId, resolvedSubject.toLowerCase()]
+    );
+    if (fallbackRes.rows.length > 0) return fallbackRes.rows[0].id;
+
+    // No matching HoD found — leave dept_head_id as null
+    return null;
+  }
+
+
   // Submit weekly lesson plan
   async submitWeeklyPlan(teacherId: string, planData: any) {
-    // Get teacher record
+    // Get teacher record with branch
     const teacherResult = await pool.query(
-      'SELECT id FROM teachers WHERE user_id = $1',
+      `SELECT t.id, u.branch_id FROM teachers t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.user_id = $1`,
       [teacherId]
     );
 
     if (teacherResult.rows.length === 0) {
       throw new Error('Teacher not found');
     }
+
+    const { id: dbTeacherId, branch_id: branchId } = teacherResult.rows[0];
+
+    // Auto-resolve dept_head_id based on course/subject+grade
+    const resolvedDeptHeadId = await this.resolveDeptHeadId(
+      planData.subject || null,
+      planData.courseId || null,
+      branchId
+    );
+    const finalDeptHeadId = planData.deptHeadId || resolvedDeptHeadId;
 
     const result = await pool.query(
       `INSERT INTO weekly_plans 
@@ -676,7 +770,7 @@ class TeacherService {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
-        teacherResult.rows[0].id,
+        dbTeacherId,
         planData.date,
         planData.content,
         planData.objectives,
@@ -690,7 +784,7 @@ class TeacherService {
         planData.status || 'Pending',
         planData.courseId || null,
         planData.subject || null,
-        planData.deptHeadId || null,
+        finalDeptHeadId,
         planData.weekNumber || null
       ]
     );
@@ -733,9 +827,11 @@ class TeacherService {
 
   // Update lesson plan
   async updatePlan(planId: string, teacherId: string, planData: any) {
-    // Get teacher record
+    // Get teacher record with branch
     const teacherResult = await pool.query(
-      'SELECT id FROM teachers WHERE user_id = $1',
+      `SELECT t.id, u.branch_id FROM teachers t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.user_id = $1`,
       [teacherId]
     );
 
@@ -743,10 +839,12 @@ class TeacherService {
       throw new Error('Teacher not found');
     }
 
-    // Check if plan belongs to teacher and is in Draft status
+    const { id: dbTeacherId, branch_id: branchId } = teacherResult.rows[0];
+
+    // Check if plan belongs to teacher and is in editable status
     const checkResult = await pool.query(
       'SELECT status FROM weekly_plans WHERE id = $1 AND teacher_id = $2',
-      [planId, teacherResult.rows[0].id]
+      [planId, dbTeacherId]
     );
 
     if (checkResult.rows.length === 0) {
@@ -756,6 +854,14 @@ class TeacherService {
     if (checkResult.rows[0].status !== 'Draft' && checkResult.rows[0].status !== 'Revision Required') {
       throw new Error('Can only update plans in Draft or Revision Required status');
     }
+
+    // Auto-resolve dept_head_id based on course/subject+grade
+    const resolvedDeptHeadId = await this.resolveDeptHeadId(
+      planData.subject || null,
+      planData.courseId || null,
+      branchId
+    );
+    const finalDeptHeadId = planData.deptHeadId || resolvedDeptHeadId;
 
     // Clear review details if resubmitting for review
     const isResubmitting = planData.status === 'Pending';
@@ -786,7 +892,7 @@ class TeacherService {
         planData.status || 'Pending',
         planData.courseId || null,
         planData.subject || null,
-        planData.deptHeadId || null,
+        finalDeptHeadId,
         planData.weekNumber || null,
         isResubmitting,
         planId
@@ -1343,7 +1449,9 @@ class TeacherService {
   // Get department heads (teachers where is_dean = true)
   async getDepartmentHeads(branchId: string) {
     const result = await pool.query(
-      `SELECT t.id as teacher_id, u.name, t.department
+      `SELECT t.id as teacher_id, u.name, t.department,
+              u.staff_profile->'promotion'->'subjects' AS subjects,
+              u.staff_profile->'promotion'->'grades' AS grades
        FROM teachers t
        JOIN users u ON t.user_id = u.id
        WHERE t.branch_id = $1 AND t.is_dean = true AND u.is_active = true
@@ -1354,9 +1462,19 @@ class TeacherService {
   }
 
   // Get weekly plans submitted to this teacher (as department head)
+  // STRICT: only returns plans whose subject AND grade match the HoD's
+  // staff_profile.promotion.subjects[] AND .grades[]
   async getDeptPlans(teacherUserId: string, status?: string) {
     const teacherResult = await pool.query(
-      'SELECT id, is_dean, department FROM teachers WHERE user_id = $1',
+      `SELECT
+         t.id,
+         t.is_dean,
+         u.branch_id,
+         u.staff_profile->'promotion'->'subjects' AS hod_subjects,
+         u.staff_profile->'promotion'->'grades'   AS hod_grades
+       FROM public.teachers t
+       JOIN public.users u ON t.user_id = u.id
+       WHERE t.user_id = $1`,
       [teacherUserId]
     );
 
@@ -1364,35 +1482,69 @@ class TeacherService {
       throw new Error('Teacher not found');
     }
 
-    const { id: teacherId, is_dean: isDean, department: deptHeadDept } = teacherResult.rows[0];
+    const { id: teacherId, is_dean: isDean, branch_id: branchId,
+            hod_subjects, hod_grades } = teacherResult.rows[0];
 
     // If not a department head, return empty array immediately
     if (!isDean) {
       return [];
     }
 
-    let query = `
-      SELECT wp.*, u.name as teacher_name, c.name as course_name
-      FROM weekly_plans wp
-      JOIN teachers t ON wp.teacher_id = t.id
-      JOIN users u ON t.user_id = u.id
-      LEFT JOIN courses c ON wp.course_id = c.id
-      WHERE wp.dept_head_id = $1
+    // Parse subjects and grades from JSONB (they come as JS arrays or null)
+    const subjects: string[] = Array.isArray(hod_subjects) ? hod_subjects : [];
+    const grades: string[]   = Array.isArray(hod_grades)   ? hod_grades   : [];
+
+    // No promotion data yet — return empty so the UI can show a proper message
+    if (subjects.length === 0 || grades.length === 0) {
+      return [];
+    }
+
+    // Normalize grade labels: both "10" and "Grade 10" → "grade 10" (lowercase for comparison)
+    const normalizeGrade = (g: string) => {
+      const t = g.trim().toLowerCase();
+      return /^\d+$/.test(t) ? `grade ${t}` : t;
+    };
+
+    const normalizedHodGrades = grades.map(normalizeGrade);
+
+    // Build parameter arrays for SQL ANY() operator
+    // $1 = branchId, $2 = teacherId (to exclude HoD's own plans), $3 = subjects[], $4 = grades[]
+    const statusClause = status ? `AND wp.status = $5` : '';
+    const params: any[] = [
+      branchId,
+      teacherId,
+      subjects.map(s => s.toLowerCase()),  // lowercase subject list
+      normalizedHodGrades,                  // normalized grade list
+    ];
+    if (status) params.push(status);
+
+    const query = `
+      SELECT DISTINCT ON (wp.id)
+        wp.*,
+        u.name                               AS teacher_name,
+        COALESCE(c.name, wp.subject)         AS course_name,
+        cl.name                              AS class_name,
+        COALESCE(cl.grade, cl.name)          AS grade_level
+      FROM public.weekly_plans wp
+      JOIN public.teachers  t  ON wp.teacher_id  = t.id
+      JOIN public.users      u  ON t.user_id      = u.id
+      LEFT JOIN public.courses c  ON wp.course_id  = c.id
+      LEFT JOIN public.classes cl ON c.class_id    = cl.id
+      WHERE u.branch_id = $1
+        AND wp.teacher_id != $2
+        AND (wp.dept_head_id IS NULL OR wp.dept_head_id = $2)
+        -- Subject must match HoD's subjects (case-insensitive, check course name OR plan subject field)
+        AND LOWER(COALESCE(c.name, wp.subject, '')) = ANY($3::text[])
+        -- Grade must match HoD's grades (normalize "10" -> "grade 10", "Grade 10" -> "grade 10")
+        AND (
+          CASE
+            WHEN COALESCE(cl.grade, '') ~ '^[0-9]+$' THEN 'grade ' || cl.grade
+            ELSE LOWER(COALESCE(cl.grade, cl.name, ''))
+          END
+        ) = ANY($4::text[])
+        ${statusClause}
+      ORDER BY wp.id, wp.date DESC, wp.created_at DESC
     `;
-    const params: any[] = [teacherId];
-
-    if (deptHeadDept) {
-      query += ` AND LOWER(t.department) = LOWER($2)`;
-      params.push(deptHeadDept);
-    }
-
-    if (status) {
-      const statusParamIndex = params.length + 1;
-      query += ` AND wp.status = $${statusParamIndex}`;
-      params.push(status);
-    }
-
-    query += ' ORDER BY wp.date DESC';
 
     const result = await pool.query(query, params);
     return result.rows;
@@ -1401,7 +1553,15 @@ class TeacherService {
   // Review a weekly plan as department head
   async reviewDeptPlan(teacherUserId: string, planId: string, reviewData: { status: string; feedback?: string; rating?: number }) {
     const teacherResult = await pool.query(
-      'SELECT id, is_dean, department FROM teachers WHERE user_id = $1',
+      `SELECT
+         t.id,
+         t.is_dean,
+         u.branch_id,
+         u.staff_profile->'promotion'->'subjects' AS hod_subjects,
+         u.staff_profile->'promotion'->'grades'   AS hod_grades
+       FROM public.teachers t
+       JOIN public.users u ON t.user_id = u.id
+       WHERE t.user_id = $1`,
       [teacherUserId]
     );
 
@@ -1409,29 +1569,41 @@ class TeacherService {
       throw new Error('Teacher not found');
     }
 
-    const { id: teacherId, is_dean: isDean, department: deptHeadDept } = teacherResult.rows[0];
+    const { id: teacherId, is_dean: isDean, branch_id: branchId,
+            hod_subjects, hod_grades } = teacherResult.rows[0];
 
     // If not a department head, throw error
     if (!isDean) {
       throw new Error('Access denied: Only department heads can review plans');
     }
 
-    // Check if the plan exists and is assigned to this department head
+    const subjects: string[] = Array.isArray(hod_subjects) ? hod_subjects.map((s: string) => s.toLowerCase()) : [];
+    const normalizeGrade = (g: string) => { const t = g.trim().toLowerCase(); return /^\d+$/.test(t) ? `grade ${t}` : t; };
+    const normalizedGrades: string[] = Array.isArray(hod_grades) ? hod_grades.map(normalizeGrade) : [];
+
+    // Verify the plan exists and its subject+grade fall within HoD's scope
     const planCheck = await pool.query(
-      `SELECT wp.id, wp.status, wp.teacher_id, t.department 
-       FROM weekly_plans wp 
-       JOIN teachers t ON wp.teacher_id = t.id 
-       WHERE wp.id = $1 AND wp.dept_head_id = $2`,
-      [planId, teacherId]
+      `SELECT wp.id, wp.status, wp.teacher_id, wp.dept_head_id
+       FROM public.weekly_plans wp
+       JOIN public.teachers t  ON wp.teacher_id = t.id
+       JOIN public.users    u  ON t.user_id      = u.id
+       LEFT JOIN public.courses c  ON wp.course_id  = c.id
+       LEFT JOIN public.classes cl ON c.class_id    = cl.id
+       WHERE wp.id = $1
+         AND u.branch_id = $2
+         AND LOWER(COALESCE(c.name, wp.subject, '')) = ANY($3::text[])
+         AND (
+           CASE
+             WHEN COALESCE(cl.grade, '') ~ '^[0-9]+$' THEN 'grade ' || cl.grade
+             ELSE LOWER(COALESCE(cl.grade, cl.name, ''))
+           END
+         ) = ANY($4::text[])
+         AND (wp.dept_head_id IS NULL OR wp.dept_head_id = $5)`,
+      [planId, branchId, subjects, normalizedGrades, teacherId]
     );
 
     if (planCheck.rows.length === 0) {
-      throw new Error('Lesson plan not found or not assigned to you for review');
-    }
-
-    // Department Heads should only review plans from teachers in their own department
-    if (deptHeadDept && planCheck.rows[0].department && planCheck.rows[0].department.toLowerCase() !== deptHeadDept.toLowerCase()) {
-      throw new Error('Access denied: Teacher belongs to a different department');
+      throw new Error('Lesson plan not found or not within your department scope');
     }
 
     const client = await pool.connect();
@@ -1439,11 +1611,12 @@ class TeacherService {
       await client.query('BEGIN');
 
       const result = await client.query(
-        `UPDATE weekly_plans SET
+        `UPDATE public.weekly_plans SET
          status = $1,
          dean_feedback = $2,
          dean_rating = $3,
          reviewed_by = $4,
+         dept_head_id = COALESCE(dept_head_id, $4),
          updated_at = NOW()
          WHERE id = $5
          RETURNING *`,

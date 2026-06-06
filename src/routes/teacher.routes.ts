@@ -116,7 +116,7 @@ router.patch('/weekly-plans/:id', validate(weeklyPlanSchema), teacherController.
 const reviewDeptPlanSchema = Joi.object({
   status: Joi.string().valid('Approved', 'Revision Required').required(),
   feedback: Joi.string().allow('', null).optional(),
-  rating: Joi.number().integer().min(1).max(3).optional()
+  rating: Joi.number().integer().min(1).max(5).optional()
 });
 
 // Department tasks review (for department heads)

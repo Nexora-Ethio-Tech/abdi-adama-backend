@@ -21,6 +21,17 @@ export const performAllCleanups = async (): Promise<void> => {
   try {
     // 5. Purge old weekly communication book logs
     await performCommunicationCleanup();
+
+    // 6. Purge expired weekly lesson plans (after Friday 18:00 of their creation week)
+    const weeklyPlanCleanup = await pool.query(`
+      DELETE FROM weekly_plans
+      WHERE created_at < CASE 
+        WHEN EXTRACT(ISODOW FROM NOW()) < 5 OR (EXTRACT(ISODOW FROM NOW()) = 5 AND EXTRACT(HOUR FROM NOW()) < 18)
+        THEN (date_trunc('week', NOW()) - INTERVAL '2 days 6 hours')
+        ELSE (date_trunc('week', NOW()) + INTERVAL '4 days 18 hours')
+      END
+    `);
+
     // 1. Hard-delete expired logistics notices (auto-expired after 5 days)
     const expiredDelete = await pool.query(`
       DELETE FROM logistics_notices
@@ -44,9 +55,10 @@ export const performAllCleanups = async (): Promise<void> => {
     // Allows data retention for auditing while cleaning up quickly after manual deletion
     const softDeletedDriverNotices = await notificationService.hardDeleteSoftDeletedNotifications();
 
-    const removed = (expiredDelete.rowCount ?? 0) + (softDelete.rowCount ?? 0) + oldDriverNotices + softDeletedDriverNotices;
+    const removed = (expiredDelete.rowCount ?? 0) + (softDelete.rowCount ?? 0) + 
+                    (weeklyPlanCleanup.rowCount ?? 0) + oldDriverNotices + softDeletedDriverNotices;
     if (removed > 0) {
-      console.log(`[Cleanup] Removed ${removed} expired/deleted notification(s) from DB.`);
+      console.log(`[Cleanup] Removed ${removed} expired/deleted notification(s) or plan(s) from DB.`);
     }
   } catch (err: any) {
     // Non-fatal: log but don't crash the request

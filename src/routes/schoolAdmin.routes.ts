@@ -96,6 +96,8 @@ router.patch('/system-settings/registration', schoolAdminController.toggleRegist
 // Shared read endpoints (accessible by VP and Super Admin as well)
 router.get('/classes', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getClasses);
 router.get('/subjects', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getSubjects);
+// Returns distinct course names with their grade level (used by HoD promotion modal)
+router.get('/courses-with-grade', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getCoursesWithGrade);
 router.get('/students', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getBranchStudents);
 
 router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
