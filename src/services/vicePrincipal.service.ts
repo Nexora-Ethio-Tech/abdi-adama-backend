@@ -630,13 +630,15 @@ class VicePrincipalService {
         u.name as student_name,
         s.grade,
         COALESCE(c.name, s.grade) as section_name,
-        s.parent_phone,
-        s.parent_name,
+        COALESCE(s.parent_phone, pa.parent_phone) as parent_phone,
+        COALESCE(s.parent_name,  pa.parent_name)  as parent_name,
         t.id as teacher_id,
         tu.name as room_teacher
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN classes c ON s.section_id = c.id
+      -- Fall back to the admission application for parent contact info when not set on the student record
+      LEFT JOIN pending_applications pa ON pa.student_user_id = s.user_id
       LEFT JOIN teachers t ON t.branch_id = s.branch_id AND (t.assigned_room_class = c.name OR t.assigned_room_class = s.grade)
       LEFT JOIN users tu ON t.user_id = tu.id
       WHERE s.branch_id = $1 
