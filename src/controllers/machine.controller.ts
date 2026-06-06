@@ -30,16 +30,19 @@ class MachineController {
           if (userResult.rows.length > 0) {
             const userId = userResult.rows[0].id;
             const date = log.timestamp.split('T')[0]; // Extract YYYY-MM-DD from ISO timestamp
+            const timestamp = new Date(log.timestamp);
+            const cutoffMinutes = 8 * 60 + 45; // 08:45 local time
+            const logMinutes = timestamp.getHours() * 60 + timestamp.getMinutes();
+            const status = Number.isNaN(timestamp.getTime()) ? 'present' : (logMinutes > cutoffMinutes ? 'absent' : 'present');
             
-            // For staff, we just mark 'present'. You could calculate late based on time if needed.
             // Check if already exists to avoid duplicates
             const existing = await client.query('SELECT id FROM employee_attendance WHERE user_id = $1 AND date = $2', [userId, date]);
             
             if (existing.rows.length === 0) {
               await client.query(
                 `INSERT INTO employee_attendance (user_id, date, status, recorded_by, created_at)
-                 VALUES ($1, $2, 'present', $1, $3)`,
-                [userId, date, log.timestamp]
+                 VALUES ($1, $2, $3, $1, $4)`,
+                [userId, date, status, log.timestamp]
               );
               processed++;
             }

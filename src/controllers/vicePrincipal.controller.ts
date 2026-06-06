@@ -127,7 +127,9 @@ class VicePrincipalController {
     try {
       const branchId = req.user!.branch_id;
 
-      const teachers = await vicePrincipalService.getBranchTeachers(branchId!);
+      // Allow optional date override (expects YYYY-MM-DD Gregorian).
+      const { date } = req.query as { date?: string };
+      const teachers = await vicePrincipalService.getBranchTeachers(branchId!, date as string | undefined);
 
       res.json({
         success: true,
@@ -484,8 +486,8 @@ class VicePrincipalController {
       const branchId = req.user!.branch_id;
 
       if (rating < 0 || rating > 5) {
-         res.status(400).json({ success: false, error: { message: 'Rating must be between 0 and 5' }});
-         return;
+        res.status(400).json({ success: false, error: { message: 'Rating must be between 0 and 5' } });
+        return;
       }
 
       const teacher = await vicePrincipalService.rateTeacher(id, rating, branchId!);
