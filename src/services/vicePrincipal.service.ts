@@ -619,8 +619,9 @@ class VicePrincipalService {
   }
 
   // Get today's absent students with parent contact info
-  async getTodayAbsentStudents(branchId: string) {
-    const today = new Date().toISOString().split('T')[0];
+  async getTodayAbsentStudents(branchId: string, date?: string) {
+    // Use passed date or fall back to CURRENT_DATE (respects DB server timezone, avoids UTC drift)
+    const dateParam = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
 
     const result = await pool.query(
       `SELECT 
@@ -642,10 +643,10 @@ class VicePrincipalService {
         AND s.id IN (
           SELECT DISTINCT student_id 
           FROM student_attendance sa
-          WHERE sa.date = $2 AND sa.status = 'absent'
+          WHERE sa.date = COALESCE($2::date, CURRENT_DATE) AND sa.status = 'absent'
         )
       ORDER BY s.grade, COALESCE(c.name, s.grade), u.name`,
-      [branchId, today]
+      [branchId, dateParam]
     );
 
     return result.rows.map(row => ({

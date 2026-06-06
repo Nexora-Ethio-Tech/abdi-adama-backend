@@ -93,6 +93,11 @@ router.patch('/system-settings/registration', schoolAdminController.toggleRegist
 // SCHOOL ADMIN ONLY ROUTES
 // ============================================================
 
+// Shared read endpoints (accessible by VP and Super Admin as well)
+router.get('/classes', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getClasses);
+router.get('/subjects', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getSubjects);
+router.get('/students', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getBranchStudents);
+
 router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
 
 // User Management (existing)
@@ -106,7 +111,6 @@ router.delete('/users/:id', schoolAdminController.deleteUser);
 
 // Teacher Promotion & Subjects Management
 router.patch('/users/:id/promote', schoolAdminController.promoteTeacher);
-router.get('/subjects', schoolAdminController.getSubjects);
 router.post('/subjects', schoolAdminController.createSubject);
 router.patch('/subjects/:id', schoolAdminController.updateSubject);
 router.delete('/subjects/:id', schoolAdminController.deleteSubject);
@@ -117,7 +121,6 @@ router.delete('/students/:studentId/remove-class', schoolAdminController.removeS
 
 // Class Management
 router.post('/classes', validate(createClassSchema), schoolAdminController.createClass);
-router.get('/classes', schoolAdminController.getClasses);
 router.patch('/classes/:id', schoolAdminController.updateClass);
 router.delete('/classes/:id', schoolAdminController.deleteClass);
 // Assign single teacher (adds assignment without replacing existing)
@@ -142,7 +145,6 @@ router.get('/financial-policies', schoolAdminController.getFinancialPolicies);
 // Dashboard & Utilities
 router.get('/dashboard', schoolAdminController.getDashboard);
 router.get('/teachers', schoolAdminController.getBranchTeachers);
-router.get('/students', schoolAdminController.getBranchStudents);
 router.get('/students/:id/admission-record', schoolAdminController.getStudentAdmissionRecord);
 router.get('/students/:id', schoolAdminController.getStudentById);
 

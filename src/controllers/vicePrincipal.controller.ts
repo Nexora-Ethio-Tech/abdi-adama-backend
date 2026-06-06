@@ -325,7 +325,13 @@ class VicePrincipalController {
   async getTodayAbsentStudents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const absents = await vicePrincipalService.getTodayAbsentStudents(branchId!);
+      // Allow VP to query a specific date; default to today via CURRENT_DATE in the service
+      const date = req.query.date as string | undefined;
+      const absents = await vicePrincipalService.getTodayAbsentStudents(branchId!, date);
+
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
 
       res.json({
         success: true,

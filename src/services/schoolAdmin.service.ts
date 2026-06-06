@@ -1262,6 +1262,7 @@ class SchoolAdminService {
   async getBranchStudents(branchId: string, grade?: string, status?: string) {
     let query = `
       SELECT 
+        s.id as id,
         s.id as student_id,
         s.user_id,
         s.grade,
