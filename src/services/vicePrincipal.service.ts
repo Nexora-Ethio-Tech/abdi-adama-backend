@@ -153,8 +153,8 @@ class VicePrincipalService {
   }
 
   // Teacher Monitoring
-  async getBranchTeachers(branchId: string) {
-    const targetDate = new Date().toISOString().split('T')[0];
+  async getBranchTeachers(branchId: string, date?: string) {
+    const targetDate = date || new Date().toLocaleDateString('en-CA');
     const result = await pool.query(
       `SELECT 
         t.id,
@@ -244,7 +244,7 @@ class VicePrincipalService {
 
   // Attendance Summary
   async getAttendanceSummary(branchId: string, date?: string, gradeLevel?: string) {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date || new Date().toLocaleDateString('en-CA');
 
     let query = `
       SELECT 
@@ -332,7 +332,7 @@ class VicePrincipalService {
     );
 
     // Today's attendance rate
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toLocaleDateString('en-CA');
     const attendanceResult = await pool.query(
       `SELECT 
         COUNT(DISTINCT s.id) as total_students,
@@ -604,7 +604,7 @@ class VicePrincipalService {
   }
 
   async getStaffAbsentCount(branchId: string, date?: string) {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date || new Date().toLocaleDateString('en-CA');
 
     const totalResult = await pool.query(
       `SELECT COUNT(*)::int as total
@@ -1028,7 +1028,8 @@ class VicePrincipalService {
           SELECT COUNT(*)
           FROM teacher_of_week_votes v
           JOIN branches b ON v.branch_id = b.id
-          WHERE v.teacher_id = t.id 
+          WHERE v.teacher_id = t.id
+            AND v.branch_id = $1
             AND v.created_at >= COALESCE(b.leaderboard_last_reset, '1970-01-01'::timestamptz)
         ) as student_votes,
         (
