@@ -16,13 +16,22 @@ import pool from '../config/db';
  * Removes any records that are outside the current weekly window.
  */
 export const performCommunicationCleanup = async () => {
-  // Historical communication logs are now preserved for parents to view.
-  // No-op to prevent deletion of records.
+  try {
+    const result = await pool.query(`
+      DELETE FROM communication_logs
+      WHERE NOW() >= (week_ending + INTERVAL '4 days' + ((5 - EXTRACT(ISODOW FROM (week_ending + INTERVAL '4 days'))::integer + 7) % 7) * INTERVAL '1 day')::date + TIME '09:00:00'
+    `);
+    if ((result.rowCount ?? 0) > 0) {
+      console.log(`[Cleanup] Deleted ${result.rowCount} expired weekly communication log(s) from database.`);
+    }
+  } catch (err: any) {
+    console.error('[Cleanup] performCommunicationCleanup error:', err.message || err);
+  }
 };
 
 /**
  * Returns a filter for the active communication log window.
  */
 export const getActiveCommLogSQL = () => {
-  return "1=1"; // Return all logs to enable parent history
+  return "1=1"; // Keep 1=1 as cleanup utility already purges expired records
 };

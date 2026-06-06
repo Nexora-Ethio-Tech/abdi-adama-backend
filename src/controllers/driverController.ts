@@ -74,6 +74,7 @@ export const getManifest = async (req: AuthRequest, res: Response) => {
 export const postNotice = async (req: AuthRequest, res: Response) => {
   const { title, content, stations } = req.body;
   const identity_id = req.user?.identity_id;
+  const branchId = req.user?.branch_id || '1';
 
   if (!content) {
     sendError(res, 'Notice content is required.', 400);
