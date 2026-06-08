@@ -163,7 +163,7 @@ class AuditorController {
   getCollections = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const branchId = this.resolveBranchId(req);
-      const { status } = req.query;
+      const { status, feeType } = req.query;
 
       if (!branchId) {
         res.status(400).json({ success: false, error: { code: 'BRANCH_REQUIRED', message: 'Please select a branch first.' } });
@@ -181,7 +181,7 @@ class AuditorController {
             s.grade,
             SPLIT_PART(sc.month, '-', 2) AS billing_month,
             CAST(SPLIT_PART(sc.month, '-', 1) AS integer) AS billing_year,
-            CASE WHEN sc.month LIKE '%-13' THEN
+            CASE WHEN SPLIT_PART(sc.month, '-', 2)::integer >= 11 AND SPLIT_PART(sc.month, '-', 2)::integer <= 13 THEN
               COALESCE(
                 (
                   SELECT registration_fee FROM branch_grade_fees 
@@ -240,14 +240,25 @@ class AuditorController {
         WHERE 1=1
       `;
       const params: any[] = [branchId];
+      let paramIndex = 2;
 
       if (status) {
-        query += ` AND status = $2`;
-        params.push(
-          status === 'Paid' ? 'Paid' :
-          status === 'Overdue' ? 'Overdue' :
-          'Pending'
-        );
+        if (feeType === 'registration' && status === 'Pending') {
+          query += ` AND status IN ('Pending', 'Overdue')`;
+        } else {
+          query += ` AND status = $${paramIndex++}`;
+          params.push(
+            status === 'Paid' ? 'Paid' :
+            status === 'Overdue' ? 'Overdue' :
+            'Pending'
+          );
+        }
+      }
+
+      if (feeType === 'registration') {
+        query += ` AND SPLIT_PART(month, '-', 2)::integer >= 11 AND SPLIT_PART(month, '-', 2)::integer <= 13`;
+      } else if (feeType === 'monthly') {
+        query += ` AND SPLIT_PART(month, '-', 2)::integer < 11`;
       }
 
       query += ` ORDER BY updated_at DESC, billing_year DESC, billing_month DESC`;

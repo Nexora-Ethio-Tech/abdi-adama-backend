@@ -32,50 +32,78 @@ class FinanceClerkService {
    *
    * Registration fees NEVER contribute to penalty calculations — see getPenaltyDueForMonth.
    */
-  private async getRegistrationDueForMonth(client: any, studentId: string, branchId: string, targetMonth: string): Promise<number> {
+  /**
+   * Summer billing window: Hamle (Eth month 11 ≈ Greg 07), Nehase (12 ≈ 08), Pagume (13).
+   * Stored in DB as YYYY-07, YYYY-08, YYYY-13.
+   * Returns the three summer-month keys for the academic year that contains targetMonth.
+   *   - Greg months 07-12 → summer is that same year (YYYY-07/08/13)
+   *   - Greg months 01-06 → summer was the previous year ((YYYY-1)-07/08/13)
+   */
+  private getSummerMonths(targetYear: number, targetMonthNum: number): string[] {
+    const sumYear = targetMonthNum >= 7 ? targetYear : targetYear - 1;
+    return [`${sumYear}-07`, `${sumYear}-08`, `${sumYear}-13`];
+  }
+
+  private async getRegistrationDueForMonth(
+    client: any, studentId: string, branchId: string, targetMonth: string
+  ): Promise<number> {
     const enrollRes = await client.query(`SELECT created_at, grade FROM students WHERE id = $1`, [studentId]);
     if (enrollRes.rows.length === 0) return 0;
 
     const student = enrollRes.rows[0];
     const enrollmentMonth = this.getStudentEnrollmentMonth(student.created_at);
     const [targetYear, targetMonthNum] = targetMonth.split('-').map(Number);
-    const isPagume = targetMonthNum === 13;
+    const isSummer = targetMonthNum === 7 || targetMonthNum === 8 || targetMonthNum === 13;
+    const summerMonths = this.getSummerMonths(targetYear, targetMonthNum);
 
-    if (isPagume) {
-      // ── Case B: Annual Pagume charge ──────────────────────────────────────────
-      // Skip if the student enrolled during this exact Pagume period
-      // (their admission fee covers it via the normal registration workflow).
-      if (enrollmentMonth === targetMonth) return 0;
-
-      // Check if already paid for this Pagume billing month
-      const pagumeYearPaidRes = await client.query(
-        `SELECT 1
-         FROM payments p
+    if (isSummer) {
+      // One-time fee shared across all three summer months.
+      // Already paid in ANY summer month of this window → free.
+      const paidRes = await client.query(
+        `SELECT 1 FROM payments p
          JOIN payment_items pi ON pi.payment_id = p.id
-         WHERE p.student_id = $1
-           AND p.month = $2
-           AND pi.fee_type = 'registration'
+         WHERE p.student_id = $1 AND p.month = ANY($2::text[]) AND pi.fee_type = 'registration'
          LIMIT 1`,
-        [studentId, targetMonth]
+        [studentId, summerMonths]
       );
-      if (pagumeYearPaidRes.rows.length > 0) return 0;
+      if (paidRes.rows.length > 0) return 0;
 
       const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
       return Number(reg.amount || 0);
-    } else {
-      // ── Case A: First-time admission month charge ─────────────────────────────
-      if (targetMonth !== enrollmentMonth) return 0;
 
-      // Check if already paid a registration fee in any month
+    } else if (targetMonth === enrollmentMonth) {
+      // ── First-time admission month charge ─────────────────────────────────────
       const regPaidRes = await client.query(
-        `SELECT 1
-         FROM payments p
+        `SELECT 1 FROM payments p
          JOIN payment_items pi ON pi.payment_id = p.id
          WHERE p.student_id = $1 AND pi.fee_type = 'registration'
          LIMIT 1`,
         [studentId]
       );
       if (regPaidRes.rows.length > 0) return 0;
+
+      const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
+      return Number(reg.amount || 0);
+
+    } else {
+      // ── Carry-over: student did not pay during summer, now in a later month ───
+      // The fee is still owed as a single one-time charge — never 3×.
+      // Only apply carry-over when summer records exist (Hamle was already billed).
+      const summerExistsRes = await client.query(
+        `SELECT 1 FROM student_collections WHERE student_id = $1 AND month = ANY($2::text[]) LIMIT 1`,
+        [studentId, summerMonths]
+      );
+      if (summerExistsRes.rows.length === 0) return 0; // No summer billing → no carry-over
+
+      // Already paid the annual registration fee?
+      const paidRes = await client.query(
+        `SELECT 1 FROM payments p
+         JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = ANY($2::text[]) AND pi.fee_type = 'registration'
+         LIMIT 1`,
+        [studentId, summerMonths]
+      );
+      if (paidRes.rows.length > 0) return 0;
 
       const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
       return Number(reg.amount || 0);
@@ -112,8 +140,7 @@ class FinanceClerkService {
 
   private getStudentEnrollmentMonth(createdAt: Date | string): string {
     const dateObj = typeof createdAt === 'string' ? new Date(createdAt) : createdAt;
-    const ethDate = gregorianToEthiopian(dateObj);
-    return `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
+    return dateObj.toISOString().slice(0, 7);
   }
 
   async syncStudentCollectionsAcrossAllMonths(client: any, studentId: string, branchId: string) {
@@ -161,10 +188,22 @@ class FinanceClerkService {
     }
 
     const ethDate = gregorianToEthiopian(new Date());
+    // During Pagume (Ethiopian month 13), ensure its special month key is included
     if (ethDate.month === 13) {
       const pagume = `${ethDate.year}-13`;
       if (!months.includes(pagume)) {
         months.push(pagume);
+      }
+    }
+
+    // During the summer billing window (Gregorian July=7, August=8, or Pagume=13),
+    // ensure all three summer-month records exist so the Registration Fee page is populated.
+    const gregMonth = new Date().getMonth() + 1; // 1-based
+    const gregYear = new Date().getFullYear();
+    if (gregMonth === 7 || gregMonth === 8 || ethDate.month === 13) {
+      const summerKeys = [`${gregYear}-07`, `${gregYear}-08`, `${ethDate.year}-13`];
+      for (const sk of summerKeys) {
+        if (!months.includes(sk)) months.push(sk);
       }
     }
 
@@ -175,10 +214,11 @@ class FinanceClerkService {
       const outstandingTotal = await this.computeMonthlyOutstanding(client, student, branchId, month, now);
       const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
       let status = 'in_collections';
+      const [_, mNum] = month.split('-').map(Number);
       if (outstandingTotal <= 0) {
         status = 'cleared';
       } else if (now > dueDate) {
-        status = 'overdue';
+        status = (mNum === 7 || mNum === 8 || mNum === 13) ? 'in_collections' : 'overdue';
       }
 
       await client.query(
@@ -193,6 +233,9 @@ class FinanceClerkService {
 
 
   private async getPenaltyDueForMonth(client: any, student: any, month: string, now = new Date()) {
+    const [_, monthNum] = month.split('-').map(Number);
+    if (monthNum === 7 || monthNum === 8 || monthNum === 13) return 0; // No penalty for summer months
+
     const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
     const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
 
@@ -248,13 +291,13 @@ class FinanceClerkService {
 
     const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
     const [_, monthNum] = month.split('-').map(Number);
-    const isPagume = monthNum === 13;
+    const isSummer = monthNum === 7 || monthNum === 8 || monthNum === 13;
 
     for (const ft of feeTypes) {
       let due = 0;
-      if (ft === 'monthly') due = isPagume ? 0 : Number(student.monthly_fee || 0);
-      else if (ft === 'bus') due = (isPagume || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
-      else if (ft === 'penalty') due = isPagume ? 0 : penaltyDue;
+      if (ft === 'monthly') due = isSummer ? 0 : Number(student.monthly_fee || 0);
+      else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+      else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
       else if (ft === 'registration') due = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
 
       const paidRes = await client.query(
@@ -480,8 +523,9 @@ class FinanceClerkService {
       const dueDate = this.getPaymentDueDateForMonth(data.month, deadlineDay);
       const now = new Date();
       let status = 'in_collections';
+      const [_, outMonthNum] = data.month.split('-').map(Number);
       if (outstandingTotal <= 0) status = 'cleared';
-      else if (now > dueDate) status = 'overdue';
+      else if (now > dueDate) status = (outMonthNum === 7 || outMonthNum === 8 || outMonthNum === 13) ? 'in_collections' : 'overdue';
 
       await client.query(
         `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
@@ -489,6 +533,28 @@ class FinanceClerkService {
          ON CONFLICT (student_id, month) DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
         [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
       );
+
+      // ── Summer / carry-over cross-month settlement ────────────────────────────
+      // Registration fee is a ONE-TIME annual charge. If paid in any summer month
+      // (Hamle 07, Nehase 08, Pagume 13) OR as a carry-over in a later month,
+      // all three summer records are auto-cleared. No 3× charging.
+      const paidRegFee = toInsertItems.some(it => it.feeType === 'registration');
+      if (paidRegFee && status === 'cleared') {
+        const [pyStr, pmStr] = data.month.split('-');
+        const summerMonths = this.getSummerMonths(parseInt(pyStr), parseInt(pmStr));
+        for (const sm of summerMonths) {
+          if (sm !== data.month) {
+            const smDue = this.getPaymentDueDateForMonth(sm, deadlineDay);
+            await client.query(
+              `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+               VALUES ($1, $2, $3, 'cleared', NOW())
+               ON CONFLICT (student_id, month)
+               DO UPDATE SET status = 'cleared', due_date = EXCLUDED.due_date, updated_at = NOW()`,
+              [data.studentId, sm, smDue.toISOString().slice(0, 10)]
+            );
+          }
+        }
+      }
 
       // Also re-sync every OTHER overdue month for this student so paying the final balance
       // immediately removes the student from the Overdue tab.
@@ -502,8 +568,9 @@ class FinanceClerkService {
         const otherOutstanding = await this.computeMonthlyOutstanding(client, student, data.branchId, otherMonth);
         const otherDueDate = this.getPaymentDueDateForMonth(otherMonth, deadlineDay);
         let otherStatus = 'in_collections';
+        const [__, otherMonthNum] = otherMonth.split('-').map(Number);
         if (otherOutstanding <= 0) otherStatus = 'cleared';
-        else if (now > otherDueDate) otherStatus = 'overdue';
+        else if (now > otherDueDate) otherStatus = (otherMonthNum === 7 || otherMonthNum === 8 || otherMonthNum === 13) ? 'in_collections' : 'overdue';
         await client.query(
           `UPDATE student_collections SET status = $1, updated_at = NOW()
            WHERE student_id = $2 AND month = $3`,
@@ -588,14 +655,14 @@ class FinanceClerkService {
 
       // Fee types to report
       const [_, monthNum] = targetMonth.split('-').map(Number);
-      const isPagume = monthNum === 13;
+      const isSummer = monthNum === 7 || monthNum === 8 || monthNum === 13;
 
-      const penaltyDue = isPagume ? 0 : await this.getPenaltyDueForMonth(client, student, targetMonth);
+      const penaltyDue = isSummer ? 0 : await this.getPenaltyDueForMonth(client, student, targetMonth);
       const registrationDue = await this.getRegistrationDueForMonth(client, studentId, student.branch_id, targetMonth);
       const feeTypes = [
-        { key: 'monthly', label: 'Monthly Tuition', due: isPagume ? 0 : Number(student.monthly_fee || 0) },
+        { key: 'monthly', label: 'Monthly Tuition', due: isSummer ? 0 : Number(student.monthly_fee || 0) },
         { key: 'registration', label: 'Registration Fee', due: registrationDue },
-        { key: 'bus', label: 'Bus Fee', due: (isPagume || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0) },
+        { key: 'bus', label: 'Bus Fee', due: (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0) },
         { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
       ];
 
@@ -1485,14 +1552,23 @@ class FinanceClerkService {
         params
       );
 
+      const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+      const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
+      const now = new Date();
+      const [, monthNumStr] = month.split('-');
+      const monthNum = parseInt(monthNumStr, 10);
+      const isSummerMonth = monthNum === 7 || monthNum === 8 || monthNum === 13;
+
       for (const student of studentsRes.rows) {
         const outstandingTotal = await this.computeMonthlyOutstanding(client, student, student.branch_id, month);
-        const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
-        const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
-        const now = new Date();
         let status = 'in_collections';
-        if (outstandingTotal <= 0) status = 'cleared';
-        else if (now > dueDate) status = 'overdue';
+        if (outstandingTotal <= 0) {
+          status = 'cleared';
+        } else if (now > dueDate) {
+          // Summer months (Hamle/Nehase/Pagume) never go overdue — they hold
+          // in_collections until the one-time registration fee is paid.
+          status = isSummerMonth ? 'in_collections' : 'overdue';
+        }
 
         await client.query(
           `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
@@ -1501,6 +1577,26 @@ class FinanceClerkService {
            DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
           [student.id, month, dueDate.toISOString().slice(0, 10), status]
         );
+
+        // If a summer month just resolved to cleared, cascade-clear the other two
+        // so the one-time registration fee shows as settled across all three months.
+        if (isSummerMonth && status === 'cleared') {
+          const [yearStr] = month.split('-');
+          const year = parseInt(yearStr, 10);
+          const otherSummerMonths = ['07', '08', '13']
+            .map(m => `${year}-${m}`)
+            .filter(m => m !== month);
+          for (const sm of otherSummerMonths) {
+            const smDueDate = this.getPaymentDueDateForMonth(sm, deadlineDay);
+            await client.query(
+              `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+               VALUES ($1, $2, $3, 'cleared', NOW())
+               ON CONFLICT (student_id, month)
+               DO UPDATE SET status = 'cleared', due_date = EXCLUDED.due_date, updated_at = NOW()`,
+              [student.id, sm, smDueDate.toISOString().slice(0, 10)]
+            );
+          }
+        }
       }
 
       await client.query('COMMIT');
