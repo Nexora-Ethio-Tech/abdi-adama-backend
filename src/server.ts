@@ -100,18 +100,26 @@ async function bootstrap(): Promise<void> {
         const now = new Date();
         const gregMonth = now.toISOString().slice(0, 7);
         const ethDate = gregorianToEthiopian(now);
+        const gregMonthNum = now.getMonth() + 1; // 1-based
+        const gregYear = now.getFullYear();
 
         await financeClerkService.syncCollectionStatusesForMonth(gregMonth);
         logger.info(`✅ Finance collections sync completed for Gregorian ${gregMonth}`);
 
-        // Only sync the Ethiopian month string during Pagume (month 13).
-        // For months 1-12 the Gregorian cron covers billing; adding Ethiopian strings
-        // for those months would use them as if they were Gregorian (year ~2018) and
-        // produce due dates 8 years in the past, incorrectly marking students overdue.
-        if (ethDate.month === 13) {
-          const pagume = `${ethDate.year}-13`;
-          await financeClerkService.syncCollectionStatusesForMonth(pagume);
-          logger.info(`✅ Finance collections sync completed for Pagume ${pagume}`);
+        // During the summer billing window (July, August, or Pagume) sync all three
+        // summer-month keys so every active student has Hamle/Nehase/Pagume records.
+        if (gregMonthNum === 7 || gregMonthNum === 8 || ethDate.month === 13) {
+          const summerMonths: string[] = [
+            `${gregYear}-07`,
+            `${gregYear}-08`,
+            `${ethDate.year}-13`,
+          ];
+          for (const sm of summerMonths) {
+            if (sm !== gregMonth) {
+              await financeClerkService.syncCollectionStatusesForMonth(sm);
+              logger.info(`✅ Finance collections sync completed for summer month ${sm}`);
+            }
+          }
         }
       } catch (err: any) {
         logger.warn(`⚠️ Finance collections sync failed: ${err.message}`);
