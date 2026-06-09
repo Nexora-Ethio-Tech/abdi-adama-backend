@@ -333,7 +333,7 @@ class AuditorService {
        JOIN students s ON s.id = p.student_id
        WHERE s.branch_id = $1
          AND pi.fee_type = 'registration'
-         AND SPLIT_PART(p.month, '-', 2)::integer IN (7, 8, 13)`,
+         AND SPLIT_PART(p.month, '-', 2)::integer IN (11, 12, 13)`,
       [branchId]
     );
 

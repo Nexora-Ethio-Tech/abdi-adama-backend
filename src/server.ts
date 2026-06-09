@@ -106,12 +106,12 @@ async function bootstrap(): Promise<void> {
         await financeClerkService.syncCollectionStatusesForMonth(gregMonth);
         logger.info(`✅ Finance collections sync completed for Gregorian ${gregMonth}`);
 
-        // During the summer billing window (July, August, or Pagume) sync all three
+        // During the summer billing window (Hamle=11, Nehase=12, Pagume=13) sync all three
         // summer-month keys so every active student has Hamle/Nehase/Pagume records.
-        if (gregMonthNum === 7 || gregMonthNum === 8 || ethDate.month === 13) {
+        if (ethDate.month === 11 || ethDate.month === 12 || ethDate.month === 13) {
           const summerMonths: string[] = [
-            `${gregYear}-07`,
-            `${gregYear}-08`,
+            `${ethDate.year}-11`,
+            `${ethDate.year}-12`,
             `${ethDate.year}-13`,
           ];
           for (const sm of summerMonths) {

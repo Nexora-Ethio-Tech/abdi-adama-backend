@@ -170,8 +170,7 @@ class AuditorController {
         return;
       }
 
-      // Build the total_amount based on fee type for each month:
-      // - Summer months (7, 8, 13): only registration fee
+      // - Summer months (11, 12, 13): only registration fee
       // - Regular months: monthly + bus + penalty (if overdue)
       // - Registration fee also included in non-summer months when applicable
       let query = `
@@ -193,7 +192,7 @@ class AuditorController {
             SPLIT_PART(sc.month, '-', 2)::integer AS billing_month_num,
             CAST(SPLIT_PART(sc.month, '-', 1) AS integer) AS billing_year,
             -- Monthly fee
-            CASE WHEN SPLIT_PART(sc.month, '-', 2)::integer IN (7, 8, 13) THEN 0
+            CASE WHEN SPLIT_PART(sc.month, '-', 2)::integer IN (11, 12, 13) THEN 0
               ELSE COALESCE(NULLIF(s.monthly_fee, 0), (
                 SELECT monthly_fee FROM branch_grade_fees
                 WHERE branch_id = s.branch_id
@@ -202,7 +201,7 @@ class AuditorController {
               ), 0)
             END AS monthly_fee_due,
             -- Bus fee
-            CASE WHEN SPLIT_PART(sc.month, '-', 2)::integer IN (7, 8, 13) OR NOT s.is_bus_user THEN 0
+            CASE WHEN SPLIT_PART(sc.month, '-', 2)::integer IN (11, 12, 13) OR NOT s.is_bus_user THEN 0
               ELSE COALESCE(NULLIF(s.bus_fee, 0), (
                 SELECT bus_fee FROM branch_grade_fees
                 WHERE branch_id = s.branch_id
@@ -211,11 +210,11 @@ class AuditorController {
               ), 0)
             END AS bus_fee_due,
             -- Penalty fee (only when overdue, not summer)
-            CASE WHEN sc.status = 'overdue' AND SPLIT_PART(sc.month, '-', 2)::integer NOT IN (7, 8, 13) THEN
+            CASE WHEN sc.status = 'overdue' AND SPLIT_PART(sc.month, '-', 2)::integer NOT IN (11, 12, 13) THEN
               COALESCE(NULLIF(s.penalty_fee, 0), (SELECT penalty_rate FROM fee_settings), 0)
             ELSE 0 END AS penalty_fee_due,
             -- Registration fee (summer months OR if student enrolled and reg not yet paid)
-            CASE WHEN SPLIT_PART(sc.month, '-', 2)::integer IN (7, 8, 13) THEN
+            CASE WHEN SPLIT_PART(sc.month, '-', 2)::integer IN (11, 12, 13) THEN
               COALESCE(
                 (SELECT registration_fee FROM branch_grade_fees
                  WHERE branch_id = s.branch_id
@@ -248,7 +247,7 @@ class AuditorController {
             monthly_fee_due, bus_fee_due, penalty_fee_due, registration_fee_due,
             -- Total = all applicable fee types
             (monthly_fee_due + bus_fee_due + penalty_fee_due +
-              CASE WHEN billing_month_num IN (7, 8, 13) THEN registration_fee_due ELSE 0 END
+              CASE WHEN billing_month_num IN (11, 12, 13) THEN registration_fee_due ELSE 0 END
             ) AS total_amount,
             -- Amount paid from payment_items (all fee types)
             COALESCE((
@@ -291,9 +290,9 @@ class AuditorController {
       }
 
       if (feeType === 'registration') {
-        query += ` AND billing_month_num IN (7, 8, 13)`;
+        query += ` AND billing_month_num IN (11, 12, 13)`;
       } else if (feeType === 'monthly') {
-        query += ` AND billing_month_num NOT IN (7, 8, 13)`;
+        query += ` AND billing_month_num NOT IN (11, 12, 13)`;
       } else if (feeType === 'penalty') {
         query += ` AND penalty_fee_due > 0`;
       }

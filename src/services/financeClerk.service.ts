@@ -33,15 +33,12 @@ class FinanceClerkService {
    * Registration fees NEVER contribute to penalty calculations — see getPenaltyDueForMonth.
    */
   /**
-   * Summer billing window: Hamle (Eth month 11 ≈ Greg 07), Nehase (12 ≈ 08), Pagume (13).
-   * Stored in DB as YYYY-07, YYYY-08, YYYY-13.
-   * Returns the three summer-month keys for the academic year that contains targetMonth.
-   *   - Greg months 07-12 → summer is that same year (YYYY-07/08/13)
-   *   - Greg months 01-06 → summer was the previous year ((YYYY-1)-07/08/13)
+   * Summer billing window: Hamle (Eth month 11), Nehase (12), Pagume (13).
+   * Stored in DB as YYYY-11, YYYY-12, YYYY-13.
+   * Returns the three summer-month keys for the Ethiopian year that contains targetMonth.
    */
-  private getSummerMonths(targetYear: number, targetMonthNum: number): string[] {
-    const sumYear = targetMonthNum >= 7 ? targetYear : targetYear - 1;
-    return [`${sumYear}-07`, `${sumYear}-08`, `${sumYear}-13`];
+  private getSummerMonths(targetYear: number, _targetMonthNum: number): string[] {
+    return [`${targetYear}-11`, `${targetYear}-12`, `${targetYear}-13`];
   }
 
   private async getRegistrationDueForMonth(
@@ -53,57 +50,39 @@ class FinanceClerkService {
     const student = enrollRes.rows[0];
     const enrollmentMonth = this.getStudentEnrollmentMonth(student.created_at);
     const [targetYear, targetMonthNum] = targetMonth.split('-').map(Number);
-    const isSummer = targetMonthNum === 7 || targetMonthNum === 8 || targetMonthNum === 13;
+    const targetYearStr = targetMonth.split('-')[0];
+
+    // Check if the student has paid a registration fee in ANY month of this academic year (one-time fee)
+    const paidRes = await client.query(
+      `SELECT 1 FROM payments p
+       JOIN payment_items pi ON pi.payment_id = p.id
+       WHERE p.student_id = $1 AND p.month LIKE $2 AND pi.fee_type = 'registration'
+       LIMIT 1`,
+      [studentId, `${targetYearStr}-%`]
+    );
+    if (paidRes.rows.length > 0) return 0;
+
+    const isSummer = targetMonthNum === 11 || targetMonthNum === 12 || targetMonthNum === 13;
     const summerMonths = this.getSummerMonths(targetYear, targetMonthNum);
 
     if (isSummer) {
-      // One-time fee shared across all three summer months.
-      // Already paid in ANY summer month of this window → free.
-      const paidRes = await client.query(
-        `SELECT 1 FROM payments p
-         JOIN payment_items pi ON pi.payment_id = p.id
-         WHERE p.student_id = $1 AND p.month = ANY($2::text[]) AND pi.fee_type = 'registration'
-         LIMIT 1`,
-        [studentId, summerMonths]
-      );
-      if (paidRes.rows.length > 0) return 0;
-
       const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
       return Number(reg.amount || 0);
 
     } else if (targetMonth === enrollmentMonth) {
-      // ── First-time admission month charge ─────────────────────────────────────
-      const regPaidRes = await client.query(
-        `SELECT 1 FROM payments p
-         JOIN payment_items pi ON pi.payment_id = p.id
-         WHERE p.student_id = $1 AND pi.fee_type = 'registration'
-         LIMIT 1`,
-        [studentId]
-      );
-      if (regPaidRes.rows.length > 0) return 0;
-
+      // First-time admission month charge
       const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
       return Number(reg.amount || 0);
 
     } else {
-      // ── Carry-over: student did not pay during summer, now in a later month ───
-      // The fee is still owed as a single one-time charge — never 3×.
-      // Only apply carry-over when summer records exist (Hamle was already billed).
+      // Carry-over: student did not pay during summer, now in a later month.
+      // The fee is still owed as a single one-time charge — never 3x.
+      // Only apply carry-over when summer records exist.
       const summerExistsRes = await client.query(
         `SELECT 1 FROM student_collections WHERE student_id = $1 AND month = ANY($2::text[]) LIMIT 1`,
         [studentId, summerMonths]
       );
       if (summerExistsRes.rows.length === 0) return 0; // No summer billing → no carry-over
-
-      // Already paid the annual registration fee?
-      const paidRes = await client.query(
-        `SELECT 1 FROM payments p
-         JOIN payment_items pi ON pi.payment_id = p.id
-         WHERE p.student_id = $1 AND p.month = ANY($2::text[]) AND pi.fee_type = 'registration'
-         LIMIT 1`,
-        [studentId, summerMonths]
-      );
-      if (paidRes.rows.length > 0) return 0;
 
       const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
       return Number(reg.amount || 0);
@@ -114,6 +93,34 @@ class FinanceClerkService {
     const result = await pool.query(`SELECT value FROM finance_settings WHERE key = $1 LIMIT 1`, [key]);
     const value = Number(result.rows[0]?.value);
     return Number.isFinite(value) && value > 0 ? value : defaultValue;
+  }
+
+  /**
+   * Convert a date string that may be Ethiopian (YYYY-MM-DD EC) to a Gregorian ISO date string.
+   * The frontend sends dates formatted with getTodayEthiopianDate() which returns EC dates like "2018-09-25".
+   * EC years are ~7-8 years behind Gregorian, so any year < 2015 is treated as Ethiopian.
+   * Years >= 2015 are assumed already Gregorian (safe cut-off for this system).
+   */
+  private ethiopianDateStringToGregorian(dateStr: string): string {
+    if (!dateStr) return new Date().toISOString().slice(0, 10);
+    // Strip any " EC" suffix if present
+    const cleaned = dateStr.replace(/\s*EC\s*$/i, '').trim();
+    const parts = cleaned.split('-').map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) return new Date().toISOString().slice(0, 10);
+    const [y, m, d] = parts;
+    // Ethiopian years for this school system are in the 2000–2030 range.
+    // Gregorian years for dates relevant to this system start at 2020+.
+    // If year < 2015, treat as Ethiopian and convert; otherwise assume Gregorian.
+    if (y < 2015) {
+      try {
+        const gregDate = ethiopianToGregorianDate({ year: y, month: m, day: d });
+        return gregDate.toISOString().slice(0, 10);
+      } catch {
+        return new Date().toISOString().slice(0, 10);
+      }
+    }
+    // Already Gregorian
+    return cleaned;
   }
 
   private getEthiopianMonthLength(year: number, month: number) {
@@ -185,12 +192,12 @@ class FinanceClerkService {
       }
     }
 
-    // During the Ethiopian summer billing window (Hamle=07, Nehase=08, Pagume=13),
+    // During the Ethiopian summer billing window (Hamle=11, Nehase=12, Pagume=13),
     // ensure all three summer-month records exist so the Registration Fee page is populated.
-    if (ethNow.month === 7 || ethNow.month === 8 || ethNow.month === 13) {
+    if (ethNow.month === 11 || ethNow.month === 12 || ethNow.month === 13) {
       const summerKeys = [
-        `${ethNow.year}-07`,
-        `${ethNow.year}-08`,
+        `${ethNow.year}-11`,
+        `${ethNow.year}-12`,
         `${ethNow.year}-13`
       ];
       for (const sk of summerKeys) {
@@ -209,7 +216,7 @@ class FinanceClerkService {
       if (outstandingTotal <= 0) {
         status = 'cleared';
       } else if (now > dueDate) {
-        status = (mNum === 7 || mNum === 8 || mNum === 13) ? 'in_collections' : 'overdue';
+        status = (mNum === 11 || mNum === 12 || mNum === 13) ? 'in_collections' : 'overdue';
       }
 
       await client.query(
@@ -225,7 +232,7 @@ class FinanceClerkService {
 
   private async getPenaltyDueForMonth(client: any, student: any, month: string, now = new Date()) {
     const [_, monthNum] = month.split('-').map(Number);
-    if (monthNum === 7 || monthNum === 8 || monthNum === 13) return 0; // No penalty for summer months
+    if (monthNum === 11 || monthNum === 12 || monthNum === 13) return 0; // No penalty for summer months
 
     const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
     const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
@@ -282,7 +289,7 @@ class FinanceClerkService {
 
     const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
     const [_, monthNum] = month.split('-').map(Number);
-    const isSummer = monthNum === 7 || monthNum === 8 || monthNum === 13;
+    const isSummer = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
     for (const ft of feeTypes) {
       let due = 0;
@@ -457,12 +464,16 @@ class FinanceClerkService {
 
       const totalCashCollected = itemsToPersist.reduce((s, it) => s + Number(it.cashAmount || 0), 0);
 
-      // Create payment with actual cash collected
+      // Create payment with actual cash collected.
+      // IMPORTANT: data.date arrives from the frontend as an Ethiopian calendar string (e.g. "2018-09-25").
+      // We must convert it to Gregorian before storing so that date-range comparisons in
+      // getPenaltyDueForMonth (p.date <= Gregorian_deadline) work correctly.
+      const paymentDateGregorian = this.ethiopianDateStringToGregorian(data.date || '');
       const paymentRes = await client.query(
         `INSERT INTO payments (student_id, payer_id, branch_id, month, date, total_amount, reference)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [data.studentId, null, data.branchId, data.month, data.date || new Date().toISOString().slice(0, 10), totalCashCollected, data.reference || null]
+        [data.studentId, null, data.branchId, data.month, paymentDateGregorian, totalCashCollected, data.reference || null]
       );
       const payment = paymentRes.rows[0];
 
@@ -516,7 +527,7 @@ class FinanceClerkService {
       let status = 'in_collections';
       const [_, outMonthNum] = data.month.split('-').map(Number);
       if (outstandingTotal <= 0) status = 'cleared';
-      else if (now > dueDate) status = (outMonthNum === 7 || outMonthNum === 8 || outMonthNum === 13) ? 'in_collections' : 'overdue';
+      else if (now > dueDate) status = (outMonthNum === 11 || outMonthNum === 12 || outMonthNum === 13) ? 'in_collections' : 'overdue';
 
       await client.query(
         `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
@@ -527,7 +538,7 @@ class FinanceClerkService {
 
       // ── Summer / carry-over cross-month settlement ────────────────────────────
       // Registration fee is a ONE-TIME annual charge. If paid in any summer month
-      // (Hamle 07, Nehase 08, Pagume 13) OR as a carry-over in a later month,
+      // (Hamle 11, Nehase 12, Pagume 13) OR as a carry-over in a later month,
       // all three summer records are auto-cleared. No 3× charging.
       const paidRegFee = toInsertItems.some(it => it.feeType === 'registration');
       if (paidRegFee && status === 'cleared') {
@@ -561,7 +572,7 @@ class FinanceClerkService {
         let otherStatus = 'in_collections';
         const [__, otherMonthNum] = otherMonth.split('-').map(Number);
         if (otherOutstanding <= 0) otherStatus = 'cleared';
-        else if (now > otherDueDate) otherStatus = (otherMonthNum === 7 || otherMonthNum === 8 || otherMonthNum === 13) ? 'in_collections' : 'overdue';
+        else if (now > otherDueDate) otherStatus = (otherMonthNum === 11 || otherMonthNum === 12 || otherMonthNum === 13) ? 'in_collections' : 'overdue';
         await client.query(
           `UPDATE student_collections SET status = $1, updated_at = NOW()
            WHERE student_id = $2 AND month = $3`,
@@ -647,7 +658,7 @@ class FinanceClerkService {
 
       // Fee types to report
       const [_, monthNum] = targetMonth.split('-').map(Number);
-      const isSummer = monthNum === 7 || monthNum === 8 || monthNum === 13;
+      const isSummer = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
       const penaltyDue = isSummer ? 0 : await this.getPenaltyDueForMonth(client, student, targetMonth);
       const registrationDue = await this.getRegistrationDueForMonth(client, studentId, student.branch_id, targetMonth);
@@ -1608,7 +1619,7 @@ class FinanceClerkService {
       const now = new Date();
       const [, monthNumStr] = month.split('-');
       const monthNum = parseInt(monthNumStr, 10);
-      const isSummerMonth = monthNum === 7 || monthNum === 8 || monthNum === 13;
+      const isSummerMonth = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
       for (const student of studentsRes.rows) {
         const outstandingTotal = await this.computeMonthlyOutstanding(client, student, student.branch_id, month);
@@ -1634,7 +1645,7 @@ class FinanceClerkService {
         if (isSummerMonth && status === 'cleared') {
           const [yearStr] = month.split('-');
           const year = parseInt(yearStr, 10);
-          const otherSummerMonths = ['07', '08', '13']
+          const otherSummerMonths = ['11', '12', '13']
             .map(m => `${year}-${m}`)
             .filter(m => m !== month);
           for (const sm of otherSummerMonths) {
@@ -1647,6 +1658,34 @@ class FinanceClerkService {
               [student.id, sm, smDueDate.toISOString().slice(0, 10)]
             );
           }
+        }
+
+        // ── Re-evaluate ALL previously overdue months for this student ────────
+        // When a student pays their current balance and becomes cleared, any stale
+        // 'overdue' records from prior months should also be re-evaluated so the
+        // student is fully removed from the Overdue tab.
+        const existingOverdueRes = await client.query(
+          `SELECT month FROM student_collections
+           WHERE student_id = $1 AND status = 'overdue' AND month <> $2`,
+          [student.id, month]
+        );
+        for (const row of existingOverdueRes.rows) {
+          const om: string = row.month;
+          const omOutstanding = await this.computeMonthlyOutstanding(client, student, student.branch_id, om);
+          const [, omNumStr] = om.split('-');
+          const omNum = parseInt(omNumStr, 10);
+          const omDueDate = this.getPaymentDueDateForMonth(om, deadlineDay);
+          let omStatus = 'in_collections';
+          if (omOutstanding <= 0) {
+            omStatus = 'cleared';
+          } else if (now > omDueDate) {
+            omStatus = (omNum === 11 || omNum === 12 || omNum === 13) ? 'in_collections' : 'overdue';
+          }
+          await client.query(
+            `UPDATE student_collections SET status = $1, updated_at = NOW()
+             WHERE student_id = $2 AND month = $3`,
+            [omStatus, student.id, om]
+          );
         }
       }
 
