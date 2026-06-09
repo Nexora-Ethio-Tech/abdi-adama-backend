@@ -125,12 +125,13 @@ class FinanceClerkController {
   async getStudentsWithFees(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const { search, feeStatus } = req.query;
+      const { search, feeStatus, grade } = req.query;
 
       const students = await financeClerkService.getStudentsWithFees(
         branchId,
         search as string,
-        feeStatus as string
+        feeStatus as string,
+        grade as string
       );
 
       res.json({

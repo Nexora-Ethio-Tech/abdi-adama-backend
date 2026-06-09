@@ -741,7 +741,7 @@ class FinanceClerkService {
   }
 
   // Get students with fee information
-  async getStudentsWithFees(branchId?: string | null, search?: string, feeStatus?: string) {
+  async getStudentsWithFees(branchId?: string | null, search?: string, feeStatus?: string, grade?: string) {
     const month = new Date().toISOString().slice(0, 7);
     try {
       await this.syncCollectionStatusesForMonth(month, branchId || undefined);
@@ -800,7 +800,13 @@ class FinanceClerkService {
       params.push(feeStatus);
     }
 
-    if (search && search.trim()) {
+    if (grade && grade !== 'all') {
+      paramCount++;
+      query += ` AND s.grade = $${paramCount}`;
+      params.push(grade);
+    }
+
+    if (search && search && search.trim()) {
       paramCount++;
       const searchTerm = `%${search.trim()}%`;
       query += ` AND (u.name::text ILIKE $${paramCount} OR u.digital_id::text ILIKE $${paramCount})`;
@@ -1357,6 +1363,41 @@ class FinanceClerkService {
       [branchId]
     );
 
+    // Registrations (awaiting-payment applications)
+    const registrationsResult = await pool.query(
+      `SELECT COUNT(*) as count
+       FROM pending_applications
+       WHERE branch_id = $1 AND status = 'awaiting-payment'`,
+      [branchId]
+    );
+
+    // Overdue students
+    const overdueResult = await pool.query(
+      `SELECT COUNT(DISTINCT student_id) as count
+       FROM student_collections sc
+       JOIN students s ON s.id = sc.student_id
+       WHERE s.branch_id = $1 AND sc.status = 'overdue'`,
+      [branchId]
+    );
+
+    // Transport assigned students
+    const transportResult = await pool.query(
+      `SELECT COUNT(DISTINCT s.id) as count
+       FROM students s
+       JOIN student_routes sr ON sr.student_id = s.id
+       WHERE s.branch_id = $1 AND s.is_bus_user = true`,
+      [branchId]
+    );
+
+    // Staff in payroll (all branch staff in users table that are active)
+    const staffResult = await pool.query(
+      `SELECT COUNT(*) as count
+       FROM users u
+       WHERE u.branch_id = $1 AND u.status = 'Approved'
+       AND u.role IN ('teacher', 'driver', 'librarian', 'clinic-admin', 'finance-clerk', 'school-admin')`,
+      [branchId]
+    );
+
     // Recent transactions
     const recentResult = await pool.query(
       `SELECT * FROM finance_transactions
@@ -1370,6 +1411,10 @@ class FinanceClerkService {
       todayCollection: parseFloat(todayResult.rows[0].total),
       monthlyRevenue: parseFloat(monthResult.rows[0].total),
       pendingApprovals: parseInt(pendingResult.rows[0].count),
+      registrations: parseInt(registrationsResult.rows[0].count),
+      overdueStudents: parseInt(overdueResult.rows[0].count),
+      transportStudents: parseInt(transportResult.rows[0].count),
+      staffCount: parseInt(staffResult.rows[0].count),
       recentTransactions: recentResult.rows
     };
   }
