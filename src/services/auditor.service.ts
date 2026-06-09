@@ -304,6 +304,21 @@ class AuditorService {
       [branchId]
     );
 
+    // Registration fee stats: count students with a cleared registration-fee month
+    // (summer months 07, 08, 13) and sum the amounts paid
+    const regFeeResult = await pool.query(
+      `SELECT
+         COUNT(DISTINCT p.student_id) AS count,
+         COALESCE(SUM(pi.amount), 0) AS total
+       FROM payments p
+       JOIN payment_items pi ON pi.payment_id = p.id
+       JOIN students s ON s.id = p.student_id
+       WHERE s.branch_id = $1
+         AND pi.fee_type = 'registration'
+         AND SPLIT_PART(p.month, '-', 2)::integer IN (7, 8, 13)`,
+      [branchId]
+    );
+
     const pendingFeeReductions = parseInt(pendingFeeResult.rows[0].count);
     const pendingLoans = parseInt(pendingLoansResult.rows[0].count);
 
@@ -315,6 +330,10 @@ class AuditorService {
       monthlyPayments: {
         count: parseInt(monthlyResult.rows[0].count),
         total: parseFloat(monthlyResult.rows[0].total)
+      },
+      registrationFees: {
+        count: parseInt(regFeeResult.rows[0].count),
+        total: parseFloat(regFeeResult.rows[0].total)
       },
       pendingFeeReductions,
       pendingLoans,
