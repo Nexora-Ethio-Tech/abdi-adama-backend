@@ -37,6 +37,7 @@ export interface User {
   updated_at: Date;
   branch_name?: string;
   profile_image?: string | null;
+  zk_device_id?: string | null;
 }
 
 export interface JWTPayload {

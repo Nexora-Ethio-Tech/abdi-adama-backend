@@ -93,11 +93,18 @@ class UserService {
 
         const digitalId = await generateDigitalId(role, branchId || null);
 
+        let zkDeviceId = null;
+        const staffRoles = ['teacher', 'finance-clerk', 'driver', 'librarian', 'clinic-admin', 'school-admin', 'auditor', 'vice-principal', 'super-admin'];
+        if (staffRoles.includes(role)) {
+          const seqRes = await client.query(`SELECT nextval('zk_device_id_seq')`);
+          zkDeviceId = seqRes.rows[0].nextval;
+        }
+
         const userResult = await client.query<User>(
-          `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active, staff_profile, profile_image)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, staff_profile, profile_image, created_at`,
-          [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true, staffProfile ? JSON.stringify(staffProfile) : null, profileImage || null]
+          `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active, staff_profile, profile_image, zk_device_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, staff_profile, profile_image, zk_device_id, created_at`,
+          [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true, staffProfile ? JSON.stringify(staffProfile) : null, profileImage || null, zkDeviceId]
         );
 
         const user = userResult.rows[0];
@@ -206,7 +213,7 @@ class UserService {
   async getUsers(filters: UserFilters = {}): Promise<User[]> {
     try {
       let query = `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role,
-           u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.profile_image,
+           u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.profile_image, u.zk_device_id,
            b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON b.id = u.branch_id
@@ -248,7 +255,7 @@ class UserService {
     try {
       const result = await pool.query<User>(
         `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role, 
-          u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.updated_at,
+          u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.updated_at, u.zk_device_id,
                 b.name as branch_name
          FROM users u
          LEFT JOIN branches b ON b.id = u.branch_id
