@@ -70,8 +70,26 @@ class AuditorService {
     const feeStatus = normalized === 'rejected' ? 'standard' : 'reduced';
 
     const result = await pool.query(
-      `UPDATE students 
-       SET fee_approval_status = $1,
+      `WITH fee_calc AS (
+         SELECT 
+           COALESCE(
+             NULLIF(s.monthly_fee, 0),
+             (SELECT bgf.monthly_fee FROM branch_grade_fees bgf 
+              WHERE bgf.branch_id = s.branch_id 
+                AND REPLACE(REPLACE(LOWER(bgf.grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+              LIMIT 1),
+             0
+           ) AS effective_fee
+         FROM students s WHERE s.id = $3
+       )
+       UPDATE students 
+       SET 
+           monthly_fee = CASE 
+             WHEN $1 = 'approved' AND fee_approval_status != 'approved' THEN GREATEST(0, (SELECT effective_fee FROM fee_calc) - COALESCE(requested_aid_amount, 0))
+             WHEN $1 != 'approved' AND fee_approval_status = 'approved' THEN (SELECT effective_fee FROM fee_calc) + COALESCE(requested_aid_amount, 0)
+             ELSE monthly_fee 
+           END,
+           fee_approval_status = $1,
            fee_status = $2,
            updated_at = NOW()
        WHERE id = $3 AND branch_id = $4

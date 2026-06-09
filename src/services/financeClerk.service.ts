@@ -122,25 +122,14 @@ class FinanceClerkService {
 
   private getPaymentDueDateForMonth(month: string, deadlineDay: number) {
     const [year, monthIndex] = month.split('-').map(Number);
-
-    // Pagume is Ethiopian month 13 (Sep 6-10/11 Gregorian). There is no Gregorian
-    // month whose index is 13, so new Date(year, 12, 1) would silently overflow to
-    // January of the next Gregorian year, producing a completely wrong due date.
-    // Handle Pagume directly in the Ethiopian calendar instead.
-    if (monthIndex === 13) {
-      const day = Math.min(Math.max(1, deadlineDay), this.getEthiopianMonthLength(year, 13));
-      return ethiopianToGregorianDate({ year, month: 13, day });
-    }
-
-    const firstOfMonth = new Date(year, monthIndex - 1, 1);
-    const ethDate = gregorianToEthiopian(firstOfMonth);
-    const day = Math.min(Math.max(1, deadlineDay), this.getEthiopianMonthLength(ethDate.year, ethDate.month));
-    return ethiopianToGregorianDate({ year: ethDate.year, month: ethDate.month, day });
+    const day = Math.min(Math.max(1, deadlineDay), this.getEthiopianMonthLength(year, monthIndex));
+    return ethiopianToGregorianDate({ year, month: monthIndex, day });
   }
 
   private getStudentEnrollmentMonth(createdAt: Date | string): string {
     const dateObj = typeof createdAt === 'string' ? new Date(createdAt) : createdAt;
-    return dateObj.toISOString().slice(0, 7);
+    const ethDate = gregorianToEthiopian(dateObj);
+    return `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
   }
 
   async syncStudentCollectionsAcrossAllMonths(client: any, studentId: string, branchId: string) {
@@ -182,26 +171,28 @@ class FinanceClerkService {
     );
     const months = existingMonthsRes.rows.map((r: any) => r.month as string);
 
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const ethNow = gregorianToEthiopian(new Date());
+    const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
     if (!months.includes(currentMonth)) {
       months.push(currentMonth);
     }
 
-    const ethDate = gregorianToEthiopian(new Date());
     // During Pagume (Ethiopian month 13), ensure its special month key is included
-    if (ethDate.month === 13) {
-      const pagume = `${ethDate.year}-13`;
+    if (ethNow.month === 13) {
+      const pagume = `${ethNow.year}-13`;
       if (!months.includes(pagume)) {
         months.push(pagume);
       }
     }
 
-    // During the summer billing window (Gregorian July=7, August=8, or Pagume=13),
+    // During the Ethiopian summer billing window (Hamle=07, Nehase=08, Pagume=13),
     // ensure all three summer-month records exist so the Registration Fee page is populated.
-    const gregMonth = new Date().getMonth() + 1; // 1-based
-    const gregYear = new Date().getFullYear();
-    if (gregMonth === 7 || gregMonth === 8 || ethDate.month === 13) {
-      const summerKeys = [`${gregYear}-07`, `${gregYear}-08`, `${ethDate.year}-13`];
+    if (ethNow.month === 7 || ethNow.month === 8 || ethNow.month === 13) {
+      const summerKeys = [
+        `${ethNow.year}-07`,
+        `${ethNow.year}-08`,
+        `${ethNow.year}-13`
+      ];
       for (const sk of summerKeys) {
         if (!months.includes(sk)) months.push(sk);
       }
@@ -613,7 +604,8 @@ class FinanceClerkService {
 
   // Get outstanding amounts per fee type for a student for a given month
   async getStudentOutstanding(studentId: string, month?: string) {
-    const targetMonth = month || new Date().toISOString().slice(0, 7);
+    const ethNow = gregorianToEthiopian(new Date());
+    const targetMonth = month || `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
 
     // Fetch student fees - bus fee is 0 if student doesn't use transport
     const studentRes = await pool.query(
@@ -742,7 +734,8 @@ class FinanceClerkService {
 
   // Get students with fee information
   async getStudentsWithFees(branchId?: string | null, search?: string, feeStatus?: string, grade?: string) {
-    const month = new Date().toISOString().slice(0, 7);
+    const ethNow = gregorianToEthiopian(new Date());
+    const month = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
     try {
       await this.syncCollectionStatusesForMonth(month, branchId || undefined);
     } catch (e) {
@@ -1421,7 +1414,8 @@ class FinanceClerkService {
 
   // Get overdue payments - returns all students with ANY overdue month, with itemised unpaid amounts
   async getOverduePayments(branchId: string) {
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const ethNow = gregorianToEthiopian(new Date());
+    const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
     // Sync the current month so newly overdue students are flagged
     await this.syncCollectionStatusesForMonth(currentMonth, branchId);
 
@@ -1440,7 +1434,7 @@ class FinanceClerkService {
     // 2. Distinct student IDs
     const studentIds: string[] = [...new Set(overdueRecs.rows.map((r: any) => r.student_id as string))];
 
-    // 3. Student details
+    // 3. Student details (include created_at so penalty enrollment-date check works)
     const studentsRes = await pool.query(
       `SELECT s.id, s.grade, s.branch_id, s.is_bus_user, s.parent_phone, s.created_at, s.penalty_fee,
          COALESCE(
@@ -1533,9 +1527,21 @@ class FinanceClerkService {
           }
         }
 
-        // Only include if there is still an actual unpaid balance
+        // Only include if there is still an actual unpaid balance.
+        // This guards against stale 'overdue' records in student_collections that
+        // haven't been re-synced yet after the student paid.
         const total_unpaid = monthly_unpaid + bus_unpaid + penalty_unpaid + registration_unpaid;
-        if (total_unpaid <= 0) continue; // fully paid – skip
+        if (total_unpaid <= 0) {
+          // Auto-clear the stale overdue records in the DB so future queries are fast
+          for (const m of overdue_months) {
+            await client.query(
+              `UPDATE student_collections SET status = 'cleared', updated_at = NOW()
+               WHERE student_id = $1 AND month = $2 AND status = 'overdue'`,
+              [student.id, m]
+            );
+          }
+          continue;
+        }
 
         results.push({
           ...student,
