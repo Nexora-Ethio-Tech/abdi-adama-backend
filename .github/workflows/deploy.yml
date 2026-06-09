@@ -54,4 +54,4 @@ jobs:
 
           # Upload into backend root
           local-dir: ./deploy/
-          server-dir: public_html/backend/
+          server-dir: public_html/
