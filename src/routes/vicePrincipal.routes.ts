@@ -36,10 +36,10 @@ const sendAbsenceNotificationSchema = Joi.object({
 
 // Routes
 router.get('/absence-queue', vicePrincipalController.getAbsenceQueue);
-router.patch('/absence-queue/:id', validate(updateAbsenceSchema), vicePrincipalController.updateAbsenceStatus);
+router.post('/absence-queue/:id', validate(updateAbsenceSchema), vicePrincipalController.updateAbsenceStatus);
 
 router.get('/weekly-plans', vicePrincipalController.getWeeklyPlans);
-router.patch('/weekly-plans/:id/review', validate(reviewPlanSchema), vicePrincipalController.reviewWeeklyPlan);
+router.post('/weekly-plans/:id/review', validate(reviewPlanSchema), vicePrincipalController.reviewWeeklyPlan);
 
 router.get('/grade-locks', vicePrincipalController.getGradeLocks);
 router.post('/grade-locks', validate(gradeLockSchema), vicePrincipalController.toggleGradeLock);

@@ -85,8 +85,8 @@ router.post('/applications',
 );
 router.get('/applications', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getPendingApplications);
 router.get('/applications/:id/transcript', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getApplicationTranscript);
-router.patch('/applications/:id/status', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.updateApplicationStatus);
-router.patch('/system-settings/registration', schoolAdminController.toggleRegistration);
+router.post('/applications/:id/status', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.updateApplicationStatus);
+router.post('/system-settings/registration', schoolAdminController.toggleRegistration);
 
 // User Management
 // ============================================================
@@ -106,15 +106,15 @@ router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
 router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
 router.get('/users', schoolAdminController.getBranchUsers);
 router.get('/users/:id', schoolAdminController.getUserById);
-router.patch('/users/:id', validate(schemas.updateUser), schoolAdminController.updateUser);
-router.patch('/users/:id/status', validate(schemas.updateUserStatus), schoolAdminController.updateUserStatus);
+router.post('/users/:id', validate(schemas.updateUser), schoolAdminController.updateUser);
+router.post('/users/:id/status', validate(schemas.updateUserStatus), schoolAdminController.updateUserStatus);
 router.post('/users/:id/reset-pin', schoolAdminController.resetUserPIN);
 router.delete('/users/:id', schoolAdminController.deleteUser);
 
 // Teacher Promotion & Subjects Management
-router.patch('/users/:id/promote', schoolAdminController.promoteTeacher);
+router.post('/users/:id/promote', schoolAdminController.promoteTeacher);
 router.post('/subjects', schoolAdminController.createSubject);
-router.patch('/subjects/:id', schoolAdminController.updateSubject);
+router.post('/subjects/:id', schoolAdminController.updateSubject);
 router.delete('/subjects/:id', schoolAdminController.deleteSubject);
 
 // Student-Class Management
@@ -123,14 +123,14 @@ router.delete('/students/:studentId/remove-class', schoolAdminController.removeS
 
 // Class Management
 router.post('/classes', validate(createClassSchema), schoolAdminController.createClass);
-router.patch('/classes/:id', schoolAdminController.updateClass);
+router.post('/classes/:id', schoolAdminController.updateClass);
 router.delete('/classes/:id', schoolAdminController.deleteClass);
 // Assign single teacher (adds assignment without replacing existing)
 router.post('/classes/:id/teachers', validate(assignTeacherSchema), schoolAdminController.assignTeacherToClass);
 // Unassign teacher from class
 router.delete('/classes/:id/teachers/:teacherId', schoolAdminController.unassignTeacherFromClass);
 // Backwards-compatible route (old) kept for now
-router.patch('/classes/:id/assign-teacher', validate(assignTeacherSchema), schoolAdminController.assignTeacherToClass);
+router.post('/classes/:id/assign-teacher', validate(assignTeacherSchema), schoolAdminController.assignTeacherToClass);
 
 // Course Management
 router.post('/courses', validate(createCourseSchema), schoolAdminController.createCourse);
@@ -165,7 +165,7 @@ router.get('/dashboard/at-risk-students', schoolAdminController.getAtRiskStudent
 router.get('/dashboard/upcoming-events', schoolAdminController.getUpcomingEvents);
 router.get('/events', schoolAdminController.getEvents);
 router.post('/events', validate(createEventSchema), schoolAdminController.createEvent);
-router.patch('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
+router.post('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
 router.delete('/events/:id', schoolAdminController.deleteEvent);
 
 export default router;

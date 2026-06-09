@@ -22,6 +22,6 @@ router.post('/', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), loan
 router.post('/:id/confirm', roleGuard([UserRole.AUDITOR]), loanController.approveLoan);
 router.post('/:id/reject', roleGuard([UserRole.AUDITOR]), loanController.rejectLoan);
 router.post('/:id/pay', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), loanController.payLoan);
-router.patch('/:id/cancel', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), loanController.cancelLoan);
+router.post('/:id/cancel', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN]), loanController.cancelLoan);
 
 export default router;

@@ -40,7 +40,7 @@ FIRST_APP_ID=$(api_call "GET" "/api/school-admin/applications?status=pending" "$
 
 if [ ! -z "$FIRST_APP_ID" ] && [ "$FIRST_APP_ID" != "null" ]; then
   echo "Updating app $FIRST_APP_ID to awaiting-payment..."
-  api_call "PATCH" "/api/school-admin/applications/$FIRST_APP_ID/status" "$ADMIN_TOKEN" '{"status":"awaiting-payment"}' | jq '.'
+  api_call "POST" "/api/school-admin/applications/$FIRST_APP_ID/status" "$ADMIN_TOKEN" '{"status":"awaiting-payment"}' | jq '.'
 else
   echo "No pending applications found. Creating test data first..."
 fi
@@ -62,7 +62,7 @@ echo ""
 echo "Step 5: Testing payment approval..."
 if [ ! -z "$FIRST_APP_ID" ] && [ "$FIRST_APP_ID" != "null" ]; then
   echo "Approving payment for $FIRST_APP_ID..."
-  api_call "PATCH" "/api/finance-clerk/applications/$FIRST_APP_ID/approve" "$CLERK_TOKEN" '{"amount": 5000, "reference": "TEST-001"}' | jq '.'
+  api_call "POST" "/api/finance-clerk/applications/$FIRST_APP_ID/approve" "$CLERK_TOKEN" '{"amount": 5000, "reference": "TEST-001"}' | jq '.'
 fi
 echo ""
 
