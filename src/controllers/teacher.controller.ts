@@ -268,6 +268,23 @@ class TeacherController {
     }
   }
 
+  // Get communication logs for a specific week
+  async getCommunicationLogsByWeek(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { weekEnding } = req.params;
+      const teacherId = req.user!.id;
+
+      const logs = await teacherService.getCommunicationLogsByWeek(teacherId, weekEnding);
+
+      res.json({
+        success: true,
+        data: logs
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Get student's all grades
   async getStudentGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

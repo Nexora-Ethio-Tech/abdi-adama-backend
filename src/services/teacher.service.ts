@@ -970,6 +970,27 @@ class TeacherService {
     return result.rows;
   }
 
+  // Get communication logs for a teacher by week ending
+  async getCommunicationLogsByWeek(teacherId: string, weekEnding: string) {
+    const teacherResult = await pool.query(
+      'SELECT id FROM teachers WHERE user_id = $1',
+      [teacherId]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      return [];
+    }
+
+    const result = await pool.query(
+      `SELECT cl.*
+       FROM communication_logs cl
+       WHERE cl.teacher_id = $1 AND cl.week_ending = $2`,
+      [teacherResult.rows[0].id, weekEnding]
+    );
+
+    return result.rows;
+  }
+
   // Get student's all grades (teacher view)
   async getStudentGrades(studentId: string, teacherId: string) {
     const client = await pool.connect();

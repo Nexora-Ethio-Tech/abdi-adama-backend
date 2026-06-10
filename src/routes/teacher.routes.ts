@@ -124,6 +124,7 @@ router.get('/dept-plans', teacherController.getDeptPlans);
 router.post('/dept-plans/:id/review', validate(reviewDeptPlanSchema), teacherController.reviewDeptPlan);
 
 router.post('/communication-logs', validate(communicationLogSchema), teacherController.submitCommunicationLog);
+router.get('/communication-logs/week/:weekEnding', teacherController.getCommunicationLogsByWeek);
 router.get('/communication-logs/:studentId', teacherController.getCommunicationLogs);
 router.get('/students/:studentId/grades', teacherController.getStudentGrades);
 router.get('/schedule', teacherController.getSchedule);
