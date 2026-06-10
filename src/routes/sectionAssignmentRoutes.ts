@@ -20,12 +20,12 @@ router.get(
 );
 
 /**
- * PATCH /api/students/:id/section
+ * POST /api/students/:id/section
  * Assign a single student to a section
  * Body: { sectionId: UUID, reason?: string }
  * Accessible by: School Admin, Super Admin
  */
-router.patch(
+router.post(
   '/:id/section',
   authenticateToken,
   authorizeRoles('school-admin', 'super-admin'),

@@ -1,0 +1,57 @@
+name: Deploy to cPanel
+
+on:
+  push:
+    branches:
+      - experimental
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Project
+        run: npm run build
+
+      # -----------------------------
+      # Prepare deployment structure
+      # -----------------------------
+      - name: Prepare Deploy Folder
+        run: |
+          rm -rf deploy
+          mkdir -p deploy
+
+          # 1. backend build output
+          cp -r dist deploy/dist
+
+          # 2. package.json must be in backend root
+          cp package.json deploy/package.json
+
+          # 3. IMPORTANT: restart trigger for Passenger
+          mkdir -p deploy/tmp
+          echo "restart $(date)" > deploy/tmp/restart.txt
+
+      # -----------------------------
+      # Upload everything
+      # -----------------------------
+      - name: Upload to cPanel via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+
+          # Upload into backend root
+          local-dir: ./deploy/
+          server-dir: /

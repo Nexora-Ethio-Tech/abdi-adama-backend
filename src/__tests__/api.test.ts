@@ -277,7 +277,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       if (!schoolAdminToken || !teacherId || !classId) return;
 
       const res = await request(app)
-        .patch(`/api/school-admin/classes/${classId}/assign-teacher`)
+        .post(`/api/school-admin/classes/${classId}/assign-teacher`)
         .set('Authorization', `Bearer ${schoolAdminToken}`)
         .send({ teacherId });
 

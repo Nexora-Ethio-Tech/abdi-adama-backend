@@ -45,7 +45,7 @@ export const getAvailableSections = async (
 };
 
 /**
- * PATCH /api/students/:id/section
+ * POST /api/students/:id/section
  * Assign a single student to a section
  * Body: { sectionId: UUID, reason?: string }
  */

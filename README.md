@@ -202,31 +202,31 @@ Data isolation is built directly into the database queries rather than relying s
 * `POST /api/super-admin/create-auditor` - Register a financial Auditor.
 * `GET /api/super-admin/users` - Paginated global user list (with branch filters).
 * `GET /api/super-admin/users/:id` - Detailed user metadata.
-* `PATCH /api/super-admin/users/:id/status` - Modify state (`Approved`, `Revoked`, `Pending`).
+* `POST /api/super-admin/users/:id/status` - Modify state (`Approved`, `Revoked`, `Pending`).
 * `DELETE /api/super-admin/users/:id` - Complete user deletion with cascade cleaning.
 * `GET /api/super-admin/branches` - List all physical branch configurations.
 * `POST /api/super-admin/branches` - Register a new physical school branch.
-* `PATCH /api/super-admin/branches/:id` - Update branch metadata.
+* `POST /api/super-admin/branches/:id` - Update branch metadata.
 * `DELETE /api/super-admin/branches/:id` - Remove a branch.
 * `GET /api/super-admin/reports/system` - Global system audit counts.
 * `GET /api/super-admin/reports/branch/:branchId` - Isolated branch-level performance.
 * `GET /api/super-admin/audit-logs` - System-wide immutable audit trail.
 * `GET /api/super-admin/classes` - View all classes across branches.
 * `POST /api/super-admin/classes` - Create a new course section globally.
-* `PATCH /api/super-admin/classes/:id` - Edit class name/level.
+* `POST /api/super-admin/classes/:id` - Edit class name/level.
 * `DELETE /api/super-admin/classes/:id` - Purge class configuration.
 
 ### 🏫 School Admin (28 Endpoints)
 * `POST /api/school-admin/register-user` - Register Teacher, Student, Parent, Clerk, Librarian, Clinic Admin, or Driver.
 * `GET /api/school-admin/users` - View users within the admin's isolated branch.
 * `GET /api/school-admin/users/:id` - Access specific branch user details.
-* `PATCH /api/school-admin/users/:id` - Edit user names, emails, and attributes.
-* `PATCH /api/school-admin/users/:id/status` - Grant/revoke branch user access.
+* `POST /api/school-admin/users/:id` - Edit user names, emails, and attributes.
+* `POST /api/school-admin/users/:id/status` - Grant/revoke branch user access.
 * `DELETE /api/school-admin/users/:id` - Remove branch user.
 * `POST /api/school-admin/users/:id/reset-pin` - Reset operational user to a new 4-digit PIN.
 * `GET /api/school-admin/classes` - List classes assigned to this branch.
 * `POST /api/school-admin/classes` - Configure new class inside the branch.
-* `PATCH /api/school-admin/classes/:id` - Modify branch class details.
+* `POST /api/school-admin/classes/:id` - Modify branch class details.
 * `DELETE /api/school-admin/classes/:id` - Delete class (updates capacities).
 * `POST /api/school-admin/classes/:id/assign-teacher` - Assign teacher to a class with a specific subject.
 * `DELETE /api/school-admin/classes/:classId/teachers/:teacherId` - Unassign teacher.
@@ -259,12 +259,12 @@ Data isolation is built directly into the database queries rather than relying s
 * `GET /api/teacher/classes/:id/students` - Roster of students in an assigned course.
 * `POST /api/teacher/attendance/mark` - Submit daily attendance codes.
 * `GET /api/teacher/attendance/history` - Historical class logs.
-* `PATCH /api/teacher/attendance/:id` - Modify attendance (locked to same-day edits).
+* `POST /api/teacher/attendance/:id` - Modify attendance (locked to same-day edits).
 * `GET /api/teacher/students/:id` - Detailed view of student academic stats.
 * `GET /api/teacher/students/:id/attendance` - Single student's attendance ratios.
 * `POST /api/teacher/grades/submit` - Record student assessment marks.
 * `GET /api/teacher/grades/class/:classId` - View grades assigned to a specific course.
-* `PATCH /api/teacher/grades/:id` - Modify student marks (locked to current term).
+* `POST /api/teacher/grades/:id` - Modify student marks (locked to current term).
 * `GET /api/teacher/reports/my-classes` - Aggregated averages for teacher's courses.
 * `GET /api/teacher/reports/student/:studentId` - Progress scorecard for a student.
 * `GET /api/teacher/profile` - View teacher's academic assignment stats.
@@ -272,7 +272,7 @@ Data isolation is built directly into the database queries rather than relying s
 ### 💰 Finance Clerk (7 Endpoints)
 * `GET /api/finance/students` - Directory of students showing outstanding balances and statuses.
 * `GET /api/finance/students/:id` - Invoice breakdown (tuition, bus fees, registrations).
-* `PATCH /api/finance/students/:id/fees` - Adjust base student tuition fees.
+* `POST /api/finance/students/:id/fees` - Adjust base student tuition fees.
 * `POST /api/finance/transactions` - Log tuition/bus fee payments.
 * `GET /api/finance/transactions` - List recent branch transactions.
 * `GET /api/finance/reports/summary` - Income summaries, categorized by payment methods.
@@ -294,7 +294,7 @@ Data isolation is built directly into the database queries rather than relying s
 * `POST /api/clinic/medicine/deduct` - Deduct pharmacy items (e.g., when administering medicine).
 * `GET /api/clinic/chat` - Retrieve WhatsApp-style inbox or active conversation messages.
 * `POST /api/clinic/chat` - Direct chat message to a parent.
-* `PATCH /api/clinic/chat/read` - Mark parent conversation as read (clears unread badge count).
+* `POST /api/clinic/chat/read` - Mark parent conversation as read (clears unread badge count).
 
 ### 🚌 Driver (4 Endpoints) - *New Role*
 * `GET /api/driver/manifest` - Fetch bus manifest showing students, grades, and locations.
@@ -337,7 +337,7 @@ The backend executes several complex workflows that automate operational logic a
 * **Auto-Recipient Resolution**: When a Clinic Admin sends a message with only a `child_id`, the system automatically resolves the parent:
   1. Searches for the last parent who messaged the clinic about that child.
   2. Falls back to the first parent linked in `silo_family_links`.
-* **Badge Clearing**: Opening a conversation calls `PATCH /api/clinic/chat/read`, immediately setting `is_read = TRUE` for all messages from that sender.
+* **Badge Clearing**: Opening a conversation calls `POST /api/clinic/chat/read`, immediately setting `is_read = TRUE` for all messages from that sender.
 
 ### 2. Transport Logistics notices & SSE Live Broadcasts
 * **Instant Pushes**: When a Driver publishes an update (`POST /api/driver/notice`), the system broadcasts the message in real-time via Server-Sent Events (SSE).

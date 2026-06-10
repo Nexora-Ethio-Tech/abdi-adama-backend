@@ -14,7 +14,7 @@ router.use(authenticate);
 router.get('/my-payslip', payrollController.getMyPayslip);
 router.get('/my-payslips', payrollController.getMyPayslips);
 router.get('/notifications', employeeProfileController.getMyNotifications);
-router.patch('/notifications/:id/read', employeeProfileController.markNotificationRead);
+router.post('/notifications/:id/read', employeeProfileController.markNotificationRead);
 
 // Liability and report routes (super-admin and auditor)
 router.get('/liability', roleGuard([UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.getSchoolLiability);
@@ -27,6 +27,6 @@ router.post('/generate', roleGuard([UserRole.AUDITOR]), payrollController.genera
 router.get('/runs', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.getPayrollRuns);
 router.get('/runs/:id', roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]), payrollController.getPayrollRun);
 router.delete('/runs/:id', roleGuard([UserRole.AUDITOR]), payrollController.deletePayrollRun);
-router.patch('/runs/:id/finalize', roleGuard([UserRole.AUDITOR]), payrollController.finalizePayroll);
+router.post('/runs/:id/finalize', roleGuard([UserRole.AUDITOR]), payrollController.finalizePayroll);
 
 export default router;

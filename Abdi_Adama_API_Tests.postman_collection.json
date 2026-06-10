@@ -360,7 +360,7 @@
         {
           "name": "Approve User",
           "request": {
-            "method": "PATCH",
+            "method": "POST",
             "header": [
               {"key": "Authorization", "value": "Bearer {{superAdminToken}}"},
               {"key": "Content-Type", "value": "application/json"}
@@ -736,7 +736,7 @@
         {
           "name": "Approve Fee Reduction",
           "request": {
-            "method": "PATCH",
+            "method": "POST",
             "header": [
               {"key": "Authorization", "value": "Bearer {{auditorToken}}"},
               {"key": "Content-Type", "value": "application/json"}

@@ -226,7 +226,7 @@
         {
           "name": "Update Event",
           "request": {
-            "method": "PATCH",
+            "method": "POST",
             "header": [
               {
                 "key": "Authorization",
@@ -259,7 +259,7 @@
             {
               "name": "Success Response",
               "originalRequest": {
-                "method": "PATCH",
+                "method": "POST",
                 "header": [
                   {
                     "key": "Authorization",

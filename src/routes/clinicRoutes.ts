@@ -30,6 +30,6 @@ router.post('/chat',                  authorizeRoles('ClinicAdmin', 'Parent'), s
 
 // Mark messages as read (per-conversation) - ClinicAdmin and Parent
 // Called when either party opens the conversation to clear the unread badge
-router.patch('/chat/read',            authorizeRoles('ClinicAdmin', 'Parent'), markMessagesRead);
+router.post('/chat/read',            authorizeRoles('ClinicAdmin', 'Parent'), markMessagesRead);
 
 export default router;

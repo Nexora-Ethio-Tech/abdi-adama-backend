@@ -96,15 +96,12 @@ router.get('/profit-targets', roleGuard([UserRole.SUPER_ADMIN, UserRole.SCHOOL_A
 router.use(roleGuard([UserRole.SUPER_ADMIN]));
 
 // User Management
-// Ensure auditors (global role) don't fail UUID validation for branchId by
-// normalizing non-string / missing values to null before Joi validation.
 const normalizeBranchForAuditor = (req: Request, _res: Response, next: NextFunction) => {
   try {
     const v = req.body?.branchId;
     if (v === undefined || v === null || v === '') {
       req.body.branchId = null;
     } else if (typeof v !== 'string') {
-      // If the client sent a non-string (number/object/boolean), normalize to null
       req.body.branchId = null;
     }
   } catch (err) {
@@ -119,8 +116,8 @@ router.post('/create-auditor', normalizeBranchForAuditor, validate(schemas.creat
 router.post('/users', validate(createUserSchema), superAdminController.createUser);
 router.get('/users', superAdminController.getAllUsers);
 router.get('/users/:id', superAdminController.getUserById);
-router.patch('/users/:id', validate(schemas.updateUser), superAdminController.updateUser);
-router.patch('/users/:id/status', validate(schemas.updateUserStatus), superAdminController.updateUserStatus);
+router.post('/users/:id', validate(schemas.updateUser), superAdminController.updateUser);
+router.post('/users/:id/status', validate(schemas.updateUserStatus), superAdminController.updateUserStatus);
 router.post('/users/:id/reset-pin', superAdminController.resetUserPIN);
 router.delete('/users/:id', superAdminController.deleteUser);
 
@@ -128,7 +125,7 @@ router.delete('/users/:id', superAdminController.deleteUser);
 router.post('/branches', validate(branchSchema), superAdminController.createBranch);
 router.get('/branches', superAdminController.getBranches);
 router.get('/branches/:id', superAdminController.getBranchById);
-router.patch('/branches/:id', superAdminController.updateBranch);
+router.post('/branches/:id', superAdminController.updateBranch);
 router.delete('/branches/:id', superAdminController.deleteBranch);
 
 // System Reports
@@ -139,16 +136,16 @@ router.get('/analytics', superAdminController.getAnalytics);
 // Academic Year Management
 router.post('/academic-years', validate(academicYearSchema), superAdminController.createGlobalAcademicYear);
 router.get('/academic-years', superAdminController.getGlobalAcademicYears);
-router.patch('/academic-years/:id/activate', superAdminController.activateGlobalAcademicYear);
+router.post('/academic-years/:id/activate', superAdminController.activateGlobalAcademicYear);
 
 // Class Capacity
-router.patch('/classes/:id/capacity', validate(capacitySchema), superAdminController.setClassCapacity);
+router.post('/classes/:id/capacity', validate(capacitySchema), superAdminController.setClassCapacity);
 
 // Dashboard
 router.get('/dashboard', superAdminController.getDashboard);
 
 // Finance Settings Management
-router.patch('/finance-settings/:key', superAdminController.updateFinanceSetting);
+router.post('/finance-settings/:key', superAdminController.updateFinanceSetting);
 
 // Branch-based finance endpoints
 router.post('/branch-grade-fees', validate(branchGradeFeeSchema), superAdminController.upsertBranchGradeFee);
@@ -168,10 +165,129 @@ router.post('/smtp-settings/test', validate(smtpTestSchema), superAdminControlle
 // System settings (branding, contact, global flags)
 router.get('/system-settings', superAdminController.getSystemSettings);
 router.put('/system-settings', validate(systemSettingsSchema), superAdminController.updateSystemSettings);
-// Events Calendar (Super Admin manages global + all branch events)
+
+// Events Calendar
 router.get('/events', superAdminController.getEvents);
 router.post('/events', superAdminController.createEvent);
-router.patch('/events/:id', superAdminController.updateEvent);
+router.post('/events/:id', superAdminController.updateEvent);
 router.delete('/events/:id', superAdminController.deleteEvent);
+
+
+/* ==========================================
+   SECURE CHATBOT KNOWLEDGE BASE PROXY ROUTES
+   ========================================== */
+
+const HF_BASE = "https://kaleabbelayhun-abdiragbackend.hf.space";
+
+// Helper to construct headers containing backend-only credentials
+const getProxyHeaders = (requiresAdmin = false) => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${process.env.HF_TOKEN}`
+  };
+  if (requiresAdmin) {
+    headers['X-Admin-Token'] = process.env.SUPER_ADMIN_TOKEN || "";
+  }
+  return headers;
+};
+
+// GET /api/super-admin/chatbot/docs -> Proxies to GET /getdocs
+router.get('/chatbot/docs', async (req: Request, res: Response) => {
+  try {
+    const response = await fetch(`${HF_BASE}/getdocs`, {
+      method: 'GET',
+      headers: getProxyHeaders(false)
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).send(await response.text());
+    }
+    const data = await response.json();
+    return res.json(data);
+  } catch (err) {
+    console.error("Chatbot docs fetch error:", err);
+    return res.status(500).json({ error: "Failed to fetch document structure from assistant Space." });
+  }
+});
+
+// POST /api/super-admin/chatbot/docs -> Proxies to POST /postdocs
+router.post('/chatbot/docs', async (req: Request, res: Response) => {
+  try {
+    const { text } = req.body;
+    const response = await fetch(`${HF_BASE}/postdocs`, {
+      method: 'POST',
+      headers: getProxyHeaders(true),
+      body: JSON.stringify({ text })
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).send(await response.text());
+    }
+    return res.status(201).json({ success: true });
+  } catch (err) {
+    console.error("Chatbot docs create error:", err);
+    return res.status(500).json({ error: "Failed to add document to assistant Space." });
+  }
+});
+
+// PUT /api/super-admin/chatbot/docs/:id -> Proxies to PUT /docs/:id
+router.put('/chatbot/docs/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { text } = req.body;
+
+    const response = await fetch(`${HF_BASE}/docs/${id}`, {
+      method: 'PUT',
+      headers: getProxyHeaders(true),
+      body: JSON.stringify({ text })
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).send(await response.text());
+    }
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Chatbot docs edit error:", err);
+    return res.status(500).json({ error: "Failed to update document in assistant Space." });
+  }
+});
+
+// DELETE /api/super-admin/chatbot/docs/:id -> Proxies to DELETE /docs/:id
+router.delete('/chatbot/docs/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const response = await fetch(`${HF_BASE}/docs/${id}`, {
+      method: 'DELETE',
+      headers: getProxyHeaders(true)
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).send(await response.text());
+    }
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Chatbot docs delete error:", err);
+    return res.status(500).json({ error: "Failed to delete document from assistant Space." });
+  }
+});
+
+// DELETE /api/super-admin/chatbot/docs -> Proxies to DELETE /docs (Clear All)
+router.delete('/chatbot/docs', async (req: Request, res: Response) => {
+  try {
+    const response = await fetch(`${HF_BASE}/docs`, {
+      method: 'DELETE',
+      headers: getProxyHeaders(true)
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).send(await response.text());
+    }
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Chatbot docs clear error:", err);
+    return res.status(500).json({ error: "Failed to clear documents from assistant Space." });
+  }
+});
 
 export default router;

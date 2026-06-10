@@ -64,7 +64,7 @@ router.post('/payments', clerkOnly, validate(recordPaymentSchema), financeClerkC
 router.get('/payments/:studentId', clerkOnly, financeClerkController.getPaymentHistory);
 router.get('/students/:id/outstanding', clerkOnly, financeClerkController.getStudentOutstanding);
 router.get('/students/fees', clerkOnly, financeClerkController.getStudentsWithFees);
-router.patch('/students/:id/fee-status', clerkOnly, validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
+router.post('/students/:id/fee-status', clerkOnly, validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
 router.get('/transport/students', clerkOnly, financeClerkController.getTransportStudents);
 router.get('/transport/routes', clerkOnly, financeClerkController.getTransportRoutes);
 router.get('/transport/drivers', clerkOnly, financeClerkController.getTransportDrivers);
@@ -75,14 +75,14 @@ router.post('/transport/stop', clerkOnly, validate(stopTransportSchema), finance
 router.get('/dashboard', clerkOnly, financeClerkController.getDashboard);
 router.get('/assets', readOnlyInventory, assetController.getAssets);
 router.post('/assets', clerkOnly, assetController.createAsset);
-router.patch('/assets/:id', clerkOnly, assetController.updateAsset);
+router.post('/assets/:id', clerkOnly, assetController.updateAsset);
 router.delete('/assets/:id', clerkOnly, assetController.deleteAsset);
 router.get('/overdue-payments', clerkOnly, financeClerkController.getOverduePayments);
 router.get('/reports/daily', clerkOnly, financeClerkController.getDailyReport);
 router.get('/applications', clerkOnly, financeClerkController.getPendingApplications);
-router.patch('/applications/:id/approve', clerkOnly, validate(approveApplicationSchema), financeClerkController.approveApplication);
+router.post('/applications/:id/approve', clerkOnly, validate(approveApplicationSchema), financeClerkController.approveApplication);
 // Reject / Return application to school admin with reason
-router.patch('/applications/:id/remove', clerkOnly, financeClerkController.rejectApplication);
+router.post('/applications/:id/remove', clerkOnly, financeClerkController.rejectApplication);
 // Legacy: allow delete route (will now mark as returned instead of deleting)
 router.delete('/applications/:id', clerkOnly, financeClerkController.rejectApplication);
 

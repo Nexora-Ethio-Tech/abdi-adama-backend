@@ -89,9 +89,9 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
 
 /**
  * Update exam (draft only)
- * PATCH /api/exams/:id
+ * POST /api/exams/:id
  */
-router.patch('/:id', roleGuard([UserRole.TEACHER, UserRole.SCHOOL_ADMIN]), async (req: Request, res: Response) => {
+router.post('/:id', roleGuard([UserRole.TEACHER, UserRole.SCHOOL_ADMIN]), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const userId = (req as any).user?.id;

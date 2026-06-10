@@ -102,7 +102,7 @@ router.post('/grades', validate(enterGradeSchema), teacherController.enterGrades
 router.post('/grades/bulk', validate(bulkEnterGradesSchema), teacherController.bulkEnterGrades);
 router.get('/grades/class/:classId', teacherController.getGrades); // alias: getClassGrades in frontend
 router.get('/grades/:courseId', teacherController.getGrades);
-router.patch('/grades/:id', validate(updateGradeSchema), teacherController.updateGrade);
+router.post('/grades/:id', validate(updateGradeSchema), teacherController.updateGrade);
 router.delete('/grades/:id', teacherController.deleteGrade);
 router.get('/classes', teacherController.getAssignedClasses);
 router.get('/students/:classId', teacherController.getStudentRoster);
@@ -111,7 +111,7 @@ router.get('/students/:classId', teacherController.getStudentRoster);
 router.get('/department-heads', teacherController.getDepartmentHeads);
 router.post('/weekly-plans', validate(weeklyPlanSchema), teacherController.submitWeeklyPlan);
 router.get('/weekly-plans', teacherController.getMyPlans);
-router.patch('/weekly-plans/:id', validate(weeklyPlanSchema), teacherController.updatePlan);
+router.post('/weekly-plans/:id', validate(weeklyPlanSchema), teacherController.updatePlan);
 
 const reviewDeptPlanSchema = Joi.object({
   status: Joi.string().valid('Approved', 'Revision Required').required(),
@@ -121,7 +121,7 @@ const reviewDeptPlanSchema = Joi.object({
 
 // Department tasks review (for department heads)
 router.get('/dept-plans', teacherController.getDeptPlans);
-router.patch('/dept-plans/:id/review', validate(reviewDeptPlanSchema), teacherController.reviewDeptPlan);
+router.post('/dept-plans/:id/review', validate(reviewDeptPlanSchema), teacherController.reviewDeptPlan);
 
 router.post('/communication-logs', validate(communicationLogSchema), teacherController.submitCommunicationLog);
 router.get('/communication-logs/:studentId', teacherController.getCommunicationLogs);
@@ -133,7 +133,7 @@ router.get('/dashboard', teacherController.getDashboard);
 router.post('/exams', examController.createExam);
 router.get('/exams', examController.getTeacherExams);
 router.get('/exams/:id', examController.getTeacherExamById);
-router.patch('/exams/:id', examController.updateTeacherExam);
+router.post('/exams/:id', examController.updateTeacherExam);
 router.post('/exams/:id/publish', examController.publishTeacherExam);
 router.delete('/exams/:id', examController.deleteTeacherExam);
 

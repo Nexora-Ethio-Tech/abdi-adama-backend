@@ -479,7 +479,7 @@ export const sendChatMessage = async (req: Request, res: Response) => {
 };
 
 /**
- * PATCH /api/clinic/chat/read
+ * POST /api/clinic/chat/read
  * Marks all parent messages for a child as read.
  */
 export const markMessagesRead = async (req: Request, res: Response) => {
