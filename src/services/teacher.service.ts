@@ -704,7 +704,7 @@ class TeacherService {
        FROM public.teachers t
        JOIN public.users u ON t.user_id = u.id
        WHERE u.branch_id = $1
-         AND (t.is_dean = true OR u.staff_profile->'promotion'->>'promotionType' = 'head-of-department')
+         AND (t.is_dean = true OR u.staff_profile->'promotion'->'roles' ? 'headOfDepartment')
          AND (
            u.staff_profile->'promotion'->'subjects' @> to_jsonb(LOWER($2::text))
            OR u.staff_profile->'promotion'->'headOfDepartment'->'subjects' @> to_jsonb(LOWER($2::text))
@@ -731,7 +731,7 @@ class TeacherService {
        FROM public.teachers t
        JOIN public.users u ON t.user_id = u.id
        WHERE u.branch_id = $1
-         AND (t.is_dean = true OR u.staff_profile->'promotion'->>'promotionType' = 'head-of-department')
+         AND (t.is_dean = true OR u.staff_profile->'promotion'->'roles' ? 'headOfDepartment')
          AND (
            u.staff_profile->'promotion'->'subjects' @> to_jsonb(LOWER($2::text))
            OR u.staff_profile->'promotion'->'headOfDepartment'->'subjects' @> to_jsonb(LOWER($2::text))
@@ -1182,7 +1182,11 @@ class TeacherService {
   async getDashboard(teacherId: string) {
     // Get teacher record
     const teacherResult = await pool.query(
-      'SELECT * FROM teachers WHERE user_id = $1',
+      `SELECT t.*, 
+              (t.is_dean = true OR u.staff_profile->'promotion'->'roles' ? 'headOfDepartment') as is_hod 
+       FROM teachers t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.user_id = $1`,
       [teacherId]
     );
 
@@ -1454,15 +1458,15 @@ class TeacherService {
     return result.rows;
   }
 
-  // Get department heads (teachers where is_dean = true)
+  // Get department heads (teachers where is_dean = true or 'headOfDepartment' in promotion roles)
   async getDepartmentHeads(branchId: string) {
     const result = await pool.query(
       `SELECT t.id as teacher_id, u.name, t.department,
-              u.staff_profile->'promotion'->'subjects' AS subjects,
-              u.staff_profile->'promotion'->'grades' AS grades
+              COALESCE(u.staff_profile->'promotion'->'headOfDepartment'->'subjects', u.staff_profile->'promotion'->'subjects') AS subjects,
+              COALESCE(u.staff_profile->'promotion'->'headOfDepartment'->'grades', u.staff_profile->'promotion'->'grades') AS grades
        FROM teachers t
        JOIN users u ON t.user_id = u.id
-       WHERE t.branch_id = $1 AND t.is_dean = true AND u.is_active = true
+       WHERE t.branch_id = $1 AND (t.is_dean = true OR u.staff_profile->'promotion'->'roles' ? 'headOfDepartment') AND u.is_active = true
        ORDER BY u.name`,
       [branchId]
     );
@@ -1471,15 +1475,16 @@ class TeacherService {
 
   // Get weekly plans submitted to this teacher (as department head)
   // STRICT: only returns plans whose subject AND grade match the HoD's
-  // staff_profile.promotion.subjects[] AND .grades[]
+  // staff_profile.promotion.headOfDepartment.subjects[] AND .grades[]
   async getDeptPlans(teacherUserId: string, status?: string) {
     const teacherResult = await pool.query(
       `SELECT
          t.id,
          t.is_dean,
+         (t.is_dean = true OR u.staff_profile->'promotion'->'roles' ? 'headOfDepartment') as is_hod,
          u.branch_id,
-         u.staff_profile->'promotion'->'subjects' AS hod_subjects,
-         u.staff_profile->'promotion'->'grades'   AS hod_grades
+         COALESCE(u.staff_profile->'promotion'->'headOfDepartment'->'subjects', u.staff_profile->'promotion'->'subjects') AS hod_subjects,
+         COALESCE(u.staff_profile->'promotion'->'headOfDepartment'->'grades', u.staff_profile->'promotion'->'grades') AS hod_grades
        FROM public.teachers t
        JOIN public.users u ON t.user_id = u.id
        WHERE t.user_id = $1`,
@@ -1490,11 +1495,11 @@ class TeacherService {
       throw new Error('Teacher not found');
     }
 
-    const { id: teacherId, is_dean: isDean, branch_id: branchId,
+    const { id: teacherId, is_hod: isHod, branch_id: branchId,
             hod_subjects, hod_grades } = teacherResult.rows[0];
 
     // If not a department head, return empty array immediately
-    if (!isDean) {
+    if (!isHod) {
       return [];
     }
 
