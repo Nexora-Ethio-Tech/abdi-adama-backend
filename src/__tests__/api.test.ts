@@ -461,7 +461,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
       expect(res.status).toBe(400);
     });
 
-    it('should reject invalid role', async () => {
+    it('should reject inva lid role', async () => {
       if (!schoolAdminToken) return;
       const res = await request(app)
         .post('/api/school-admin/register-user')
@@ -471,7 +471,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
           email: 'test@test.com',
           role: 'super-admin'
         });
-
       expect(res.status).toBe(400);
     });
   });

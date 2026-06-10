@@ -41,6 +41,51 @@ class SchoolAdminService {
     return result.rows;
   }
 
+  /**
+   * Returns all branch staff members with their biometric attendance status for a given date.
+   * Excludes students and parents. Used by School Admin to view ZKTeco punch data.
+   */
+  async getStaffAttendance(branchId: string, date: string) {
+    // Normalise date — if none provided, default to today (Gregorian)
+    const targetDate = date || new Date().toISOString().split('T')[0];
+
+    const result = await pool.query(
+      `SELECT
+          u.id,
+          u.name,
+          u.email,
+          u.digital_id,
+          u.role,
+          u.zk_device_id,
+          u.status,
+          t.subjects,
+          COALESCE(t.classes_count, 0)::int AS classes_count,
+          ea.status           AS attendance_status,
+          ea.sign_in_time,
+          ea.sign_out_time,
+          ea.recorded_by,
+          ea.created_at       AS attendance_recorded_at,
+          CASE WHEN ea.recorded_by = 'zk-machine' THEN true ELSE false END AS is_biometric
+       FROM users u
+       LEFT JOIN teachers t ON t.user_id = u.id
+       LEFT JOIN employee_attendance ea
+              ON ea.user_id = u.id AND ea.date = $2
+       WHERE u.branch_id = $1
+         AND u.role NOT IN ('student', 'parent', 'super-admin')
+         AND u.status = 'Approved'
+       ORDER BY
+         CASE COALESCE(ea.status, 'Unknown')
+           WHEN 'Absent'  THEN 1
+           WHEN 'Unknown' THEN 2
+           WHEN 'Present' THEN 3
+         END,
+         u.name`,
+      [branchId, targetDate]
+    );
+
+    return result.rows;
+  }
+
   async getUserById(userId: string, branchId: string) {
     const result = await pool.query(
       `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role,

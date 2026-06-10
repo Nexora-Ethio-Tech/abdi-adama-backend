@@ -105,6 +105,7 @@ router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
 // User Management (existing)
 router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
 router.get('/users', schoolAdminController.getBranchUsers);
+router.get('/staff-attendance', schoolAdminController.getStaffAttendance);
 router.get('/users/:id', schoolAdminController.getUserById);
 router.patch('/users/:id', validate(schemas.updateUser), schoolAdminController.updateUser);
 router.patch('/users/:id/status', validate(schemas.updateUserStatus), schoolAdminController.updateUserStatus);

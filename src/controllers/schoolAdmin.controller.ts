@@ -66,6 +66,22 @@ class SchoolAdminController {
     }
   }
 
+  async getStaffAttendance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { date } = req.query;
+
+      const attendance = await schoolAdminService.getStaffAttendance(branchId!, date as string);
+
+      res.json({
+        success: true,
+        data: attendance
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getUserById(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params;
