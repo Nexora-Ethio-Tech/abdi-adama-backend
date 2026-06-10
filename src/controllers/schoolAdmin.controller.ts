@@ -155,6 +155,26 @@ class SchoolAdminController {
     }
   }
 
+  // Update Student record (grade, status, guardian info, etc.)
+  async updateStudent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+      const updateData = req.body;
+
+      // Students live in the users + students tables; updateUser covers both
+      const user = await schoolAdminService.updateUser(id, branchId!, updateData);
+
+      res.json({
+        success: true,
+        data: user,
+        message: 'Student updated successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Assign Student to Class
   async assignStudentToClass(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
