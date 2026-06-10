@@ -92,6 +92,7 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
          NULL::text AS "driverName"
        FROM notices n
        WHERE n.created_at > NOW() - INTERVAL '30 days'
+         AND (n.audience = 'all' OR n.audience = 'parent-student' OR n.audience LIKE '%parent%')
 
        UNION ALL
 
@@ -556,7 +557,8 @@ export const getSchoolAnnouncements = async (req: AuthRequest, res: Response) =>
          u.name AS created_by_name
        FROM notices n
        LEFT JOIN users u ON n.posted_by = u.id
-       WHERE n.created_at > NOW() - INTERVAL '60 days'`;
+       WHERE n.created_at > NOW() - INTERVAL '60 days'
+         AND (n.audience = 'all' OR n.audience = 'parent-student' OR n.audience LIKE '%parent%')`;
 
     const queryParams: any[] = [];
     if (branchId) {

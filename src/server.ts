@@ -32,7 +32,9 @@ async function ensureSchemaExtensions(): Promise<void> {
     '16th_online_exams_auto_grading.sql',
     '17th_submit_workflow.sql',
     '18th_grade_submissions_unique.sql',
-    '19th_add_rating_excellent_to_communication_logs.sql'
+    '19th_add_rating_excellent_to_communication_logs.sql',
+    '20th_add_audience_to_notices.sql',
+    '21st_add_category_to_notices.sql'
   ];
 
   for (const fileName of migrationFiles) {

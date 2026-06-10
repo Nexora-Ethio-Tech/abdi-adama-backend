@@ -181,4 +181,9 @@ router.post('/events/:id', validate(updateEventSchema), schoolAdminController.up
 router.patch('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
 router.delete('/events/:id', schoolAdminController.deleteEvent);
 
+// School Notices (audience-targeted)
+router.get('/notices', schoolAdminController.getNotices);
+router.post('/notices', schoolAdminController.postNotice);
+router.delete('/notices/:id', schoolAdminController.deleteNotice);
+
 export default router;

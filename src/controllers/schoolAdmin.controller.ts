@@ -10,6 +10,7 @@ import {
   validateFileSize,
 } from '../utils/validation';
 import logger from '../utils/logger';
+import { broadcast } from '../shared/sseManager';
 
 class SchoolAdminController {
   async toggleRegistration(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -1308,6 +1309,145 @@ class SchoolAdminController {
       next(error);
     } finally {
       client.release();
+    }
+  }
+
+  /**
+   * POST /api/school-admin/notices
+   * Creates a new school notice and broadcasts it via SSE to targeted roles.
+   * Body: { title, content, priority, category, expiresAt?, audience }
+   *   audience: 'all' | 'teacher' | 'driver' | 'clinic-admin' | 'parent,student'  (comma-separated)
+   */
+  async postNotice(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const postedBy = req.user!.id;
+      const { title, content, priority = 'Normal', category = 'Academic', expiresAt, audience = 'all' } = req.body;
+
+      if (!title || !content) {
+        res.status(400).json({ success: false, message: 'Title and content are required.' });
+        return;
+      }
+
+      // audience can be 'all' or a comma-separated role list e.g. 'teacher,driver'
+      const audienceStr = Array.isArray(audience) ? audience.join(',') : String(audience || 'all');
+
+      const result = await pool.query(
+        `INSERT INTO notices (title, content, priority, category, posted_by, branch_id, audience, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         RETURNING *`,
+        [title, content, priority, category, postedBy, branchId, audienceStr]
+      );
+
+      const notice = result.rows[0];
+
+      // Resolve audience to SSE role list for broadcast
+      // SSE roles use the exact JWT role strings (e.g. 'teacher', 'school-admin', 'driver', etc.)
+      let sseRoles: string[];
+      if (audienceStr === 'all') {
+        sseRoles = ['teacher', 'driver', 'clinic-admin', 'parent', 'student', 'school-admin', 'vice-principal', 'super-admin', 'finance-clerk', 'librarian', 'auditor'];
+      } else {
+        // Map UI audience values to JWT roles
+        const roleMap: Record<string, string[]> = {
+          teacher: ['teacher'],
+          driver: ['driver'],
+          'clinic-admin': ['clinic-admin'],
+          parent: ['parent', 'student'],
+          student: ['student', 'parent'],
+          'parent-student': ['parent', 'student'],
+        };
+        const inputRoles = audienceStr.split(',').map((r: string) => r.trim());
+        sseRoles = inputRoles.flatMap((r: string) => roleMap[r] || [r]);
+      }
+
+      const broadcastPayload = {
+        id: notice.id,
+        title: notice.title,
+        content: notice.content,
+        priority: notice.priority,
+        category: category,
+        audience: audienceStr,
+        createdAt: notice.created_at,
+      };
+
+      // Broadcast SCHOOL_NOTICE to relevant connected clients
+      broadcast('SCHOOL_NOTICE', broadcastPayload, branchId || undefined, sseRoles);
+
+      res.status(201).json({
+        success: true,
+        data: notice,
+        message: 'Notice posted successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/school-admin/notices
+   * Returns recent school notices for the admin's branch (last 60 days).
+   */
+  async getNotices(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const userRole = req.user!.role;
+      const isAdminOrVP = ['super-admin', 'school-admin', 'vice-principal'].includes(userRole);
+
+      let query = `SELECT
+           n.id::text,
+           n.title,
+           n.content,
+           n.priority,
+           n.category,
+           n.audience,
+           n.created_at,
+           u.name AS posted_by_name
+         FROM notices n
+         LEFT JOIN users u ON n.posted_by = u.id
+         WHERE n.created_at > NOW() - INTERVAL '60 days'
+           AND (n.branch_id = $1 OR n.branch_id IS NULL)`;
+
+      const params: any[] = [branchId];
+
+      if (!isAdminOrVP) {
+        query += ` AND (n.audience = 'all' OR n.audience LIKE '%' || $2 || '%')`;
+        params.push(userRole);
+      }
+
+      query += ` ORDER BY n.created_at DESC LIMIT 50`;
+
+      const result = await pool.query(query, params);
+
+      res.json({ success: true, data: result.rows });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * DELETE /api/school-admin/notices/:id
+   * Deletes a school notice and broadcasts NOTICE_DELETED via SSE.
+   */
+  async deleteNotice(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+
+      const result = await pool.query(
+        `DELETE FROM notices WHERE id = $1 AND (branch_id = $2 OR branch_id IS NULL) RETURNING id`,
+        [id, branchId]
+      );
+
+      if ((result.rowCount ?? 0) === 0) {
+        res.status(404).json({ success: false, message: 'Notice not found.' });
+        return;
+      }
+
+      broadcast('SCHOOL_NOTICE_DELETED', { id }, branchId || undefined);
+
+      res.json({ success: true, message: 'Notice deleted successfully.' });
+    } catch (error) {
+      next(error);
     }
   }
 }

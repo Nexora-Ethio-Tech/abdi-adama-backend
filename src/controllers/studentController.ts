@@ -208,6 +208,7 @@ const fetchSchoolAnnouncementsForStudent = async (branchId: string | null) => {
      JOIN users u ON n.posted_by = u.id
      WHERE u.role IN ('super-admin', 'school-admin')
        AND n.created_at > NOW() - INTERVAL '60 days'
+       AND (n.audience = 'all' OR n.audience = 'parent-student' OR n.audience LIKE '%student%')
        ${branchFilter}
      ORDER BY n.created_at DESC
      LIMIT 20`,
