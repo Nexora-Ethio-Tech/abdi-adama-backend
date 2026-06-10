@@ -1933,7 +1933,38 @@ class SchoolAdminService {
       }
       const teacherId = teacherCheck.rows[0].id;
 
-      const { promotionType, grades, subjects, sections, beforeSchool } = data;
+      const { promotionType, grades, subjects, sections, beforeSchool, removePromotion } = data;
+
+      if (removePromotion) {
+        const currentProfile = userCheck.rows[0].staff_profile || {};
+        const updatedProfile = { ...currentProfile };
+        delete updatedProfile.promotion;
+
+        await client.query(
+          `UPDATE users SET staff_profile = $1 WHERE id = $2`,
+          [JSON.stringify(updatedProfile), userId]
+        );
+
+        await client.query(
+          `UPDATE teachers 
+           SET is_dean = false,
+               is_room_teacher = false,
+               assigned_room_class = NULL,
+               subjects = $1,
+               updated_at = NOW() 
+           WHERE id = $2`,
+          [[], teacherId]
+        );
+
+        try {
+          await client.query(`DELETE FROM class_teachers WHERE teacher_id = $1`, [teacherId]);
+        } catch (err) {
+          // ignore
+        }
+
+        await client.query('COMMIT');
+        return { success: true, promotionType: null };
+      }
 
       // 3. Update staff_profile in users table to store general promotion history/info
       const currentProfile = userCheck.rows[0].staff_profile || {};

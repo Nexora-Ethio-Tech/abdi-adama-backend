@@ -1215,6 +1215,23 @@ class SchoolAdminController {
     }
   }
 
+  async removePromotion(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+
+      const result = await schoolAdminService.promoteTeacher(id, branchId!, { removePromotion: true });
+
+      res.json({
+        success: true,
+        data: result,
+        message: 'Promotion removed successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getGradingConfigs(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const result = await pool.query(

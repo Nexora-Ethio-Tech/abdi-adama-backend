@@ -119,6 +119,7 @@ router.delete('/users/:id', schoolAdminController.deleteUser);
 // Teacher Promotion & Subjects Management
 router.post('/users/:id/promote', schoolAdminController.promoteTeacher);
 router.patch('/users/:id/promote', schoolAdminController.promoteTeacher);
+router.delete('/users/:id/promote', schoolAdminController.removePromotion);
 router.post('/subjects', schoolAdminController.createSubject);
 router.post('/subjects/:id', schoolAdminController.updateSubject);
 router.patch('/subjects/:id', schoolAdminController.updateSubject);
