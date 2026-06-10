@@ -1507,8 +1507,8 @@ class TeacherService {
     const subjects: string[] = Array.isArray(hod_subjects) ? hod_subjects : [];
     const grades: string[]   = Array.isArray(hod_grades)   ? hod_grades   : [];
 
-    // No promotion data yet — return empty so the UI can show a proper message
-    if (subjects.length === 0 || grades.length === 0) {
+    // No promotion data yet — return empty
+    if (subjects.length === 0) {
       return [];
     }
 
@@ -1521,14 +1521,30 @@ class TeacherService {
     const normalizedHodGrades = grades.map(normalizeGrade);
 
     // Build parameter arrays for SQL ANY() operator
-    // $1 = branchId, $2 = teacherId (to exclude HoD's own plans), $3 = subjects[], $4 = grades[]
-    const statusClause = status ? `AND wp.status = $5` : '';
+    // $1 = branchId, $2 = teacherId (to exclude HoD's own plans), $3 = subjects[]
     const params: any[] = [
       branchId,
       teacherId,
       subjects.map(s => s.toLowerCase()),  // lowercase subject list
-      normalizedHodGrades,                  // normalized grade list
     ];
+    let paramIndex = 4;
+    
+    let gradeClause = '';
+    if (normalizedHodGrades.length > 0) {
+      params.push(normalizedHodGrades);
+      gradeClause = `
+        -- Grade must match HoD's grades (normalize "10" -> "grade 10", "Grade 10" -> "grade 10")
+        AND (
+          CASE
+            WHEN COALESCE(cl.grade, '') ~ '^[0-9]+$' THEN 'grade ' || cl.grade
+            ELSE LOWER(COALESCE(cl.grade, cl.name, ''))
+          END
+        ) = ANY($${paramIndex}::text[])
+      `;
+      paramIndex++;
+    }
+
+    const statusClause = status ? `AND wp.status = $${paramIndex}` : '';
     if (status) params.push(status);
 
     const query = `
@@ -1548,13 +1564,7 @@ class TeacherService {
         AND (wp.dept_head_id IS NULL OR wp.dept_head_id = $2)
         -- Subject must match HoD's subjects (case-insensitive, check course name OR plan subject field)
         AND LOWER(COALESCE(c.name, wp.subject, '')) = ANY($3::text[])
-        -- Grade must match HoD's grades (normalize "10" -> "grade 10", "Grade 10" -> "grade 10")
-        AND (
-          CASE
-            WHEN COALESCE(cl.grade, '') ~ '^[0-9]+$' THEN 'grade ' || cl.grade
-            ELSE LOWER(COALESCE(cl.grade, cl.name, ''))
-          END
-        ) = ANY($4::text[])
+        ${gradeClause}
         ${statusClause}
       ORDER BY wp.id, wp.date DESC, wp.created_at DESC
     `;
@@ -1569,9 +1579,10 @@ class TeacherService {
       `SELECT
          t.id,
          t.is_dean,
+         (t.is_dean = true OR u.staff_profile->'promotion'->'roles' ? 'headOfDepartment') as is_hod,
          u.branch_id,
-         u.staff_profile->'promotion'->'subjects' AS hod_subjects,
-         u.staff_profile->'promotion'->'grades'   AS hod_grades
+         COALESCE(u.staff_profile->'promotion'->'headOfDepartment'->'subjects', u.staff_profile->'promotion'->'subjects') AS hod_subjects,
+         COALESCE(u.staff_profile->'promotion'->'headOfDepartment'->'grades', u.staff_profile->'promotion'->'grades') AS hod_grades
        FROM public.teachers t
        JOIN public.users u ON t.user_id = u.id
        WHERE t.user_id = $1`,
@@ -1582,17 +1593,31 @@ class TeacherService {
       throw new Error('Teacher not found');
     }
 
-    const { id: teacherId, is_dean: isDean, branch_id: branchId,
+    const { id: teacherId, is_hod: isHod, branch_id: branchId,
             hod_subjects, hod_grades } = teacherResult.rows[0];
 
     // If not a department head, throw error
-    if (!isDean) {
+    if (!isHod) {
       throw new Error('Access denied: Only department heads can review plans');
     }
 
     const subjects: string[] = Array.isArray(hod_subjects) ? hod_subjects.map((s: string) => s.toLowerCase()) : [];
     const normalizeGrade = (g: string) => { const t = g.trim().toLowerCase(); return /^\d+$/.test(t) ? `grade ${t}` : t; };
     const normalizedGrades: string[] = Array.isArray(hod_grades) ? hod_grades.map(normalizeGrade) : [];
+
+    const params: any[] = [planId, branchId, subjects, teacherId];
+    let gradeClause = '';
+    if (normalizedGrades.length > 0) {
+      params.push(normalizedGrades);
+      gradeClause = `
+         AND (
+           CASE
+             WHEN COALESCE(cl.grade, '') ~ '^[0-9]+$' THEN 'grade ' || cl.grade
+             ELSE LOWER(COALESCE(cl.grade, cl.name, ''))
+           END
+         ) = ANY($5::text[])
+      `;
+    }
 
     // Verify the plan exists and its subject+grade fall within HoD's scope
     const planCheck = await pool.query(
@@ -1605,14 +1630,9 @@ class TeacherService {
        WHERE wp.id = $1
          AND u.branch_id = $2
          AND LOWER(COALESCE(c.name, wp.subject, '')) = ANY($3::text[])
-         AND (
-           CASE
-             WHEN COALESCE(cl.grade, '') ~ '^[0-9]+$' THEN 'grade ' || cl.grade
-             ELSE LOWER(COALESCE(cl.grade, cl.name, ''))
-           END
-         ) = ANY($4::text[])
-         AND (wp.dept_head_id IS NULL OR wp.dept_head_id = $5)`,
-      [planId, branchId, subjects, normalizedGrades, teacherId]
+         AND (wp.dept_head_id IS NULL OR wp.dept_head_id = $4)
+         ${gradeClause}`,
+      params
     );
 
     if (planCheck.rows.length === 0) {
