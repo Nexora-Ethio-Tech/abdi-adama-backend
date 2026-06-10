@@ -704,11 +704,16 @@ class TeacherService {
        FROM public.teachers t
        JOIN public.users u ON t.user_id = u.id
        WHERE u.branch_id = $1
-         AND u.staff_profile->'promotion'->>'promotionType' = 'head-of-department'
-         AND u.staff_profile->'promotion'->'subjects' @> to_jsonb(LOWER($2::text))
+         AND (t.is_dean = true OR u.staff_profile->'promotion'->>'promotionType' = 'head-of-department')
+         AND (
+           u.staff_profile->'promotion'->'subjects' @> to_jsonb(LOWER($2::text))
+           OR u.staff_profile->'promotion'->'headOfDepartment'->'subjects' @> to_jsonb(LOWER($2::text))
+         )
          ${gradeNormalized ? `AND (
            u.staff_profile->'promotion'->'grades' ? $3
            OR u.staff_profile->'promotion'->'grades' ? $4
+           OR u.staff_profile->'promotion'->'headOfDepartment'->'grades' ? $3
+           OR u.staff_profile->'promotion'->'headOfDepartment'->'grades' ? $4
          )` : ''}
        LIMIT 1`,
       gradeNormalized
@@ -726,8 +731,11 @@ class TeacherService {
        FROM public.teachers t
        JOIN public.users u ON t.user_id = u.id
        WHERE u.branch_id = $1
-         AND u.staff_profile->'promotion'->>'promotionType' = 'head-of-department'
-         AND u.staff_profile->'promotion'->'subjects' @> to_jsonb(LOWER($2::text))
+         AND (t.is_dean = true OR u.staff_profile->'promotion'->>'promotionType' = 'head-of-department')
+         AND (
+           u.staff_profile->'promotion'->'subjects' @> to_jsonb(LOWER($2::text))
+           OR u.staff_profile->'promotion'->'headOfDepartment'->'subjects' @> to_jsonb(LOWER($2::text))
+         )
        LIMIT 1`,
       [branchId, resolvedSubject.toLowerCase()]
     );

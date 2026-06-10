@@ -1933,9 +1933,26 @@ class SchoolAdminService {
       }
       const teacherId = teacherCheck.rows[0].id;
 
-      const { promotionType, grades, subjects, sections, beforeSchool, removePromotion } = data;
+      const { 
+        removePromotion,
+        roles, 
+        promotionType,
+        grades, 
+        subjects, 
+        sections, 
+        beforeSchool,
+        headOfDepartment,
+        homeTeacher
+      } = data;
 
-      if (removePromotion) {
+      let activeRoles: string[] = [];
+      if (Array.isArray(roles)) {
+        activeRoles = roles;
+      } else if (promotionType) {
+        activeRoles = [promotionType];
+      }
+
+      if (removePromotion || activeRoles.length === 0) {
         const currentProfile = userCheck.rows[0].staff_profile || {};
         const updatedProfile = { ...currentProfile };
         delete updatedProfile.promotion;
@@ -1966,16 +1983,32 @@ class SchoolAdminService {
         return { success: true, promotionType: null };
       }
 
-      // 3. Update staff_profile in users table to store general promotion history/info
+      // Resolve configs for each role
+      const hodConfig = activeRoles.includes('head-of-department')
+        ? (headOfDepartment || { grades: grades || [], subjects: subjects || [] })
+        : null;
+
+      const htConfig = activeRoles.includes('home-teacher')
+        ? (homeTeacher || { grades: grades || [], sections: sections || {} })
+        : null;
+
+      const bsConfig = activeRoles.includes('before-school-educator')
+        ? (beforeSchool || {})
+        : null;
+
+      // Update users table
       const currentProfile = userCheck.rows[0].staff_profile || {};
       const updatedProfile = {
         ...currentProfile,
         promotion: {
-          promotionType,
-          grades: grades || [],
-          subjects: subjects || [],
-          sections: sections || {},
-          beforeSchool: beforeSchool || {},
+          roles: activeRoles,
+          promotionType: activeRoles[0], // for legacy compatibility
+          grades: grades || (htConfig ? htConfig.grades : (hodConfig ? hodConfig.grades : [])),
+          subjects: subjects || (hodConfig ? hodConfig.subjects : []),
+          sections: sections || (htConfig ? htConfig.sections : {}),
+          beforeSchool: beforeSchool || bsConfig || {},
+          headOfDepartment: hodConfig || undefined,
+          homeTeacher: htConfig || undefined,
           promotedAt: new Date().toISOString()
         }
       };
@@ -1985,41 +2018,42 @@ class SchoolAdminService {
         [JSON.stringify(updatedProfile), userId]
       );
 
-      // 4. Update teachers table based on promotion type
-      if (promotionType === 'head-of-department') {
-        // Subjects must be saved in the subjects TEXT[] column in teachers table
-        await client.query(
-          `UPDATE teachers 
-           SET is_dean = true,
-               is_room_teacher = false,
-               assigned_room_class = NULL,
-               subjects = $1,
-               updated_at = NOW() 
-           WHERE id = $2`,
-          [subjects || [], teacherId]
-        );
-      } else if (promotionType === 'home-teacher') {
-        // Grades and classes mapping
-        // Set is_room_teacher to true
-        // If there are grades and sections, set assigned_room_class to first select (e.g. 'Grade 10A')
-        let assignedClass = '';
-        if (grades && grades.length > 0) {
-          const firstGrade = grades[0];
-          const firstSectionList = sections && sections[firstGrade];
+      // Resolve teachers table updates
+      const isDean = activeRoles.includes('head-of-department');
+      const isRoomTeacher = activeRoles.includes('home-teacher');
+
+      let assignedClass = '';
+      if (isRoomTeacher && htConfig) {
+        const htGrades = htConfig.grades || [];
+        if (htGrades.length > 0) {
+          const firstGrade = htGrades[0];
+          const htSections = htConfig.sections || {};
+          const firstSectionList = htSections[firstGrade];
           const firstSection = firstSectionList && firstSectionList.length > 0 ? firstSectionList[0] : '';
           assignedClass = firstSection ? `${firstGrade}${firstSection}` : firstGrade;
         }
+      }
 
-        await client.query(
-          `UPDATE teachers 
-           SET is_room_teacher = true,
-               is_dean = false,
-               subjects = $1,
-               assigned_room_class = $2,
-               updated_at = NOW() 
-           WHERE id = $3`,
-          [[], assignedClass || null, teacherId]
-        );
+      const dbSubjects = isDean && hodConfig ? (hodConfig.subjects || []) : [];
+
+      await client.query(
+        `UPDATE teachers 
+         SET is_dean = $1,
+             is_room_teacher = $2,
+             subjects = $3,
+             assigned_room_class = $4,
+             updated_at = NOW() 
+         WHERE id = $5`,
+        [isDean, isRoomTeacher, dbSubjects, assignedClass || null, teacherId]
+      );
+
+      // Clean up previous homeroom assignments for this teacher
+      await client.query(`DELETE FROM class_teachers WHERE teacher_id = $1`, [teacherId]);
+
+      // Sync with class_teachers table if homeroom teacher is active
+      if (isRoomTeacher && htConfig) {
+        const htGrades = htConfig.grades || [];
+        const htSections = htConfig.sections || {};
 
         // Ensure class_teachers table exists
         await client.query(`
@@ -2033,47 +2067,29 @@ class SchoolAdminService {
           )
         `);
 
-        // Clean up previous homeroom assignments for this teacher
-        await client.query(`DELETE FROM class_teachers WHERE teacher_id = $1`, [teacherId]);
-
-        // Sync with class_teachers
-        if (grades && sections) {
-          for (const grade of grades) {
-            const secList = sections[grade] || [];
-            for (const sec of secList) {
-              const clsRes = await client.query(
-                `SELECT id FROM classes WHERE branch_id = $1 AND (name = $2 OR grade = $2) AND section = $3`,
-                [branchId, grade, sec]
+        for (const grade of htGrades) {
+          const secList = htSections[grade] || [];
+          for (const sec of secList) {
+            const clsRes = await client.query(
+              `SELECT id FROM classes WHERE branch_id = $1 AND (name = $2 OR grade = $2) AND section = $3`,
+              [branchId, grade, sec]
+            );
+            if (clsRes.rows.length > 0) {
+              const classId = clsRes.rows[0].id;
+              // Delete previous teacher for this specific class
+              await client.query(`DELETE FROM class_teachers WHERE class_id = $1`, [classId]);
+              // Insert new assignment
+              await client.query(
+                `INSERT INTO class_teachers (class_id, teacher_id, branch_id) VALUES ($1, $2, $3) ON CONFLICT (class_id, teacher_id) DO NOTHING`,
+                [classId, teacherId, branchId]
               );
-              if (clsRes.rows.length > 0) {
-                const classId = clsRes.rows[0].id;
-                // Delete previous teacher for this specific class
-                await client.query(`DELETE FROM class_teachers WHERE class_id = $1`, [classId]);
-                // Insert new assignment
-                await client.query(
-                  `INSERT INTO class_teachers (class_id, teacher_id, branch_id) VALUES ($1, $2, $3) ON CONFLICT (class_id, teacher_id) DO NOTHING`,
-                  [classId, teacherId, branchId]
-                );
-              }
             }
           }
         }
-      } else if (promotionType === 'before-school-educator') {
-        // Clear department/home teacher flags when promoting to before-school educator
-        await client.query(
-          `UPDATE teachers 
-           SET is_room_teacher = false,
-               is_dean = false,
-               subjects = $1,
-               assigned_room_class = NULL,
-               updated_at = NOW() 
-           WHERE id = $2`,
-          [[], teacherId]
-        );
       }
 
       await client.query('COMMIT');
-      return { success: true, promotionType };
+      return { success: true, roles: activeRoles };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
