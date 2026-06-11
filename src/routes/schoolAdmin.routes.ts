@@ -17,7 +17,6 @@ router.post('/public/applications',
   // Controller will handle validation and default branch assignment
   schoolAdminController.createPublicPendingApplication
 );
-router.get('/public/branches', schoolAdminController.getBranches);
 
 router.use(authenticate);
 router.use(requireBranchId);
@@ -85,56 +84,37 @@ router.post('/applications',
 );
 router.get('/applications', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getPendingApplications);
 router.get('/applications/:id/transcript', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getApplicationTranscript);
-router.post('/applications/:id/status', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.updateApplicationStatus);
 router.patch('/applications/:id/status', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.updateApplicationStatus);
-router.post('/system-settings/registration', schoolAdminController.toggleRegistration);
-router.patch('/system-settings/registration', schoolAdminController.toggleRegistration);
 
-// User Management
 // ============================================================
 // SCHOOL ADMIN ONLY ROUTES
 // ============================================================
-
-// Shared read endpoints (accessible by VP and Super Admin as well)
-router.get('/classes', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getClasses);
-router.get('/subjects', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getSubjects);
-// Returns distinct course names with their grade level (used by HoD promotion modal)
-router.get('/courses-with-grade', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getCoursesWithGrade);
-router.get('/students', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN, UserRole.VICE_PRINCIPAL, UserRole.TEACHER]), schoolAdminController.getBranchStudents);
 
 router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
 
 // User Management (existing)
 router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
 router.get('/users', schoolAdminController.getBranchUsers);
-router.get('/staff-attendance', schoolAdminController.getStaffAttendance);
 router.get('/users/:id', schoolAdminController.getUserById);
-router.post('/users/:id', validate(schemas.updateUser), schoolAdminController.updateUser);
 router.patch('/users/:id', validate(schemas.updateUser), schoolAdminController.updateUser);
-router.post('/users/:id/status', validate(schemas.updateUserStatus), schoolAdminController.updateUserStatus);
 router.patch('/users/:id/status', validate(schemas.updateUserStatus), schoolAdminController.updateUserStatus);
 router.post('/users/:id/reset-pin', schoolAdminController.resetUserPIN);
 router.delete('/users/:id', schoolAdminController.deleteUser);
 
 // Teacher Promotion & Subjects Management
-router.post('/users/:id/promote', schoolAdminController.promoteTeacher);
 router.patch('/users/:id/promote', schoolAdminController.promoteTeacher);
-router.delete('/users/:id/promote', schoolAdminController.removePromotion);
+router.get('/subjects', schoolAdminController.getSubjects);
 router.post('/subjects', schoolAdminController.createSubject);
-router.post('/subjects/:id', schoolAdminController.updateSubject);
 router.patch('/subjects/:id', schoolAdminController.updateSubject);
 router.delete('/subjects/:id', schoolAdminController.deleteSubject);
 
 // Student-Class Management
 router.post('/students/assign-class', validate(schemas.assignStudentToClass), schoolAdminController.assignStudentToClass);
-router.patch('/students/assign-class', validate(schemas.assignStudentToClass), schoolAdminController.assignStudentToClass);
-router.patch('/students/:id/assign-class', validate(schemas.assignStudentToClass), schoolAdminController.assignStudentToClass);
-router.patch('/students/:id', schoolAdminController.updateStudent);
 router.delete('/students/:studentId/remove-class', schoolAdminController.removeStudentFromClass);
 
 // Class Management
 router.post('/classes', validate(createClassSchema), schoolAdminController.createClass);
-router.post('/classes/:id', schoolAdminController.updateClass);
+router.get('/classes', schoolAdminController.getClasses);
 router.patch('/classes/:id', schoolAdminController.updateClass);
 router.delete('/classes/:id', schoolAdminController.deleteClass);
 // Assign single teacher (adds assignment without replacing existing)
@@ -142,7 +122,7 @@ router.post('/classes/:id/teachers', validate(assignTeacherSchema), schoolAdminC
 // Unassign teacher from class
 router.delete('/classes/:id/teachers/:teacherId', schoolAdminController.unassignTeacherFromClass);
 // Backwards-compatible route (old) kept for now
-router.post('/classes/:id/assign-teacher', validate(assignTeacherSchema), schoolAdminController.assignTeacherToClass);
+router.patch('/classes/:id/assign-teacher', validate(assignTeacherSchema), schoolAdminController.assignTeacherToClass);
 
 // Course Management
 router.post('/courses', validate(createCourseSchema), schoolAdminController.createCourse);
@@ -159,6 +139,7 @@ router.get('/financial-policies', schoolAdminController.getFinancialPolicies);
 // Dashboard & Utilities
 router.get('/dashboard', schoolAdminController.getDashboard);
 router.get('/teachers', schoolAdminController.getBranchTeachers);
+router.get('/students', schoolAdminController.getBranchStudents);
 router.get('/students/:id/admission-record', schoolAdminController.getStudentAdmissionRecord);
 router.get('/students/:id', schoolAdminController.getStudentById);
 
@@ -175,15 +156,8 @@ router.get('/dashboard/at-risk-students', schoolAdminController.getAtRiskStudent
 
 // Events Calendar
 router.get('/dashboard/upcoming-events', schoolAdminController.getUpcomingEvents);
-router.get('/events', schoolAdminController.getEvents);
 router.post('/events', validate(createEventSchema), schoolAdminController.createEvent);
-router.post('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
 router.patch('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
 router.delete('/events/:id', schoolAdminController.deleteEvent);
-
-// School Notices (audience-targeted)
-router.get('/notices', schoolAdminController.getNotices);
-router.post('/notices', schoolAdminController.postNotice);
-router.delete('/notices/:id', schoolAdminController.deleteNotice);
 
 export default router;
