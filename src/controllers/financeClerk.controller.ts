@@ -313,6 +313,53 @@ class FinanceClerkController {
       next(error);
     }
   }
+
+  // Send SMS to parent about overdue payment
+  async sendSms(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { studentId, message } = req.body;
+      const branchId = req.user!.branch_id;
+      const financeClerkName = req.user!.name;
+
+      if (!studentId || typeof studentId !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: { message: 'Student ID is required' }
+        });
+        return;
+      }
+
+      if (!message || typeof message !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: { message: 'Message is required' }
+        });
+        return;
+      }
+
+      const result = await financeClerkService.sendSmsToParent(
+        studentId,
+        message,
+        branchId
+      );
+
+      console.log(`[Finance Clerk SMS] ${financeClerkName} sent SMS to student ${studentId}`);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+        message: 'SMS sent successfully to parent'
+      });
+    } catch (error: any) {
+      const statusCode = error.message?.includes('not found') ? 404 : 400;
+      res.status(statusCode).json({
+        success: false,
+        error: {
+          message: error.message || 'Failed to send SMS'
+        }
+      });
+    }
+  }
 }
 
 export default new FinanceClerkController();

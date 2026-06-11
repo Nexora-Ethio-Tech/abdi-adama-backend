@@ -1879,6 +1879,94 @@ class FinanceClerkService {
       client.release();
     }
   }
+
+  // Get student info and parent phone for SMS sending
+  async getStudentParentPhone(studentId: string, branchId?: string) {
+    const query = `
+      SELECT 
+        s.id,
+        s.parent_phone,
+        u.name as student_name,
+        u.digital_id,
+        s.grade,
+        s.branch_id
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.id = $1
+    `;
+    
+    const params: any[] = [studentId];
+    
+    if (branchId) {
+      // Verify the student belongs to the requesting finance clerk's branch
+      const branchCheckRes = await pool.query(query + ' AND s.branch_id = $2', [...params, branchId]);
+      if (branchCheckRes.rows.length === 0) {
+        throw new Error('Student not found or does not belong to your branch');
+      }
+      return branchCheckRes.rows[0];
+    }
+    
+    const res = await pool.query(query, params);
+    if (res.rows.length === 0) {
+      throw new Error('Student not found');
+    }
+    return res.rows[0];
+  }
+
+  // Send SMS to parent about overdue payments
+  async sendSmsToParent(studentId: string, message: string, branchId?: string) {
+    // 1. Get student and parent phone
+    const student = await this.getStudentParentPhone(studentId, branchId);
+    
+    if (!student.parent_phone || !student.parent_phone.trim()) {
+      throw new Error('Parent phone number not found for this student');
+    }
+
+    // 2. Validate phone format (Ethiopian phone numbers typically start with +251 or 0)
+    const phone = student.parent_phone.trim();
+    const phoneRegex = /^(\+?251|0)[0-9]{9}$/;
+    if (!phoneRegex.test(phone)) {
+      throw new Error(`Invalid phone number format: ${phone}`);
+    }
+
+    // 3. Validate message length
+    if (!message || message.trim().length === 0) {
+      throw new Error('Message cannot be empty');
+    }
+    
+    if (message.length > 160) {
+      throw new Error('Message cannot exceed 160 characters');
+    }
+
+    // 4. Send SMS via SMS service
+    const { smsService } = require('./sms.service');
+    const sent = await smsService.sendSMS(phone, message);
+
+    if (!sent) {
+      throw new Error('Failed to send SMS. Modem may be unavailable.');
+    }
+
+    // 5. Log the SMS attempt (optional - for audit trail)
+    try {
+      await pool.query(
+        `INSERT INTO sms_logs (student_id, parent_phone, message, status, sent_at, branch_id)
+         VALUES ($1, $2, $3, $4, NOW(), $5)`,
+        [studentId, phone, message, 'sent', branchId || null]
+      );
+    } catch (logErr) {
+      console.warn('[FinanceClerk SMS] Could not log SMS attempt:', logErr);
+      // Don't throw - SMS was sent, just couldn't log it
+    }
+
+    return {
+      success: true,
+      studentId,
+      studentName: student.student_name,
+      phone,
+      message,
+      sentAt: new Date().toISOString()
+    };
+  }
 }
 
 export default new FinanceClerkService();

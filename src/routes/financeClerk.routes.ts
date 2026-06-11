@@ -53,6 +53,11 @@ const updateFeeStatusSchema = Joi.object({
   requestedAidAmount: Joi.number().min(0).optional()
 });
 
+const sendSmsSchema = Joi.object({
+  studentId: Joi.string().uuid().required(),
+  message: Joi.string().min(1).max(160).required()
+});
+
 // Role Guard segments
 const readOnlyInventory = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]);
 const readWriteFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]);
@@ -66,6 +71,7 @@ router.get('/students/:id/outstanding', clerkOnly, financeClerkController.getStu
 router.get('/students/fees', clerkOnly, financeClerkController.getStudentsWithFees);
 router.post('/students/:id/fee-status', clerkOnly, validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
 router.patch('/students/:id/fee-status', clerkOnly, validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
+router.post('/students/sms/send', clerkOnly, validate(sendSmsSchema), financeClerkController.sendSms);
 router.get('/transport/students', clerkOnly, financeClerkController.getTransportStudents);
 router.get('/transport/routes', clerkOnly, financeClerkController.getTransportRoutes);
 router.get('/transport/drivers', clerkOnly, financeClerkController.getTransportDrivers);
