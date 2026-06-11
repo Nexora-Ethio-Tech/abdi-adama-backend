@@ -11,12 +11,12 @@ export const comparePassword = async (password: string, hashedPassword: string):
 
 /**
  * Generates a random 4-digit PIN for students, teachers, parents, and staff
- * @returns A 4-digit numeric PIN as a string
+ * @returns A 4-digit numeric PIN as a string (0000-9999)
  */
 export const generate4DigitPIN = (): string => {
-  // Generate random 4-digit number between 1000 and 9999
-  const pin = Math.floor(1000 + Math.random() * 9000);
-  return pin.toString();
+  // Generate random 4-digit number between 0 and 9999, padded with zeros
+  const pin = Math.floor(Math.random() * 10000);
+  return pin.toString().padStart(4, '0');
 };
 
 /**

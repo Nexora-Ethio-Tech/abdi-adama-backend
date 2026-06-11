@@ -338,7 +338,7 @@ class UserService {
 
   async resetUserPassword(userId: string): Promise<{ userId: string; name: string; temporaryPassword: string }> {
     const userCheck = await pool.query(
-      `SELECT id, name, role FROM users WHERE id = $1`,
+      `SELECT id, name, email, role FROM users WHERE id = $1`,
       [userId]
     );
 
@@ -348,8 +348,8 @@ class UserService {
 
     const user = userCheck.rows[0];
 
-    // Generate a temporary password
-    const temporaryPassword = generateRandomPassword();
+    // Generate a 4-digit PIN
+    const temporaryPassword = generate4DigitPIN();
     const hashedPassword = await hashPassword(temporaryPassword);
 
     await pool.query(
@@ -358,6 +358,13 @@ class UserService {
     );
 
     logger.info(`Password reset for user: ${userId} (${user.name})`);
+
+    // Send email with new PIN
+    if (user.email && !user.email.endsWith('@no-reply.local')) {
+      sendWelcomeEmail(user.name, user.email, temporaryPassword, user.role).catch((e) => {
+        logger.error('Failed to send password reset email:', e);
+      });
+    }
 
     return { userId, name: user.name, temporaryPassword };
   }
