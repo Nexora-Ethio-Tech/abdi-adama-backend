@@ -17,9 +17,15 @@ import pool from '../config/db';
  */
 export const performCommunicationCleanup = async () => {
   try {
+    // A log expires after its week_ending Thursday has fully passed.
+    // We delete any log where the week_ending date is in a previous week
+    // (i.e., the week_ending Thursday is strictly before the start of the current week's Friday).
     const result = await pool.query(`
       DELETE FROM communication_logs
-      WHERE NOW() >= (week_ending + INTERVAL '4 days' + ((5 - EXTRACT(ISODOW FROM (week_ending + INTERVAL '4 days'))::integer + 7) % 7) * INTERVAL '1 day')::date + TIME '09:00:00'
+      WHERE week_ending < (
+        -- Find the most recent Friday (start of current cycle)
+        CURRENT_DATE - (((EXTRACT(ISODOW FROM CURRENT_DATE)::int + 2) % 7))::int * INTERVAL '1 day'
+      )
     `);
     if ((result.rowCount ?? 0) > 0) {
       console.log(`[Cleanup] Deleted ${result.rowCount} expired weekly communication log(s) from database.`);

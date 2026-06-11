@@ -190,7 +190,12 @@ export const getChildCommunicationLogs = async (req: AuthRequest, res: Response)
        LEFT JOIN teachers t ON cl.teacher_id = t.id
        LEFT JOIN users u ON t.user_id = u.id
        WHERE cl.student_id = $1
-       ORDER BY cl.week_ending DESC`,
+         AND cl.week_ending >= (
+           -- Start of current cycle: most recent Friday
+           CURRENT_DATE - (((EXTRACT(ISODOW FROM CURRENT_DATE)::int + 2) % 7))::int * INTERVAL '1 day'
+         )
+       ORDER BY cl.week_ending DESC
+       LIMIT 1`,
       [studentId]
     );
 

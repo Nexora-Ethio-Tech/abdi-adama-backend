@@ -984,7 +984,7 @@ class TeacherService {
     const result = await pool.query(
       `SELECT cl.*
        FROM communication_logs cl
-       WHERE cl.teacher_id = $1 AND cl.week_ending = $2`,
+       WHERE cl.teacher_id = $1 AND DATE(cl.week_ending) = $2::date`,
       [teacherResult.rows[0].id, weekEnding]
     );
 
