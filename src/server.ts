@@ -92,6 +92,117 @@ async function bootstrap(): Promise<void> {
 
     await ensureEmailConfigDefaults();
 
+    // Automatically reconcile any unlinked payment-confirmed applications.
+    // This self-heals the production database on every server restart —
+    // no manual SQL scripts required.
+    async function reconcileUnlinkedApplications() {
+      try {
+        const appRes = await pool.query(
+          `SELECT id, applicant_name, applicant_email, grade_applying, branch_id, parent_user_id
+           FROM pending_applications
+           WHERE status = 'payment-confirmed' AND student_user_id IS NULL`
+        );
+
+        if (appRes.rows.length === 0) {
+          logger.info('[reconcile] All payment-confirmed applications are already linked. Nothing to do.');
+          return;
+        }
+
+        logger.info(`[reconcile] Found ${appRes.rows.length} unlinked payment-confirmed application(s). Healing...`);
+
+        // Lazy-require to avoid circular dependency
+        const userServiceInstance = require('./services/user.service').default;
+        const genPlaceholderEmail = (prefix: string) =>
+          `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}@no-reply.local`;
+
+        for (const app of appRes.rows) {
+          logger.info(`[reconcile] Healing application ${app.id} for "${app.applicant_name}"`);
+
+          if (!app.parent_user_id) {
+            logger.warn(`[reconcile] Skipping application ${app.id} — parent_user_id is missing.`);
+            continue;
+          }
+
+          // Try to find an already-created student account by email, then by name+branch
+          let studentUserId: string | null = null;
+
+          if (app.applicant_email) {
+            const byEmail = await pool.query(
+              `SELECT id FROM users WHERE email = $1 AND role = 'student' LIMIT 1`,
+              [app.applicant_email]
+            );
+            if (byEmail.rows.length > 0) {
+              studentUserId = byEmail.rows[0].id;
+              logger.info(`[reconcile] Found existing student by email: ${studentUserId}`);
+            }
+          }
+
+          if (!studentUserId) {
+            const byName = await pool.query(
+              `SELECT id FROM users WHERE name = $1 AND role = 'student' AND branch_id = $2 LIMIT 1`,
+              [app.applicant_name, app.branch_id]
+            );
+            if (byName.rows.length > 0) {
+              studentUserId = byName.rows[0].id;
+              logger.info(`[reconcile] Found existing student by name: ${studentUserId}`);
+            }
+          }
+
+          if (!studentUserId) {
+            const studentEmail = app.applicant_email || genPlaceholderEmail('student');
+            logger.info(`[reconcile] Creating new student account with email: ${studentEmail}`);
+            const created = await userServiceInstance.createUser(
+              {
+                name: app.applicant_name,
+                email: studentEmail,
+                role: 'student',
+                branchId: app.branch_id,
+                grade: app.grade_applying || '1',
+              },
+              'system-reconcile'
+            );
+            studentUserId = created.user.id;
+          }
+
+          const studentRow = await pool.query(
+            'SELECT id FROM students WHERE user_id = $1 LIMIT 1',
+            [studentUserId]
+          );
+          if (studentRow.rows.length === 0) {
+            logger.error(`[reconcile] No students row for user ${studentUserId}. Skipping.`);
+            continue;
+          }
+          const studentId = studentRow.rows[0].id;
+
+          const parentRow = await pool.query(
+            'SELECT id FROM parents WHERE user_id = $1 LIMIT 1',
+            [app.parent_user_id]
+          );
+          if (parentRow.rows.length === 0) {
+            logger.error(`[reconcile] No parents row for user ${app.parent_user_id}. Skipping.`);
+            continue;
+          }
+          const parentId = parentRow.rows[0].id;
+
+          await pool.query(
+            `UPDATE pending_applications SET student_user_id = $1, updated_at = NOW() WHERE id = $2`,
+            [studentUserId, app.id]
+          );
+
+          await pool.query(
+            `INSERT INTO parent_student (parent_id, student_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+            [parentId, studentId]
+          );
+
+          logger.info(`[reconcile] ✅ Linked student "${app.applicant_name}" (${studentId}) → parent (${parentId})`);
+        }
+      } catch (err: any) {
+        logger.error(`[reconcile] Auto-reconciliation error: ${err.message}`);
+      }
+    }
+
+    await reconcileUnlinkedApplications();
+
     // Keep monthly collection statuses fresh for the current month.
     // We sync TWO month strings each run during Pagume:
     //   1. The Gregorian YYYY-MM  (always — baseline cron)
