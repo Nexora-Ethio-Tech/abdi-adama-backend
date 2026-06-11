@@ -1718,20 +1718,8 @@ class TeacherService {
           );
         }
 
-        // Aggregate total score and update teachers table
-        const sumResult = await client.query(
-          `SELECT COALESCE(SUM(rating_value), 0) as total_score 
-           FROM teacher_ratings 
-           WHERE teacher_id = $1`,
-          [planCheck.rows[0].teacher_id]
-        );
-        const totalScore = parseInt(sumResult.rows[0].total_score) || 0;
-
-        await client.query(
-          `UPDATE teachers SET overall_rating_score = $1 WHERE id = $2`,
-          [totalScore, planCheck.rows[0].teacher_id]
-        );
       }
+
 
       await client.query('COMMIT');
       return result.rows[0];

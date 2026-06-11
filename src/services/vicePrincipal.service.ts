@@ -1171,9 +1171,9 @@ class VicePrincipalService {
         [branchId]
       );
 
-      // Reset vp_rating and overall_rating_score for all teachers in this branch
+      // Reset vp_rating for all teachers in this branch
       await client.query(
-        `UPDATE teachers SET vp_rating = 0, overall_rating_score = 0 WHERE branch_id = $1`,
+        `UPDATE teachers SET vp_rating = 0 WHERE branch_id = $1`,
         [branchId]
       );
 
