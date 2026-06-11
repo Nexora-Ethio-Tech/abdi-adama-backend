@@ -59,24 +59,42 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
          s.id,
          u.name AS "fullName",
          s.grade,
-         CASE WHEN COUNT(sa.*) = 0 THEN 'N/A' ELSE ROUND(COUNT(sa.*) FILTER (WHERE sa.status = 'present')::numeric / COUNT(sa.*) * 100, 1)::text || '%' END AS attendance,
-         COALESCE('Rank: ' || ss.academic_rank::text, 'Pending Results') AS performance,
-         COALESCE(course_count, 0) AS course_count,
+         CASE 
+           WHEN COUNT(sa.id) = 0 THEN 'N/A' 
+           ELSE ROUND(COUNT(sa.id) FILTER (WHERE sa.status = 'present')::numeric / COUNT(sa.id) * 100, 1)::text || '%' 
+         END AS attendance,
+         COALESCE(
+           (
+             SELECT 'Avg: ' || ROUND(AVG(g.score / g.total * 100), 1)::text || '%'
+             FROM grades g
+             WHERE g.student_id = s.id
+               AND g.is_submitted = true
+           ),
+           'Pending'
+         ) AS performance,
+         COALESCE(
+           (
+             SELECT COUNT(c.id)
+             FROM courses c
+             JOIN classes cl ON c.class_id = cl.id
+             WHERE (
+               (s.section_id IS NOT NULL AND cl.id = s.section_id)
+               OR (
+                 s.section_id IS NULL
+                 AND cl.branch_id = s.branch_id
+                 AND (cl.name = s.grade OR cl.name ILIKE 'Grade ' || s.grade || '%' OR cl.grade = s.grade)
+               )
+             )
+           ),
+           0
+         ) AS course_count,
          '[]'::json AS courses
        FROM parent_student ps
        JOIN students s ON ps.student_id = s.id
        JOIN users u ON s.user_id = u.id
        LEFT JOIN student_attendance sa ON sa.student_id = s.id
-       LEFT JOIN silo_student_stats ss ON s.id = ss.student_id
-       LEFT JOIN (
-         SELECT
-           e.student_id,
-           COUNT(*) AS course_count
-         FROM silo_enrollments e
-         GROUP BY e.student_id
-       ) AS course_stats ON course_stats.student_id = s.id
        WHERE ps.parent_id = $1
-       GROUP BY s.id, u.name, s.grade, ss.academic_rank, course_count
+       GROUP BY s.id, u.name, s.grade
        ORDER BY u.name ASC`,
       [parentId]
     );
@@ -93,6 +111,12 @@ export const getParentDashboard = async (req: AuthRequest, res: Response) => {
        FROM notices n
        WHERE n.created_at > NOW() - INTERVAL '30 days'
          AND (n.audience = 'all' OR n.audience = 'parent-student' OR n.audience LIKE '%parent%')
+         AND (n.branch_id IN (
+           SELECT DISTINCT s2.branch_id
+           FROM students s2
+           JOIN parent_student ps2 ON s2.id = ps2.student_id
+           WHERE ps2.parent_id = $1
+         ) OR n.branch_id IS NULL)
 
        UNION ALL
 
@@ -224,43 +248,31 @@ export const getChildTeachers = async (req: AuthRequest, res: Response) => {
       return sendError(res, access.error || 'Access denied', 403);
     }
 
-    // Get the student's grade/class and find teachers teaching to that class
-    const studentResult = await pool.query(
-      `SELECT grade FROM students WHERE id = $1`,
-      [studentId]
-    );
-
-    if (studentResult.rows.length === 0) {
-      return sendError(res, 'Student not found', 404);
-    }
-
-    const studentGrade = studentResult.rows[0].grade;
-
-    // Get teachers whose courses are for this student's grade
+    // Get teachers assigned to the courses of this student's section or grade
     const result = await pool.query(
-      `SELECT DISTINCT
-         t.id,
+      `SELECT
+         t.id::text,
          u.name,
          u.email,
-         t.subjects,
          ARRAY_AGG(DISTINCT c.name) AS courses,
          ARRAY_AGG(DISTINCT c.code) AS course_codes
-       FROM teachers t
-       JOIN users u ON t.user_id = u.id
-       LEFT JOIN courses c ON c.teacher_id = t.id
-       WHERE t.is_in_class = TRUE
-         OR c.id IN (
-           SELECT c2.id FROM courses c2 WHERE c2.teacher_id = t.id
+       FROM students st
+       JOIN classes cl ON (
+         (st.section_id IS NOT NULL AND cl.id = st.section_id)
+         OR (
+           st.section_id IS NULL
+           AND cl.branch_id = st.branch_id
+           AND (cl.name = st.grade OR cl.name ILIKE 'Grade ' || st.grade || '%' OR cl.grade = st.grade)
          )
-       GROUP BY t.id, u.name, u.email, t.subjects
+       )
+       JOIN courses c ON c.class_id = cl.id
+       JOIN teachers t ON c.teacher_id = t.id
+       JOIN users u ON t.user_id = u.id
+       WHERE st.id = $1
+       GROUP BY t.id, u.name, u.email
        ORDER BY u.name ASC`,
-      []
+      [studentId]
     );
-
-    // If no teachers found through normal query, return empty array with helpful message
-    if (result.rows.length === 0) {
-      return sendSuccess(res, []);
-    }
 
     return sendSuccess(res, result.rows);
   } catch (err: any) {
@@ -378,7 +390,7 @@ export const getChildAcademicHistory = async (req: AuthRequest, res: Response) =
       return sendError(res, access.error || 'Access denied', 403);
     }
 
-    const result = await pool.query(
+    let result = await pool.query(
       `SELECT
          ah.id,
          ah.year,
@@ -400,6 +412,53 @@ export const getChildAcademicHistory = async (req: AuthRequest, res: Response) =
        ORDER BY ah.year DESC, ah.semester DESC`,
       [studentId]
     );
+
+    if (result.rows.length === 0) {
+      // Fallback: build historical summaries from live grades table if academic_history table is empty
+      result = await pool.query(
+        `WITH course_scores AS (
+           SELECT
+             g.student_id,
+             g.academic_year AS year,
+             g.semester,
+             g.course_id,
+             c.name AS course_name,
+             s.grade AS grade_level,
+             ROUND(AVG(g.score / g.total * 100), 2) AS course_score
+           FROM grades g
+           JOIN students s ON g.student_id = s.id
+           JOIN courses c ON g.course_id = c.id
+           WHERE g.is_submitted = true
+           GROUP BY g.student_id, g.academic_year, g.semester, g.course_id, c.name, s.grade
+         )
+         SELECT
+           NULL AS id,
+           year,
+           semester::text,
+           grade_level,
+           ROUND(AVG(course_score), 2)::text AS average,
+           'N/A'::text AS rank,
+           NULL::text AS gpa,
+           NOW() AS created_at,
+           json_agg(json_build_object(
+             'course_name', course_name,
+             'grade', 
+               CASE 
+                 WHEN course_score >= 90 THEN 'A'
+                 WHEN course_score >= 80 THEN 'B'
+                 WHEN course_score >= 70 THEN 'C'
+                 WHEN course_score >= 60 THEN 'D'
+                 ELSE 'F'
+               END,
+             'score', course_score
+           )) AS courses
+         FROM course_scores
+         WHERE student_id = $1
+         GROUP BY year, semester, grade_level
+         ORDER BY year DESC, semester DESC`,
+        [studentId]
+      );
+    }
 
     return sendSuccess(res, result.rows);
   } catch (err: any) {
@@ -490,7 +549,7 @@ export const getDriverUpdates = async (req: AuthRequest, res: Response) => {
     }
 
     // Get driver updates for students assigned to routes that parent's children use.
-    // logistics_notices stores the posting user in sender_id, not driver_id.
+    // logistics_notices stores the posting user in driver_id.
     const result = await pool.query(
       `SELECT DISTINCT
          ln.id,
@@ -502,8 +561,8 @@ export const getDriverUpdates = async (req: AuthRequest, res: Response) => {
          u.name AS driver_contact_name,
          u.email AS driver_email
        FROM logistics_notices ln
-       LEFT JOIN users u ON ln.sender_id = u.id
-       WHERE ln.sender_id IN (
+       LEFT JOIN users u ON ln.driver_id = u.id
+       WHERE ln.driver_id IN (
          SELECT DISTINCT r.driver_id
          FROM routes r
          JOIN student_routes sr ON r.id = sr.route_id
@@ -539,21 +598,8 @@ export const getSchoolAnnouncements = async (req: AuthRequest, res: Response) =>
       return sendError(res, 'Parent account not found.', 404);
     }
 
-    // Get parent's branch through their children
-    const branchResult = await pool.query(
-      `SELECT DISTINCT b.id
-       FROM branches b
-       JOIN students s ON s.branch_id = b.id
-       JOIN parent_student ps ON s.id = ps.student_id
-       WHERE ps.parent_id = $1
-       LIMIT 1`,
-      [parentId]
-    );
-
-    const branchId = branchResult.rows[0]?.id || null;
-
-    // Get announcements
-    let announcementsQuery = `SELECT
+    // Get announcements filtered by parent's children's branches
+    const announcementsQuery = `SELECT
          n.id::text,
          n.title,
          n.content,
@@ -563,17 +609,17 @@ export const getSchoolAnnouncements = async (req: AuthRequest, res: Response) =>
        FROM notices n
        LEFT JOIN users u ON n.posted_by = u.id
        WHERE n.created_at > NOW() - INTERVAL '60 days'
-         AND (n.audience = 'all' OR n.audience = 'parent-student' OR n.audience LIKE '%parent%')`;
+         AND (n.audience = 'all' OR n.audience = 'parent-student' OR n.audience LIKE '%parent%')
+         AND (n.branch_id IN (
+           SELECT DISTINCT s2.branch_id
+           FROM students s2
+           JOIN parent_student ps2 ON s2.id = ps2.student_id
+           WHERE ps2.parent_id = $1
+         ) OR n.branch_id IS NULL)
+       ORDER BY n.created_at DESC
+       LIMIT 20`;
 
-    const queryParams: any[] = [];
-    if (branchId) {
-      announcementsQuery += ` AND (n.branch_id = $1 OR n.branch_id IS NULL)`;
-      queryParams.push(branchId);
-    }
-
-    announcementsQuery += ` ORDER BY n.created_at DESC LIMIT 20`;
-
-    const result = await pool.query(announcementsQuery, queryParams);
+    const result = await pool.query(announcementsQuery, [parentId]);
 
     return sendSuccess(res, result.rows);
   } catch (err: any) {
@@ -604,15 +650,15 @@ export const getFinanceSummary = async (req: AuthRequest, res: Response) => {
       `SELECT
          s.id AS student_id,
          u.name AS student_name,
-         s.monthly_fee,
-         s.bus_fee,
-         s.penalty_fee,
+         COALESCE(s.monthly_fee, 0) AS monthly_fee,
+         COALESCE(s.bus_fee, 0) AS bus_fee,
+         COALESCE(s.penalty_fee, 0) AS penalty_fee,
          s.fee_status,
          s.fee_approval_status,
          s.fee_notes,
          COALESCE(SUM(ft.amount), 0) AS total_transactions,
-         (s.monthly_fee + s.bus_fee + s.penalty_fee) AS total_fees,
-         ((s.monthly_fee + s.bus_fee + s.penalty_fee) - COALESCE(SUM(ft.amount), 0)) AS balance_due
+         (COALESCE(s.monthly_fee, 0) + COALESCE(s.bus_fee, 0) + COALESCE(s.penalty_fee, 0)) AS total_fees,
+         ((COALESCE(s.monthly_fee, 0) + COALESCE(s.bus_fee, 0) + COALESCE(s.penalty_fee, 0)) - COALESCE(SUM(ft.amount), 0)) AS balance_due
        FROM parent_student ps
        JOIN students s ON ps.student_id = s.id
        JOIN users u ON s.user_id = u.id
