@@ -1,58 +1,57 @@
 name: Deploy to cPanel
 
 on:
-push:
-branches:
-- experimental
+  push:
+    branches:
+      - experimental
 
 jobs:
-deploy:
-runs-on: ubuntu-latest
+  deploy:
+    runs-on: ubuntu-latest
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  - name: Setup Node
-    uses: actions/setup-node@v4
-    with:
-      node-version: 20
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-  - name: Install Dependencies
-    run: npm ci
+      - name: Install Dependencies
+        run: npm ci
 
-  - name: Build Project
-    run: npm run build
+      - name: Build Project
+        run: npm run build
 
-  - name: Prepare Deploy Folder
-    run: |
-      rm -rf deploy
-      mkdir -p deploy
+      - name: Prepare Deploy Folder
+        run: |
+          rm -rf deploy
+          mkdir -p deploy
 
-      # Compiled backend
-      cp -r dist deploy/dist
+          # Compiled backend
+          cp -r dist deploy/dist
 
-      # Package files
-      cp package.json deploy/package.json
+          # Package files
+          cp package.json deploy/package.json
 
-      if [ -f package-lock.json ]; then
-        cp package-lock.json deploy/package-lock.json
-      fi
+          if [ -f package-lock.json ]; then
+            cp package-lock.json deploy/package-lock.json
+          fi
 
-      # SQL migrations required by ensureSchemaExtensions()
-      mkdir -p deploy/database
-      cp -r database/newmigrations deploy/database/
+          # SQL migrations required by ensureSchemaExtensions()
+          mkdir -p deploy/database
+          cp -r database/newmigrations deploy/database/
 
-      # Passenger restart trigger
-      mkdir -p deploy/tmp
-      echo "restart $(date)" > deploy/tmp/restart.txt
+          # Passenger restart trigger
+          mkdir -p deploy/tmp
+          echo "restart $(date)" > deploy/tmp/restart.txt
 
-  - name: Upload to cPanel via FTP
-    uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-    with:
-      server: ${{ secrets.FTP_SERVER }}
-      username: ${{ secrets.FTP_USERNAME }}
-      password: ${{ secrets.FTP_PASSWORD }}
-
-      local-dir: ./deploy/
-      server-dir: /
+      - name: Upload to cPanel via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./deploy/
+          server-dir: /
