@@ -1696,13 +1696,27 @@ class TeacherService {
           throw new Error('You have already rated this teacher this week. Department Head ratings are limited to once per week per teacher.');
         }
 
-        await client.query(
-          `INSERT INTO teacher_ratings (teacher_id, weekly_plan_id, rating_value, rated_by)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (weekly_plan_id)
-           DO UPDATE SET rating_value = EXCLUDED.rating_value, rated_by = EXCLUDED.rated_by, created_at = NOW()`,
-          [planCheck.rows[0].teacher_id, planId, ratingPoints, teacherId]
+        // The database does not have a unique constraint on weekly_plan_id, so ON CONFLICT will throw 42P10.
+        // We do a manual check instead to perform an UPSERT.
+        const existingPlanRating = await client.query(
+          `SELECT id FROM teacher_ratings WHERE weekly_plan_id = $1 LIMIT 1`,
+          [planId]
         );
+
+        if (existingPlanRating.rows.length > 0) {
+          await client.query(
+            `UPDATE teacher_ratings 
+             SET rating_value = $1, rated_by = $2, created_at = NOW() 
+             WHERE weekly_plan_id = $3`,
+            [ratingPoints, teacherId, planId]
+          );
+        } else {
+          await client.query(
+            `INSERT INTO teacher_ratings (teacher_id, weekly_plan_id, rating_value, rated_by)
+             VALUES ($1, $2, $3, $4)`,
+            [planCheck.rows[0].teacher_id, planId, ratingPoints, teacherId]
+          );
+        }
 
         // Aggregate total score and update teachers table
         const sumResult = await client.query(
