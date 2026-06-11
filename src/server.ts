@@ -35,7 +35,8 @@ async function ensureSchemaExtensions(): Promise<void> {
     '19th_add_rating_excellent_to_communication_logs.sql',
     '20th_add_audience_to_notices.sql',
     '21st_add_category_to_notices.sql',
-    '22nd_add_overall_rating_score_to_teachers.sql'
+    '22nd_add_overall_rating_score_to_teachers.sql',
+    '23rd_library_loans_enhancement.sql'
   ];
 
   for (const fileName of migrationFiles) {
