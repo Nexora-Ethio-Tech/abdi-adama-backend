@@ -1894,9 +1894,9 @@ class FinanceClerkService {
       JOIN users u ON s.user_id = u.id
       WHERE s.id = $1
     `;
-    
+
     const params: any[] = [studentId];
-    
+
     if (branchId) {
       // Verify the student belongs to the requesting finance clerk's branch
       const branchCheckRes = await pool.query(query + ' AND s.branch_id = $2', [...params, branchId]);
@@ -1905,7 +1905,7 @@ class FinanceClerkService {
       }
       return branchCheckRes.rows[0];
     }
-    
+
     const res = await pool.query(query, params);
     if (res.rows.length === 0) {
       throw new Error('Student not found');
@@ -1917,7 +1917,7 @@ class FinanceClerkService {
   async sendSmsToParent(studentId: string, message: string, branchId?: string) {
     // 1. Get student and parent phone
     const student = await this.getStudentParentPhone(studentId, branchId);
-    
+
     if (!student.parent_phone || !student.parent_phone.trim()) {
       throw new Error('Parent phone number not found for this student');
     }
@@ -1933,7 +1933,7 @@ class FinanceClerkService {
     if (!message || message.trim().length === 0) {
       throw new Error('Message cannot be empty');
     }
-    
+
     if (message.length > 160) {
       throw new Error('Message cannot exceed 160 characters');
     }
