@@ -273,7 +273,7 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
   // Verify and decode token
   jwt.verify(token, JWT_SECRET, async (err: any, user: any) => {
     if (err) {
-      res.status(403).json({ message: 'Invalid or expired token' });
+      res.status(401).json({ message: 'Invalid or expired token' });
       return;
     }
 
