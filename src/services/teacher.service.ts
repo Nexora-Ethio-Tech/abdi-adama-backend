@@ -1679,12 +1679,35 @@ class TeacherService {
 
       if (reviewData.rating) {
         const ratingPoints = reviewData.rating * 100; // 1 -> 100, 2 -> 200, 3 -> 300
+
+        // Compute ISO year-week key (e.g. "2026-W24") for the once-per-week constraint
+        const now = new Date();
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+        const weekNum = Math.ceil(((now.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
+        const isoWeekKey = `${now.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+
+        // Check if the dept head has already rated this teacher this week
+        const weeklyCheck = await client.query(
+          `SELECT id FROM teacher_ratings
+           WHERE teacher_id = $1
+             AND rated_by = $2
+             AND week_year_key = $3
+             AND weekly_plan_id != $4
+           LIMIT 1`,
+          [planCheck.rows[0].teacher_id, teacherId, isoWeekKey, planId]
+        );
+
+        if (weeklyCheck.rows.length > 0) {
+          throw new Error('You have already rated this teacher this week. Department Head ratings are limited to once per week per teacher.');
+        }
+
         await client.query(
-          `INSERT INTO teacher_ratings (teacher_id, weekly_plan_id, rating_value, rated_by)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO teacher_ratings (teacher_id, weekly_plan_id, rating_value, rated_by, week_year_key)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (weekly_plan_id)
-           DO UPDATE SET rating_value = EXCLUDED.rating_value, rated_by = EXCLUDED.rated_by, created_at = NOW()`,
-          [planCheck.rows[0].teacher_id, planId, ratingPoints, teacherId]
+           DO UPDATE SET rating_value = EXCLUDED.rating_value, rated_by = EXCLUDED.rated_by,
+                         week_year_key = EXCLUDED.week_year_key, created_at = NOW()`,
+          [planCheck.rows[0].teacher_id, planId, ratingPoints, teacherId, isoWeekKey]
         );
 
         // Aggregate total score and update teachers table
