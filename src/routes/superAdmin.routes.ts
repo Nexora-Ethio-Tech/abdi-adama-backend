@@ -119,6 +119,7 @@ router.get('/users/:id', superAdminController.getUserById);
 router.post('/users/:id', validate(schemas.updateUser), superAdminController.updateUser);
 router.post('/users/:id/status', validate(schemas.updateUserStatus), superAdminController.updateUserStatus);
 router.post('/users/:id/reset-pin', superAdminController.resetUserPIN);
+router.post('/users/:id/reset-password', superAdminController.resetUserPassword);
 router.delete('/users/:id', superAdminController.deleteUser);
 
 // Branch Management

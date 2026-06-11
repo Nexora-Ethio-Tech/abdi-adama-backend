@@ -335,6 +335,32 @@ class UserService {
 
     return { userId, name: user.name, newPIN };
   }
+
+  async resetUserPassword(userId: string): Promise<{ userId: string; name: string; temporaryPassword: string }> {
+    const userCheck = await pool.query(
+      `SELECT id, name, role FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      throw new Error('User not found');
+    }
+
+    const user = userCheck.rows[0];
+
+    // Generate a temporary password
+    const temporaryPassword = generateRandomPassword();
+    const hashedPassword = await hashPassword(temporaryPassword);
+
+    await pool.query(
+      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [hashedPassword, userId]
+    );
+
+    logger.info(`Password reset for user: ${userId} (${user.name})`);
+
+    return { userId, name: user.name, temporaryPassword };
+  }
 }
 
 export default new UserService();

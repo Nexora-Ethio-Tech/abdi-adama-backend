@@ -163,6 +163,22 @@ class SuperAdminController {
     }
   }
 
+  async resetUserPassword(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      const result = await userService.resetUserPassword(id);
+
+      res.json({
+        success: true,
+        data: result,
+        message: `Password reset successfully. Temporary password: ${result.temporaryPassword}`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getAllUsers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { role, branchId, status } = req.query;
