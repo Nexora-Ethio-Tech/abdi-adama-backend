@@ -963,101 +963,28 @@ class SchoolAdminService {
 
 
   async updateApplicationStatus(applicationId: string, status: string, reviewerId?: string, gradeApplying?: string) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    const params: any[] = [status];
+    let query = `UPDATE pending_applications SET status = $1`;
 
-      const params: any[] = [status];
-      let query = `UPDATE pending_applications SET status = $1`;
-
-      if (typeof gradeApplying === 'string' && gradeApplying.trim().length > 0) {
-        query += `, grade_applying = $${params.length + 1}`;
-        params.push(gradeApplying.trim());
-      }
-
-      if (status === 'awaiting-payment' && reviewerId) {
-        query += `, reviewed_by = $${params.length + 1}`;
-        params.push(reviewerId);
-      }
-
-      query += `, updated_at = NOW() WHERE id = $${params.length + 1} RETURNING *`;
-      params.push(applicationId);
-
-      const result = await client.query(query, params);
-      if (result.rows.length === 0) {
-        throw new Error('Application not found');
-      }
-
-      let app = result.rows[0];
-
-      // Automatically register student and link parent if status is payment-confirmed and student_user_id is missing
-      if (status === 'payment-confirmed' && !app.student_user_id) {
-        const userServiceInstance = require('./user.service').default;
-
-        const genPlaceholderEmail = (prefix: string) =>
-          `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}@no-reply.local`;
-
-        const studentEmail = app.applicant_email || genPlaceholderEmail('student');
-        
-        const studentCreate = await userServiceInstance.createUser(
-          {
-            name: app.applicant_name,
-            email: studentEmail,
-            role: 'student',
-            branchId: app.branch_id,
-            grade: app.grade_applying || gradeApplying || '1',
-          },
-          reviewerId || 'system-auto'
-        );
-
-        const studentUserId = studentCreate.user.id;
-
-        const studentIdRes = await client.query(
-          'SELECT id FROM students WHERE user_id = $1 LIMIT 1',
-          [studentUserId]
-        );
-        
-        if (studentIdRes.rows.length > 0) {
-          const studentId = studentIdRes.rows[0].id;
-
-          // Link in parent_student table if parent_user_id is available
-          if (app.parent_user_id) {
-            const parentIdRes = await client.query(
-              'SELECT id FROM parents WHERE user_id = $1 LIMIT 1',
-              [app.parent_user_id]
-            );
-            if (parentIdRes.rows.length > 0) {
-              const parentId = parentIdRes.rows[0].id;
-              await client.query(
-                `INSERT INTO parent_student (parent_id, student_id)
-                 VALUES ($1, $2)
-                 ON CONFLICT DO NOTHING`,
-                [parentId, studentId]
-              );
-            }
-          }
-
-          // Update application student_user_id
-          const updateAppRes = await client.query(
-            `UPDATE pending_applications
-             SET student_user_id = $1,
-                 updated_at = NOW()
-             WHERE id = $2
-             RETURNING *`,
-            [studentUserId, app.id]
-          );
-          app = updateAppRes.rows[0];
-        }
-      }
-
-      await client.query('COMMIT');
-      return app;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+    if (typeof gradeApplying === 'string' && gradeApplying.trim().length > 0) {
+      query += `, grade_applying = $${params.length + 1}`;
+      params.push(gradeApplying.trim());
     }
+
+    if (status === 'awaiting-payment' && reviewerId) {
+      query += `, reviewed_by = $${params.length + 1}`;
+      params.push(reviewerId);
+    }
+
+    query += `, updated_at = NOW() WHERE id = $${params.length + 1} RETURNING *`;
+    params.push(applicationId);
+
+    const result = await pool.query(query, params);
+    if (result.rows.length === 0) {
+      throw new Error('Application not found');
+    }
+
+    return result.rows[0];
   }
 
   // Finance: get applications assigned for finance review
@@ -2006,13 +1933,13 @@ class SchoolAdminService {
       }
       const teacherId = teacherCheck.rows[0].id;
 
-      const { 
+      const {
         removePromotion,
-        roles, 
+        roles,
         promotionType,
-        grades, 
-        subjects, 
-        sections, 
+        grades,
+        subjects,
+        sections,
         beforeSchool,
         headOfDepartment,
         homeTeacher
