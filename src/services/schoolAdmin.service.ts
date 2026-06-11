@@ -963,28 +963,94 @@ class SchoolAdminService {
 
 
   async updateApplicationStatus(applicationId: string, status: string, reviewerId?: string, gradeApplying?: string) {
-    const params: any[] = [status];
-    let query = `UPDATE pending_applications SET status = $1`;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    if (typeof gradeApplying === 'string' && gradeApplying.trim().length > 0) {
-      query += `, grade_applying = $${params.length + 1}`;
-      params.push(gradeApplying.trim());
+      const params: any[] = [status];
+      let query = `UPDATE pending_applications SET status = $1`;
+
+      if (typeof gradeApplying === 'string' && gradeApplying.trim().length > 0) {
+        query += `, grade_applying = $${params.length + 1}`;
+        params.push(gradeApplying.trim());
+      }
+
+      if (status === 'awaiting-payment' && reviewerId) {
+        query += `, reviewed_by = $${params.length + 1}`;
+        params.push(reviewerId);
+      }
+
+      query += `, updated_at = NOW() WHERE id = $${params.length + 1} RETURNING *`;
+      params.push(applicationId);
+
+      const result = await client.query(query, params);
+      if (result.rows.length === 0) {
+        throw new Error('Application not found');
+      }
+
+      let app = result.rows[0];
+
+      // When status moves to payment-confirmed and no student account exists yet,
+      // automatically create the student and link the parent_student bridge table.
+      // This prevents the "Please link a child student account" error in the Parent Portal
+      // when applications are approved via the admin UI rather than the finance approval flow.
+      if (status === 'payment-confirmed' && !app.student_user_id) {
+        const userServiceInstance = require('./user.service').default;
+        const genPlaceholderEmail = (prefix: string) =>
+          `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}@no-reply.local`;
+
+        const studentEmail = app.applicant_email || genPlaceholderEmail('student');
+
+        const studentCreate = await userServiceInstance.createUser(
+          {
+            name: app.applicant_name,
+            email: studentEmail,
+            role: 'student',
+            branchId: app.branch_id,
+            grade: app.grade_applying || gradeApplying || '1',
+          },
+          reviewerId || 'system-auto'
+        );
+
+        const studentUserId = studentCreate.user.id;
+
+        const studentIdRes = await client.query(
+          'SELECT id FROM students WHERE user_id = $1 LIMIT 1',
+          [studentUserId]
+        );
+
+        if (studentIdRes.rows.length > 0) {
+          const studentId = studentIdRes.rows[0].id;
+
+          if (app.parent_user_id) {
+            const parentIdRes = await client.query(
+              'SELECT id FROM parents WHERE user_id = $1 LIMIT 1',
+              [app.parent_user_id]
+            );
+            if (parentIdRes.rows.length > 0) {
+              await client.query(
+                `INSERT INTO parent_student (parent_id, student_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+                [parentIdRes.rows[0].id, studentId]
+              );
+            }
+          }
+
+          const updated = await client.query(
+            `UPDATE pending_applications SET student_user_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+            [studentUserId, app.id]
+          );
+          app = updated.rows[0];
+        }
+      }
+
+      await client.query('COMMIT');
+      return app;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    if (status === 'awaiting-payment' && reviewerId) {
-      query += `, reviewed_by = $${params.length + 1}`;
-      params.push(reviewerId);
-    }
-
-    query += `, updated_at = NOW() WHERE id = $${params.length + 1} RETURNING *`;
-    params.push(applicationId);
-
-    const result = await pool.query(query, params);
-    if (result.rows.length === 0) {
-      throw new Error('Application not found');
-    }
-
-    return result.rows[0];
   }
 
   // Finance: get applications assigned for finance review
