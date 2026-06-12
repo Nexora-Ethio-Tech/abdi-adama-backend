@@ -1058,10 +1058,10 @@ class SuperAdminService {
     );
 
     const settings: Record<string, string> = {
-      smtp_host: '',
-      smtp_port: '587',
-      smtp_user: '',
-      smtp_from: '',
+      smtp_host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      smtp_port: process.env.SMTP_PORT || '587',
+      smtp_user: process.env.SMTP_USER || 'abdiadamaschooloffice@gmail.com',
+      smtp_from: process.env.SMTP_FROM || 'abdiadamaschooloffice@gmail.com',
     };
     for (const row of result.rows) {
       settings[row.key] = row.value;

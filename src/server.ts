@@ -75,16 +75,19 @@ async function bootstrap(): Promise<void> {
         const defaults: Record<string, string> = {
           smtp_host: process.env.SMTP_HOST || 'smtp.gmail.com',
           smtp_port: process.env.SMTP_PORT || '587',
-          smtp_user: process.env.SMTP_USER || '',
-          smtp_from: process.env.SMTP_FROM || (process.env.SMTP_USER || ''),
+          smtp_user: process.env.SMTP_USER || 'abdiadamaschooloffice@gmail.com',
+          smtp_from: process.env.SMTP_FROM || 'abdiadamaschooloffice@gmail.com',
+          smtp_pass: process.env.SMTP_PASS || 'gdgg eify uzec fhox',
         };
 
         for (const [key, value] of Object.entries(defaults)) {
-          // Only insert when key is missing; preserve any existing admin-provided values
+          // Check if it exists or needs to be inserted/updated
           await pool.query(
             `INSERT INTO public.email_config (key, value, updated_by, updated_at)
                VALUES ($1, $2, 'system', NOW())
-               ON CONFLICT (key) DO NOTHING`,
+               ON CONFLICT (key) DO UPDATE
+               SET value = EXCLUDED.value
+               WHERE email_config.value IS NULL OR email_config.value = ''`,
             [key, value]
           );
         }
@@ -95,6 +98,29 @@ async function bootstrap(): Promise<void> {
     }
 
     await ensureEmailConfigDefaults();
+
+    // Load saved SMTP config from DB into process.env so the email transporter
+    // picks up the correct credentials immediately on first use after startup.
+    try {
+      const smtpRows = await pool.query(
+        `SELECT key, value FROM public.email_config WHERE key IN ('smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from')`
+      );
+      for (const row of smtpRows.rows) {
+        if (row.value) {
+          const envKey = row.key === 'smtp_from' ? 'SMTP_FROM' : (row.key as string).toUpperCase();
+          process.env[envKey] = row.value;
+        }
+      }
+      // Ensure sensible fallbacks are always present even if DB rows are absent
+      if (!process.env.SMTP_HOST) process.env.SMTP_HOST = 'smtp.gmail.com';
+      if (!process.env.SMTP_PORT) process.env.SMTP_PORT = '587';
+      if (!process.env.SMTP_USER) process.env.SMTP_USER = 'abdiadamaschooloffice@gmail.com';
+      if (!process.env.SMTP_FROM) process.env.SMTP_FROM = 'abdiadamaschooloffice@gmail.com';
+      if (!process.env.SMTP_PASS) process.env.SMTP_PASS = 'gdgg eify uzec fhox';
+      logger.info('[EMAIL] SMTP env vars loaded from DB config');
+    } catch (err: any) {
+      logger.warn(`[EMAIL] Could not load SMTP config from DB: ${err.message}`);
+    }
 
     // Automatically reconcile any unlinked payment-confirmed applications.
     // This self-heals the production database on every server restart —
