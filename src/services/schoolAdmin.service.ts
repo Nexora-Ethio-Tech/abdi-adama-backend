@@ -2,6 +2,36 @@ import pool from '../config/database';
 import userService from './user.service';
 import { generate4DigitPIN, hashPassword } from '../utils/password';
 import { sendAdmissionCredentialsEmail } from '../utils/emailService';
+import { gregorianToEthiopian } from '../shared/ethiopianCalendar';
+
+export function getEthiopianNow() {
+  const now = new Date();
+  const eatMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + (3 * 60 * 60 * 1000);
+  const eatDate = new Date(eatMs);
+  const ethParts = gregorianToEthiopian(eatDate);
+  const dateStr = `${ethParts.year}-${String(ethParts.month).padStart(2, '0')}-${String(ethParts.day).padStart(2, '0')}`;
+  
+  let ethHour = eatDate.getHours() - 6;
+  if (ethHour < 0) ethHour += 24;
+  const time24 = `${ethHour.toString().padStart(2, '0')}:${eatDate.getMinutes().toString().padStart(2, '0')}:${eatDate.getSeconds().toString().padStart(2, '0')}`;
+  
+  const meridiem = ethHour >= 12 ? 'PM' : 'AM';
+  let displayHour = ethHour % 12;
+  if (displayHour === 0) displayHour = 12;
+  const time12 = `${displayHour.toString().padStart(2, '0')}:${eatDate.getMinutes().toString().padStart(2, '0')} ${meridiem}`;
+
+  return { dateStr, time24, time12 };
+}
+
+export function formatEthiopianTime(date: Date): string {
+  let ethHour = date.getHours() - 6;
+  if (ethHour < 0) ethHour += 24;
+  const meridiem = ethHour >= 12 ? 'PM' : 'AM';
+  let displayHour = ethHour % 12;
+  if (displayHour === 0) displayHour = 12;
+  return `${displayHour.toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')} ${meridiem}`;
+}
+
 
 class SchoolAdminService {
   // User Management (existing methods)
@@ -43,11 +73,12 @@ class SchoolAdminService {
 
   /**
    * Returns all branch staff members with their biometric attendance status for a given date.
-   * Excludes students and parents. Uses Ethiopian calendar dates throughout.
+   * - Teachers with no punch after 08:20 (2:20 AM Ethiopian) are dynamically shown as 'absent'.
+   * - is_late_arrival flag is returned so the UI can show "Present (Late)".
    */
   async getStaffAttendance(branchId: string, date: string) {
-    // Use Ethiopian date directly (YYYY-MM-DD format in Ethiopian calendar)
-    const targetDate = date || new Date().toLocaleDateString('en-CA');
+    const ethNow = getEthiopianNow();
+    const targetDate = date || ethNow.dateStr;
 
     const result = await pool.query(
       `SELECT
@@ -62,47 +93,145 @@ class SchoolAdminService {
           COALESCE(
             t.department,
             CASE u.role
-              WHEN 'teacher'       THEN 'Academics'
-              WHEN 'finance-clerk' THEN 'Finance'
-              WHEN 'librarian'     THEN 'Library'
-              WHEN 'clinic-admin'  THEN 'Clinic'
-              WHEN 'driver'        THEN 'Transport'
-              WHEN 'auditor'       THEN 'Audit'
-              WHEN 'school-admin'  THEN 'Administration'
+              WHEN 'teacher'        THEN 'Academics'
+              WHEN 'finance-clerk'  THEN 'Finance'
+              WHEN 'librarian'      THEN 'Library'
+              WHEN 'clinic-admin'   THEN 'Clinic'
+              WHEN 'driver'         THEN 'Transport'
+              WHEN 'auditor'        THEN 'Audit'
+              WHEN 'school-admin'   THEN 'Administration'
               WHEN 'vice-principal' THEN 'Administration'
               ELSE u.role::text
             END
           ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
-          ea.status                          AS attendance_status,
+          -- Effective status: teachers auto-absent when past 02:20 AM Ethiopian time with no punch
+          CASE
+            WHEN ea.status IS NOT NULL THEN ea.status
+            WHEN ea.id IS NULL
+              AND u.role::text IN ('teacher', 'vice-principal')
+              AND (
+                $2::date < $3::date
+                OR ($2::date = $3::date AND $4::time > TIME '02:20:00')
+              )
+            THEN 'absent'
+            ELSE NULL
+          END                              AS attendance_status,
+          COALESCE(ea.is_late_arrival, false) AS is_late_arrival,
           ea.sign_in_time,
           ea.lunch_out_time,
           ea.lunch_in_time,
           ea.sign_out_time,
           ea.recorded_by,
-          ea.created_at                      AS attendance_recorded_at,
-          CASE WHEN ea.recorded_by = 'zk-machine' THEN true ELSE false END AS is_biometric
+          ea.created_at                    AS attendance_recorded_at,
+          CASE
+            WHEN ea.recorded_by = 'zk-machine'    THEN true
+            ELSE false
+          END                              AS is_biometric
        FROM users u
        LEFT JOIN branches b ON b.id = u.branch_id
        LEFT JOIN teachers t ON t.user_id = u.id
        LEFT JOIN employee_attendance ea
-              ON ea.user_id = u.id AND ea.date = $2
+              ON ea.user_id = u.id AND ea.date = $2::date
        WHERE u.branch_id = $1
          AND u.role NOT IN ('student', 'parent', 'super-admin')
          AND u.status = 'Approved'
        ORDER BY
-         CASE COALESCE(ea.status, 'Unknown')
-           WHEN 'Absent'  THEN 1
-           WHEN 'Unknown' THEN 2
-           WHEN 'Present' THEN 3
+         -- Absent / auto-absent first (VP can act on them), then late, half-day, present, no-punch
+         CASE
+           WHEN COALESCE(ea.status,
+             CASE
+               WHEN ea.id IS NULL AND u.role::text IN ('teacher', 'vice-principal')
+                 AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
+               THEN 'absent' ELSE 'zzz' END
+           ) = 'absent'   THEN 1
+           WHEN COALESCE(ea.status,'zzz') = 'late'     THEN 2
+           WHEN COALESCE(ea.status,'zzz') = 'half-day' THEN 3
+           WHEN COALESCE(ea.status,'zzz') = 'present'  THEN 4
+           ELSE 5
          END,
          u.name`,
-      [branchId, targetDate]
+      [branchId, targetDate, ethNow.dateStr, ethNow.time24]
     );
 
     return result.rows;
   }
+
+  /**
+   * Manually record / update staff attendance for a given date.
+   * Auto-timestamps each punch slot to NOW() (admin-recorded time) if not explicitly provided.
+   * Computes status and is_late_arrival using the same rules as the biometric machine.
+   */
+  async recordStaffAttendance(data: {
+    adminId: string;
+    userId: string;
+    date: string;
+    status?: string;
+    sign_in_time?: string;
+    lunch_out_time?: string;
+    lunch_in_time?: string;
+    sign_out_time?: string;
+  }) {
+    const { adminId, userId, date, status, sign_in_time, lunch_out_time, lunch_in_time, sign_out_time } = data;
+
+    // Compute is_late_arrival from the Arrival time string ("HH:MM AM/PM" in Ethiopian clock)
+    // Ethiopian clock is 12h starting at 06:00 AM Gregorian (=12:00 AM Ethiopian).
+    // The late cutoff is 02:20 AM Ethiopian = 2*60+20 = 140 minutes past Ethiopian midnight.
+    let isLateArrival = false;
+    if (sign_in_time) {
+      const [timePart, meridiem] = sign_in_time.split(' ');
+      const [hStr, mStr] = timePart.split(':');
+      let h = parseInt(hStr, 10);
+      const m = parseInt(mStr, 10);
+      // Convert Ethiopian 12h to 24h (Ethiopian hours 0–23 past midnight/dawn)
+      if (meridiem === 'PM' && h !== 12) h += 12;
+      if (meridiem === 'AM' && h === 12) h = 0;
+      const totalMin = h * 60 + m;
+      isLateArrival = totalMin > 2 * 60 + 20; // 02:20 AM Ethiopian clock
+    }
+
+    // Compute effective status if not explicitly supplied
+    let computedStatus = status;
+    if (!computedStatus) {
+      if (sign_in_time && lunch_out_time && lunch_in_time && sign_out_time) {
+        computedStatus = 'present';
+      } else if (sign_in_time) {
+        computedStatus = isLateArrival ? 'late' : 'half-day';
+      } else {
+        computedStatus = 'absent';
+      }
+    }
+
+    const result = await pool.query(
+      `INSERT INTO employee_attendance
+         (user_id, date, status, recorded_by, sign_in_time, lunch_out_time, lunch_in_time, sign_out_time, is_late_arrival, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+       ON CONFLICT (user_id, date) DO UPDATE SET
+         status          = EXCLUDED.status,
+         recorded_by     = EXCLUDED.recorded_by,
+         sign_in_time    = COALESCE(EXCLUDED.sign_in_time,    employee_attendance.sign_in_time),
+         lunch_out_time  = COALESCE(EXCLUDED.lunch_out_time,  employee_attendance.lunch_out_time),
+         lunch_in_time   = COALESCE(EXCLUDED.lunch_in_time,   employee_attendance.lunch_in_time),
+         sign_out_time   = COALESCE(EXCLUDED.sign_out_time,   employee_attendance.sign_out_time),
+         is_late_arrival = EXCLUDED.is_late_arrival
+       RETURNING *`,
+      [
+        userId,
+        date,
+        computedStatus,
+        `admin-manual:${adminId}`,
+        sign_in_time || null,
+        lunch_out_time || null,
+        lunch_in_time || null,
+        sign_out_time || null,
+        isLateArrival,
+      ]
+    );
+
+    return result.rows[0];
+  }
+
 
   async getUserById(userId: string, branchId: string) {
     const result = await pool.query(

@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import { getCurrentECYear, getCurrentSemester, formatSemester } from '../shared/ethiopianCalendar';
+import { getEthiopianNow } from './schoolAdmin.service';
 
 class VicePrincipalService {
   // Absence Queue Management
@@ -203,7 +204,8 @@ class VicePrincipalService {
    * Excludes students and parents. Used by Vice Principal for dashboard monitoring and proxy suggestions.
    */
   async getStaffAttendance(branchId: string, date: string) {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const ethNow = getEthiopianNow();
+    const targetDate = date || ethNow.dateStr;
 
     const result = await pool.query(
       `SELECT
@@ -231,30 +233,53 @@ class VicePrincipalService {
           ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
-          ea.status                          AS attendance_status,
+          -- Effective status: staff auto-absent when past 02:20 AM Ethiopian time with no punch
+          CASE
+            WHEN ea.status IS NOT NULL THEN ea.status
+            WHEN ea.id IS NULL
+              AND u.role::text IN ('teacher', 'vice-principal')
+              AND (
+                $2::date < $3::date
+                OR ($2::date = $3::date AND $4::time > TIME '02:20:00')
+              )
+            THEN 'absent'
+            ELSE NULL
+          END                              AS attendance_status,
+          COALESCE(ea.is_late_arrival, false) AS is_late_arrival,
           ea.sign_in_time,
           ea.lunch_out_time,
           ea.lunch_in_time,
           ea.sign_out_time,
           ea.recorded_by,
-          ea.created_at                      AS attendance_recorded_at,
-          CASE WHEN ea.recorded_by = 'zk-machine' THEN true ELSE false END AS is_biometric
+          ea.created_at                    AS attendance_recorded_at,
+          CASE
+            WHEN ea.recorded_by = 'zk-machine' THEN true
+            ELSE false
+          END                              AS is_biometric
        FROM users u
        LEFT JOIN branches b ON b.id = u.branch_id
        LEFT JOIN teachers t ON t.user_id = u.id
        LEFT JOIN employee_attendance ea
-              ON ea.user_id = u.id AND ea.date = $2
+              ON ea.user_id = u.id AND ea.date = $2::date
        WHERE u.branch_id = $1
          AND u.role NOT IN ('student', 'parent', 'super-admin')
          AND u.status = 'Approved'
        ORDER BY
-         CASE COALESCE(ea.status, 'Unknown')
-           WHEN 'Absent'  THEN 1
-           WHEN 'Unknown' THEN 2
-           WHEN 'Present' THEN 3
+         -- Absent first (VP can act on them), then late, half-day, present, no-punch
+         CASE
+           WHEN COALESCE(ea.status,
+             CASE
+               WHEN ea.id IS NULL AND u.role::text IN ('teacher', 'vice-principal')
+                 AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
+               THEN 'absent' ELSE 'zzz' END
+           ) = 'absent'   THEN 1
+           WHEN COALESCE(ea.status,'zzz') = 'late'     THEN 2
+           WHEN COALESCE(ea.status,'zzz') = 'half-day' THEN 3
+           WHEN COALESCE(ea.status,'zzz') = 'present'  THEN 4
+           ELSE 5
          END,
          u.name`,
-      [branchId, targetDate]
+      [branchId, targetDate, ethNow.dateStr, ethNow.time24]
     );
 
     return result.rows;

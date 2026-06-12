@@ -1497,6 +1497,42 @@ class SchoolAdminController {
       next(error);
     }
   }
+
+  // Manually record staff attendance (power-outage / machine-down fallback)
+  async recordStaffAttendance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const adminId = req.user!.id;
+      const {
+        userId,
+        date,
+        status,
+        sign_in_time,
+        lunch_out_time,
+        lunch_in_time,
+        sign_out_time,
+      } = req.body;
+
+      if (!userId || !date) {
+        res.status(400).json({ success: false, message: 'userId and date are required.' });
+        return;
+      }
+
+      const record = await schoolAdminService.recordStaffAttendance({
+        adminId,
+        userId,
+        date,
+        status,
+        sign_in_time,
+        lunch_out_time,
+        lunch_in_time,
+        sign_out_time,
+      });
+
+      res.json({ success: true, data: record });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new SchoolAdminController();
