@@ -43,11 +43,11 @@ class SchoolAdminService {
 
   /**
    * Returns all branch staff members with their biometric attendance status for a given date.
-   * Excludes students and parents. Used by School Admin to view ZKTeco punch data.
+   * Excludes students and parents. Uses Ethiopian calendar dates throughout.
    */
   async getStaffAttendance(branchId: string, date: string) {
-    // Normalise date — if none provided, default to today (Gregorian)
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    // Use Ethiopian date directly (YYYY-MM-DD format in Ethiopian calendar)
+    const targetDate = date || new Date().toLocaleDateString('en-CA');
 
     const result = await pool.query(
       `SELECT
@@ -58,15 +58,33 @@ class SchoolAdminService {
           u.role,
           u.zk_device_id,
           u.status,
+          b.name AS branch_name,
+          COALESCE(
+            t.department,
+            CASE u.role
+              WHEN 'teacher'       THEN 'Academics'
+              WHEN 'finance-clerk' THEN 'Finance'
+              WHEN 'librarian'     THEN 'Library'
+              WHEN 'clinic-admin'  THEN 'Clinic'
+              WHEN 'driver'        THEN 'Transport'
+              WHEN 'auditor'       THEN 'Audit'
+              WHEN 'school-admin'  THEN 'Administration'
+              WHEN 'vice-principal' THEN 'Administration'
+              ELSE u.role::text
+            END
+          ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
-          ea.status           AS attendance_status,
+          ea.status                          AS attendance_status,
           ea.sign_in_time,
+          ea.lunch_out_time,
+          ea.lunch_in_time,
           ea.sign_out_time,
           ea.recorded_by,
-          ea.created_at       AS attendance_recorded_at,
+          ea.created_at                      AS attendance_recorded_at,
           CASE WHEN ea.recorded_by = 'zk-machine' THEN true ELSE false END AS is_biometric
        FROM users u
+       LEFT JOIN branches b ON b.id = u.branch_id
        LEFT JOIN teachers t ON t.user_id = u.id
        LEFT JOIN employee_attendance ea
               ON ea.user_id = u.id AND ea.date = $2
@@ -2166,6 +2184,7 @@ class SchoolAdminService {
 
   // Get attendance summary by grade and section for the branch
   async getAttendanceSummary(branchId: string, date?: string, gradeLevel?: string) {
+    // Use Ethiopian date directly (YYYY-MM-DD format in Ethiopian calendar)
     const targetDate = date || new Date().toLocaleDateString('en-CA');
 
     let query = `

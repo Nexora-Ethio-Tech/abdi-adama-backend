@@ -318,7 +318,7 @@ class FinanceClerkController {
   async sendSms(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { studentId, message } = req.body;
-      const branchId = req.user!.branch_id;
+      const branchId = req.user!.branch_id || undefined;
       const financeClerkName = req.user!.name;
 
       if (!studentId || typeof studentId !== 'string') {

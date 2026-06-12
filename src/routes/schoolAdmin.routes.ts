@@ -157,6 +157,7 @@ router.get('/dashboard/at-risk-students', schoolAdminController.getAtRiskStudent
 // Attendance Summary
 router.get('/attendance-summary', schoolAdminController.getAttendanceSummary);
 router.get('/students/:studentId/attendance-history', schoolAdminController.getStudentAttendanceHistory);
+router.get('/staff-attendance', schoolAdminController.getStaffAttendance);
 
 // Events Calendar
 router.get('/dashboard/upcoming-events', schoolAdminController.getUpcomingEvents);

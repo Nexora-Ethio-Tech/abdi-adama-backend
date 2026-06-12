@@ -35,16 +35,56 @@ class MachineController {
             const logMinutes = timestamp.getHours() * 60 + timestamp.getMinutes();
             const status = Number.isNaN(timestamp.getTime()) ? 'present' : (logMinutes > cutoffMinutes ? 'absent' : 'present');
 
-            // Check if already exists to avoid duplicates
-            const existing = await client.query('SELECT id FROM employee_attendance WHERE user_id = $1 AND date = $2', [userId, date]);
+            // Format time as "HH:MM AM/PM" for display
+            const signTime = Number.isNaN(timestamp.getTime())
+              ? null
+              : timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+            // Check if already exists (first punch = sign-in, second = lunch-out, third = lunch-in, fourth/last = sign-out)
+            const existing = await client.query(
+              'SELECT id, sign_in_time, lunch_out_time, lunch_in_time, sign_out_time FROM employee_attendance WHERE user_id = $1 AND date = $2',
+              [userId, date]
+            );
 
             if (existing.rows.length === 0) {
+              // First punch of the day → create sign-in record
               await client.query(
-                `INSERT INTO employee_attendance (user_id, date, status, recorded_by, created_at)
-                 VALUES ($1, $2, $3, $1, $4)`,
-                [userId, date, status, log.timestamp]
+                `INSERT INTO employee_attendance (user_id, date, status, recorded_by, sign_in_time, created_at)
+                 VALUES ($1, $2, $3, 'zk-machine', $4, $5)`,
+                [userId, date, status, signTime, log.timestamp]
               );
               processed++;
+            } else {
+              const row = existing.rows[0];
+              // Skip if the punch is in the same minute as any already recorded punch today
+              if (
+                row.sign_in_time === signTime ||
+                row.lunch_out_time === signTime ||
+                row.lunch_in_time === signTime ||
+                row.sign_out_time === signTime
+              ) {
+                continue;
+              }
+
+              if (row.lunch_out_time === null) {
+                // Second punch of the day → lunch-out time
+                await client.query(
+                  `UPDATE employee_attendance SET lunch_out_time = $1, recorded_by = 'zk-machine' WHERE user_id = $2 AND date = $3`,
+                  [signTime, userId, date]
+                );
+              } else if (row.lunch_in_time === null) {
+                // Third punch of the day → lunch-in time
+                await client.query(
+                  `UPDATE employee_attendance SET lunch_in_time = $1, recorded_by = 'zk-machine' WHERE user_id = $2 AND date = $3`,
+                  [signTime, userId, date]
+                );
+              } else {
+                // Fourth or subsequent punch of the day → sign-out time
+                await client.query(
+                  `UPDATE employee_attendance SET sign_out_time = $1, recorded_by = 'zk-machine' WHERE user_id = $2 AND date = $3`,
+                  [signTime, userId, date]
+                );
+              }
             }
           }
         }
