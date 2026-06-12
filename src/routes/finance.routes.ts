@@ -45,7 +45,10 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
     const currentMonthStr = `${ethToday.year}-${String(ethToday.month).padStart(2, '0')}`;
     const pendingFeesRes = await pool.query(
       `SELECT COALESCE(SUM(
-         COALESCE(s.monthly_fee, 0) + 
+         GREATEST(0, COALESCE(s.monthly_fee, 0) - COALESCE(
+           (SELECT approved_amount FROM fee_deductions WHERE student_id = s.id AND month = $1 AND status = 'approved'),
+           0
+         )) + 
          COALESCE(s.bus_fee, 0) + 
          COALESCE(s.penalty_fee, 0) - 
          COALESCE((

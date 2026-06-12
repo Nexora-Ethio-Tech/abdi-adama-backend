@@ -61,34 +61,74 @@ class AuditorService {
   }
 
   // Approve/Reject fee reduction (ONLY write permission)
-  async updateFeeReductionStatus(studentId: string, branchId: string, status: string, _auditorId: string) {
+  async updateFeeReductionStatus(studentId: string, branchId: string, status: string, auditorId: string) {
     const normalized = String(status).toLowerCase();
     if (!['pending', 'approved', 'rejected'].includes(normalized)) {
       throw new Error('Invalid fee approval status. Use pending, approved, or rejected.');
     }
 
-    const feeStatus = normalized === 'rejected' ? 'standard' : 'reduced';
+    // Ensure fee_deductions table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS fee_deductions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        month VARCHAR(20) NOT NULL,
+        requested_amount NUMERIC(10,2) NOT NULL,
+        approved_amount NUMERIC(10,2) DEFAULT 0,
+        status VARCHAR(50) DEFAULT 'pending',
+        approved_by UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(student_id, month)
+      )
+    `);
+
+    // Ensure month column is large enough (in case table already exists with old schema)
+    await pool.query(`
+      ALTER TABLE fee_deductions 
+      ALTER COLUMN month TYPE VARCHAR(20)
+    `).catch(() => {}); // Ignore error if column already correct size
+
+    // Get the student to find their requested aid amount and current fee status
+    const studentRes = await pool.query(
+      `SELECT s.id, s.branch_id, s.grade, s.monthly_fee, s.requested_aid_amount, s.fee_approval_status 
+       FROM students s WHERE s.id = $1 AND s.branch_id = $2`,
+      [studentId, branchId]
+    );
+
+    if (studentRes.rows.length === 0) {
+      throw new Error('Student not found in your branch');
+    }
+
+    const student = studentRes.rows[0];
+    const requestedAmount = student.requested_aid_amount || 0;
+    const approvedAmount = normalized === 'approved' ? requestedAmount : 0;
+
+    // Get the current month in Ethiopian calendar
+    const now = new Date();
+    const eatMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + (3 * 60 * 60 * 1000);
+    const eatDate = new Date(eatMs);
+    const ethDate = require('../utils/ethiopicUtils').gregorianToEthiopic(eatDate);
+    const currentMonth = `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
+
+    // Insert or update fee_deductions table
+    await pool.query(
+      `INSERT INTO fee_deductions (student_id, month, requested_amount, approved_amount, status, approved_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (student_id, month) DO UPDATE SET 
+         approved_amount = $4,
+         status = $5,
+         approved_by = $6,
+         updated_at = NOW()`,
+      [studentId, currentMonth, requestedAmount, approvedAmount, normalized, auditorId || null]
+    );
+
+    // Update students table for UI display (showing reduced status when approved)
+    const feeStatus = normalized === 'rejected' ? 'standard' : (approvedAmount > 0 ? 'reduced' : 'standard');
 
     const result = await pool.query(
-      `WITH fee_calc AS (
-         SELECT 
-           COALESCE(
-             NULLIF(s.monthly_fee, 0),
-             (SELECT bgf.monthly_fee FROM branch_grade_fees bgf 
-              WHERE bgf.branch_id = s.branch_id 
-                AND REPLACE(REPLACE(LOWER(bgf.grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
-              LIMIT 1),
-             0
-           ) AS effective_fee
-         FROM students s WHERE s.id = $3
-       )
-       UPDATE students 
+      `UPDATE students 
        SET 
-           monthly_fee = CASE 
-             WHEN $1 = 'approved' AND fee_approval_status != 'approved' THEN GREATEST(0, (SELECT effective_fee FROM fee_calc) - COALESCE(requested_aid_amount, 0))
-             WHEN $1 != 'approved' AND fee_approval_status = 'approved' THEN (SELECT effective_fee FROM fee_calc) + COALESCE(requested_aid_amount, 0)
-             ELSE monthly_fee 
-           END,
            fee_approval_status = $1,
            fee_status = $2,
            updated_at = NOW()
@@ -98,7 +138,7 @@ class AuditorService {
     );
 
     if (result.rows.length === 0) {
-      throw new Error('Student not found in your branch');
+      throw new Error('Failed to update fee reduction status');
     }
 
     return result.rows[0];

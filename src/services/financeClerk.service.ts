@@ -234,24 +234,6 @@ class FinanceClerkService {
          DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
         [studentId, month, dueDate.toISOString().slice(0, 10), status]
       );
-
-      // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-      if (student.fee_approval_status === 'approved' && (status === 'cleared' || status === 'overdue')) {
-        await client.query(
-          `UPDATE students
-           SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-               fee_status = 'standard',
-               fee_approval_status = 'none',
-               requested_aid_amount = 0,
-               updated_at = NOW()
-           WHERE id = $1`,
-          [studentId]
-        );
-        student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-        student.fee_status = 'standard';
-        student.fee_approval_status = 'none';
-        student.requested_aid_amount = 0;
-      }
     }
   }
 
@@ -365,7 +347,17 @@ class FinanceClerkService {
 
     for (const ft of feeTypes) {
       let due = 0;
-      if (ft === 'monthly') due = isSummer ? 0 : Number(student.monthly_fee || 0);
+      if (ft === 'monthly') {
+        const standardFee = isSummer ? 0 : Number(student.monthly_fee || 0);
+        const dedRes = await client.query(
+          `SELECT COALESCE(approved_amount, 0) as approved_amount
+           FROM fee_deductions
+           WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+          [student.id, month]
+        );
+        const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+        due = Math.max(0, standardFee - approvedDeduction);
+      }
       else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
       else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
 
@@ -485,7 +477,17 @@ class FinanceClerkService {
 
         // Determine amount due for fee type
         let dueForType = 0;
-        if (feeType === 'monthly') dueForType = Number(student.monthly_fee || 0);
+        if (feeType === 'monthly') {
+          const standardFee = Number(student.monthly_fee || 0);
+          const dedRes = await client.query(
+            `SELECT COALESCE(approved_amount, 0) as approved_amount
+             FROM fee_deductions
+             WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+            [data.studentId, data.month]
+          );
+          const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+          dueForType = Math.max(0, standardFee - approvedDeduction);
+        }
         else if (feeType === 'bus') dueForType = Number(student.bus_fee || 0);
         else if (feeType === 'penalty') dueForType = await this.getPenaltyDueForMonth(client, student, data.month, paymentNow);
         else if (feeType === 'registration') {
@@ -621,24 +623,6 @@ class FinanceClerkService {
         [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
       );
 
-      // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-      if (student.fee_approval_status === 'approved' && (status === 'cleared' || status === 'overdue')) {
-        await client.query(
-          `UPDATE students
-           SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-               fee_status = 'standard',
-               fee_approval_status = 'none',
-               requested_aid_amount = 0,
-               updated_at = NOW()
-           WHERE id = $1`,
-          [data.studentId]
-        );
-        student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-        student.fee_status = 'standard';
-        student.fee_approval_status = 'none';
-        student.requested_aid_amount = 0;
-      }
-
       // ── Summer / carry-over cross-month settlement ────────────────────────────
       // Registration fee is a ONE-TIME annual charge. If paid in any summer month
       // (Hamle 11, Nehase 12, Pagume 13) OR as a carry-over in a later month,
@@ -682,24 +666,6 @@ class FinanceClerkService {
            WHERE student_id = $2 AND month = $3`,
           [otherStatus, data.studentId, otherMonth]
         );
-
-        // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-        if (student.fee_approval_status === 'approved' && (otherStatus === 'cleared' || otherStatus === 'overdue')) {
-          await client.query(
-            `UPDATE students
-             SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-                 fee_status = 'standard',
-                 fee_approval_status = 'none',
-                 requested_aid_amount = 0,
-                 updated_at = NOW()
-             WHERE id = $1`,
-            [data.studentId]
-          );
-          student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-          student.fee_status = 'standard';
-          student.fee_approval_status = 'none';
-          student.requested_aid_amount = 0;
-        }
       }
 
       await client.query('COMMIT');
@@ -785,8 +751,18 @@ class FinanceClerkService {
 
       const penaltyDue = isSummer ? 0 : await this.getPenaltyDueForMonth(client, student, targetMonth);
       const registrationDue = await this.getRegistrationDueForMonth(client, studentId, student.branch_id, targetMonth);
+      
+      const dedRes = await client.query(
+        `SELECT COALESCE(approved_amount, 0) as approved_amount
+         FROM fee_deductions
+         WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+        [studentId, targetMonth]
+      );
+      const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+      const monthlyDue = Math.max(0, (isSummer ? 0 : Number(student.monthly_fee || 0)) - approvedDeduction);
+
       const feeTypes = [
-        { key: 'monthly', label: 'Monthly Tuition', due: isSummer ? 0 : Number(student.monthly_fee || 0) },
+        { key: 'monthly', label: 'Monthly Tuition', due: monthlyDue },
         { key: 'registration', label: 'Registration Fee', due: registrationDue },
         { key: 'bus', label: 'Bus Fee', due: (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0) },
         { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
@@ -879,7 +855,7 @@ class FinanceClerkService {
     let query = `
       SELECT 
         s.id, s.grade, s.branch_id, s.is_bus_user,
-        COALESCE(
+        GREATEST(0, COALESCE(
           NULLIF(s.monthly_fee, 0),
           (
             SELECT monthly_fee FROM branch_grade_fees 
@@ -888,7 +864,10 @@ class FinanceClerkService {
             LIMIT 1
           ),
           0
-        ) AS monthly_fee,
+        ) - COALESCE(
+          (SELECT approved_amount FROM fee_deductions WHERE student_id = s.id AND month = $1 AND status = 'approved'),
+          0
+        )) AS monthly_fee,
         CASE WHEN s.is_bus_user = TRUE THEN
           COALESCE(
             NULLIF(s.bus_fee, 0),
@@ -1431,6 +1410,30 @@ class FinanceClerkService {
       }
 
       const student = result.rows[0];
+
+      if (data.feeStatus === 'reduced') {
+        const ethNow = gregorianToEthiopian(new Date());
+        const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
+        await client.query(
+          `INSERT INTO fee_deductions (student_id, month, requested_amount, approved_amount, status, approved_by, updated_at)
+           VALUES ($1, $2, $3, 0, 'pending', null, NOW())
+           ON CONFLICT (student_id, month) DO UPDATE SET 
+             requested_amount = $3,
+             status = 'pending',
+             approved_amount = 0,
+             approved_by = null,
+             updated_at = NOW()`,
+          [studentId, currentMonth, data.requestedAidAmount || 0]
+        );
+      } else if (data.feeStatus === 'standard') {
+        const ethNow = gregorianToEthiopian(new Date());
+        const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
+        await client.query(
+          `DELETE FROM fee_deductions WHERE student_id = $1 AND month = $2`,
+          [studentId, currentMonth]
+        );
+      }
+
       await this.syncStudentCollectionsAcrossAllMonths(client, student.id, student.branch_id);
 
       await client.query('COMMIT');
@@ -1597,6 +1600,16 @@ class FinanceClerkService {
         let registration_unpaid = 0;
 
         for (const m of overdue_months) {
+          // Fetch approved fee deduction from fee_deductions table for this student and month
+          const dedRes = await client.query(
+            `SELECT COALESCE(approved_amount, 0) as approved_amount
+             FROM fee_deductions
+             WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+            [student.id, m]
+          );
+          const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+          const effectiveMFee = Math.max(0, mFee - approvedDeduction);
+
           // Monthly (cash + aid)
           const mPaidRes = await client.query(
             `SELECT COALESCE(
@@ -1607,7 +1620,7 @@ class FinanceClerkService {
              ) AS paid`,
             [student.id, m]
           );
-          monthly_unpaid += Math.max(0, mFee - Number(mPaidRes.rows[0].paid || 0));
+          monthly_unpaid += Math.max(0, effectiveMFee - Number(mPaidRes.rows[0].paid || 0));
 
           // Bus
           if (bFee > 0) {
@@ -1728,6 +1741,28 @@ class FinanceClerkService {
       const isSummerMonth = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
       for (const student of studentsRes.rows) {
+        // Rollover reset logic: if the student has fee reduction status (pending/approved/rejected)
+        // but it is for a past month, reset s.fee_status, s.fee_approval_status, and s.requested_aid_amount.
+        const latestDedRes = await client.query(
+          `SELECT month FROM fee_deductions WHERE student_id = $1 ORDER BY month DESC LIMIT 1`,
+          [student.id]
+        );
+        const latestDedMonth = latestDedRes.rows[0]?.month;
+        if (latestDedMonth && latestDedMonth !== month && student.fee_approval_status !== 'none') {
+          await client.query(
+            `UPDATE students
+             SET fee_status = 'standard',
+                 fee_approval_status = 'none',
+                 requested_aid_amount = 0,
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [student.id]
+          );
+          student.fee_status = 'standard';
+          student.fee_approval_status = 'none';
+          student.requested_aid_amount = 0;
+        }
+
         // Skip already cleared months
         const existingRes = await client.query(
           `SELECT status FROM student_collections WHERE student_id = $1 AND month = $2`,
@@ -1754,24 +1789,6 @@ class FinanceClerkService {
            DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
           [student.id, month, dueDate.toISOString().slice(0, 10), status]
         );
-
-        // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-        if (student.fee_approval_status === 'approved' && (status === 'cleared' || status === 'overdue')) {
-          await client.query(
-            `UPDATE students
-             SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-                 fee_status = 'standard',
-                 fee_approval_status = 'none',
-                 requested_aid_amount = 0,
-                 updated_at = NOW()
-             WHERE id = $1`,
-            [student.id]
-          );
-          student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-          student.fee_status = 'standard';
-          student.fee_approval_status = 'none';
-          student.requested_aid_amount = 0;
-        }
 
         // If a summer month just resolved to cleared, cascade-clear the other two
         // so the one-time registration fee shows as settled across all three months.
@@ -1819,24 +1836,6 @@ class FinanceClerkService {
              WHERE student_id = $2 AND month = $3`,
             [omStatus, student.id, om]
           );
-
-          // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-          if (student.fee_approval_status === 'approved' && (omStatus === 'cleared' || omStatus === 'overdue')) {
-            await client.query(
-              `UPDATE students
-               SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-                   fee_status = 'standard',
-                   fee_approval_status = 'none',
-                   requested_aid_amount = 0,
-                   updated_at = NOW()
-               WHERE id = $1`,
-              [student.id]
-            );
-            student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-            student.fee_status = 'standard';
-            student.fee_approval_status = 'none';
-            student.requested_aid_amount = 0;
-          }
         }
       }
 

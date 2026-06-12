@@ -29,7 +29,7 @@ router.get('/payments', auditorController.getPayments);
 router.get('/fee-reductions', auditorController.getFeeReductionRequests);
 
 // Approve/Reject fee reduction (ONLY write permission)
-router.post('/fee-reductions/:id/status', validate(feeReductionStatusSchema), auditorController.updateFeeReductionStatus);
+router.patch('/fee-reductions/:id/status', validate(feeReductionStatusSchema), auditorController.updateFeeReductionStatus);
 
 // Financial report — accepts ?branchId=
 router.get('/financial-report', auditorController.getFinancialReport);
