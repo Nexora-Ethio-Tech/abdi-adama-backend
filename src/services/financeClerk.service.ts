@@ -216,7 +216,8 @@ class FinanceClerkService {
       if (monthsStatusMap.get(month) === 'cleared') {
         continue;
       }
-      const outstandingTotal = await this.computeMonthlyOutstanding(client, student, branchId, month, now);
+      // Use computeMonthlyFeesOutstanding to exclude registration fee from collection status
+      const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, branchId, month, now);
       const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
       let status = 'in_collections';
       const [_, mNum] = month.split('-').map(Number);
@@ -321,6 +322,52 @@ class FinanceClerkService {
       else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
       else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
       else if (ft === 'registration') due = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
+
+      const paidRes = await client.query(
+        `SELECT COALESCE(SUM(pi.amount),0) as paid
+         FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
+        [student.id, month, ft]
+      );
+
+      let paid = Number(paidRes.rows[0].paid || 0);
+      if (ft === 'monthly') {
+        const aidPaidRes = await client.query(
+          `SELECT COALESCE(SUM(amount),0) as paid
+           FROM student_aid_usages
+           WHERE student_id = $1 AND month = $2`,
+          [student.id, month]
+        );
+        paid += Number(aidPaidRes.rows[0].paid || 0);
+      }
+
+      outstandingTotal += Math.max(0, due - paid);
+    }
+
+    return outstandingTotal;
+  }
+
+  /**
+   * Compute outstanding for MONTHLY FEES ONLY (monthly, bus, penalty)
+   * EXCLUDES registration fee - which is a one-time fee that should NOT affect collection status
+   * This method is used to determine if a month's collection_status should be 'cleared'
+   */
+  private async computeMonthlyFeesOutstanding(
+    client: any, student: any, branchId: string, month: string, now = new Date()
+  ) {
+    // Only include recurring monthly fees, NOT registration (one-time fee)
+    const feeTypes = ['monthly', 'bus', 'penalty'];
+    let outstandingTotal = 0;
+
+    const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
+    const [_, monthNum] = month.split('-').map(Number);
+    const isSummer = monthNum === 11 || monthNum === 12 || monthNum === 13;
+
+    for (const ft of feeTypes) {
+      let due = 0;
+      if (ft === 'monthly') due = isSummer ? 0 : Number(student.monthly_fee || 0);
+      else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+      else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
 
       const paidRes = await client.query(
         `SELECT COALESCE(SUM(pi.amount),0) as paid
@@ -544,8 +591,9 @@ class FinanceClerkService {
         [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, actualGregorianDateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
       );
 
-      // Recompute outstanding and update student_collections for the paid month
-      const outstandingTotal = await this.computeMonthlyOutstanding(client, student, data.branchId, data.month);
+      // Recompute outstanding MONTHLY FEES ONLY (excluding registration) and update student_collections for the paid month
+      // Registration is a one-time fee and should NOT affect collection status
+      const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, data.month);
       const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
       const dueDate = this.getPaymentDueDateForMonth(data.month, deadlineDay);
       const now = new Date();
@@ -610,7 +658,8 @@ class FinanceClerkService {
       );
       for (const row of otherOverdueRes.rows) {
         const otherMonth: string = row.month;
-        const otherOutstanding = await this.computeMonthlyOutstanding(client, student, data.branchId, otherMonth);
+        // Use computeMonthlyFeesOutstanding to exclude registration fee from collection status calculation
+        const otherOutstanding = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, otherMonth);
         const otherDueDate = this.getPaymentDueDateForMonth(otherMonth, deadlineDay);
         let otherStatus = 'in_collections';
         const [__, otherMonthNum] = otherMonth.split('-').map(Number);
@@ -1676,7 +1725,7 @@ class FinanceClerkService {
           continue;
         }
 
-        const outstandingTotal = await this.computeMonthlyOutstanding(client, student, student.branch_id, month);
+        const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, student.branch_id, month);
         let status = 'in_collections';
         if (outstandingTotal <= 0) {
           status = 'cleared';
@@ -1743,7 +1792,7 @@ class FinanceClerkService {
         );
         for (const row of existingOverdueRes.rows) {
           const om: string = row.month;
-          const omOutstanding = await this.computeMonthlyOutstanding(client, student, student.branch_id, om);
+          const omOutstanding = await this.computeMonthlyFeesOutstanding(client, student, student.branch_id, om);
           const [, omNumStr] = om.split('-');
           const omNum = parseInt(omNumStr, 10);
           const omDueDate = this.getPaymentDueDateForMonth(om, deadlineDay);
