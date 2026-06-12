@@ -20,9 +20,9 @@ class SchoolAdminController {
       if (typeof open !== 'boolean') {
         throw new Error('open must be a boolean');
       }
-      
+
       const settings = await superAdminService.updateSystemSettings({ registration_open: open ? 'true' : 'false' }, adminId);
-      
+
       res.json({
         success: true,
         data: settings,
