@@ -582,10 +582,8 @@ class FinanceClerkService {
       }
 
       // Also record a finance_transactions summary (backwards compatibility) - amount is cash collected
-      // IMPORTANT: Always use the real Gregorian today for the date stored in finance_transactions.
-      // The frontend sends data.date as an Ethiopian calendar string (e.g. "2018-09-25 EC"),
-      // which must NOT be fed into new Date() — that would produce a wrong Gregorian date.
-      const actualGregorianDateStr = new Date().toISOString().slice(0, 10);
+      // Use the same converted Gregorian date as the payment for consistency
+      const actualGregorianDateStr = paymentDateGregorian;
       const ethDate = gregorianToEthiopic(new Date(actualGregorianDateStr));
 
       for (const it of itemsToPersist) {
