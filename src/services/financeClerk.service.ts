@@ -1825,7 +1825,7 @@ class FinanceClerkService {
     financeUserId: string
   ) {
     const appRes = await pool.query(
-      `SELECT branch_id, grade_applying FROM pending_applications WHERE id = $1`,
+      `SELECT branch_id, grade_applying, applicant_name FROM pending_applications WHERE id = $1`,
       [applicationId]
     );
     if (appRes.rows.length === 0) {
@@ -1841,11 +1841,59 @@ class FinanceClerkService {
       );
     }
 
-    return await schoolAdminService.financeApproveApplication(
+    const result = await schoolAdminService.financeApproveApplication(
       applicationId,
       { amount: resolved.amount, reference: payment.reference, parentDigitalId: payment.parentDigitalId },
       financeUserId
     );
+
+    const studentId = result.student?.id;
+    if (studentId) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const paymentDateGregorian = new Date().toISOString().slice(0, 10);
+        const ethDate = gregorianToEthiopic(new Date());
+        const currentMonth = `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
+
+        // Insert into payments
+        const paymentRes = await client.query(
+          `INSERT INTO payments (student_id, payer_id, branch_id, month, date, total_amount, reference)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id`,
+          [studentId, null, app.branch_id, currentMonth, paymentDateGregorian, resolved.amount, payment.reference || null]
+        );
+
+        const paymentId = paymentRes.rows[0].id;
+
+        // Insert into payment_items
+        await client.query(
+          `INSERT INTO payment_items (payment_id, fee_type, amount) VALUES ($1, $2, $3)`,
+          [paymentId, 'registration', resolved.amount]
+        );
+
+        // Fetch user name for finance_transactions
+        const userRes = await client.query(`SELECT name FROM users WHERE id = $1`, [financeUserId]);
+        const verifiedBy = userRes.rows[0]?.name || 'Finance Clerk';
+
+        // Insert into finance_transactions
+        await client.query(
+          `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [studentId, app.applicant_name, resolved.amount, 'Registration Fee', paymentDateGregorian, verifiedBy, app.branch_id, ethDate.month, ethDate.year]
+        );
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error recording registration payment:', err);
+      } finally {
+        client.release();
+      }
+    }
+
+    return result;
   }
 
   // Reject an application: return it to school admin with a reason (do not delete)

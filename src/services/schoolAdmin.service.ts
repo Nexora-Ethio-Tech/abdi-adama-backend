@@ -1217,8 +1217,9 @@ class SchoolAdminService {
       query += ' AND status = $2';
       params.push(status);
     } else {
-      // default to common awaiting-payment status
-      query += " AND status IN ('awaiting-payment')";
+      // Default: show all applications that Finance needs to process
+      // This includes: pending (new submissions), exam-passed (exam complete), and awaiting-payment (passed by school admin)
+      query += " AND status IN ('pending', 'exam-passed', 'awaiting-payment')";
     }
 
     query += ' ORDER BY created_at DESC';
