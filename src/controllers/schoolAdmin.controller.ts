@@ -1476,7 +1476,8 @@ class SchoolAdminController {
   async getStudentAttendanceHistory(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const { studentId, days } = req.query;
+      const { studentId } = req.params;
+      const { days } = req.query;
 
       if (!studentId || typeof studentId !== 'string') {
         res.status(400).json({ success: false, message: 'Student ID is required' });
