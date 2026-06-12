@@ -1450,6 +1450,53 @@ class SchoolAdminController {
       next(error);
     }
   }
+
+  // Get attendance summary by grade
+  async getAttendanceSummary(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { date, grade } = req.query;
+
+      const result = await schoolAdminService.getAttendanceSummary(
+        branchId!,
+        date as string | undefined,
+        grade as string | undefined
+      );
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get student attendance history (for 30-day average)
+  async getStudentAttendanceHistory(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { studentId, days } = req.query;
+
+      if (!studentId || typeof studentId !== 'string') {
+        res.status(400).json({ success: false, message: 'Student ID is required' });
+        return;
+      }
+
+      const result = await schoolAdminService.getStudentAttendanceHistory(
+        studentId,
+        branchId!,
+        days ? parseInt(days as string) : 30
+      );
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new SchoolAdminController();

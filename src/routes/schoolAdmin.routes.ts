@@ -154,6 +154,10 @@ router.post('/grading-configs', schoolAdminController.publishGradingConfigs);
 // At-Risk Students
 router.get('/dashboard/at-risk-students', schoolAdminController.getAtRiskStudents);
 
+// Attendance Summary
+router.get('/attendance-summary', schoolAdminController.getAttendanceSummary);
+router.get('/students/:studentId/attendance-history', schoolAdminController.getStudentAttendanceHistory);
+
 // Events Calendar
 router.get('/dashboard/upcoming-events', schoolAdminController.getUpcomingEvents);
 router.post('/events', validate(createEventSchema), schoolAdminController.createEvent);

@@ -2163,6 +2163,73 @@ class SchoolAdminService {
       client.release();
     }
   }
+
+  // Get attendance summary by grade and section for the branch
+  async getAttendanceSummary(branchId: string, date?: string, gradeLevel?: string) {
+    const targetDate = date || new Date().toLocaleDateString('en-CA');
+
+    let query = `
+      SELECT 
+        CASE WHEN c.id IS NOT NULL THEN c.name ELSE s.grade END AS grade,
+        COALESCE(c.section, '') AS section,
+        COUNT(DISTINCT s.id) as total_students,
+        COUNT(DISTINCT CASE WHEN sa.status = 'present' THEN sa.student_id END) as present,
+        COUNT(DISTINCT CASE WHEN sa.status = 'absent' THEN sa.student_id END) as absent,
+        COUNT(DISTINCT CASE WHEN sa.status = 'late' THEN sa.student_id END) as late,
+        COUNT(DISTINCT CASE WHEN sa.status = 'excused' THEN sa.student_id END) as excused
+      FROM students s
+      LEFT JOIN student_attendance sa ON s.id = sa.student_id AND sa.date = $2
+      LEFT JOIN classes c ON s.branch_id = c.branch_id AND (
+        s.section_id = c.id
+        OR (s.section_id IS NULL AND c.section IS NULL AND s.grade = c.name)
+      )
+      WHERE s.branch_id = $1
+    `;
+
+    const params: any[] = [branchId, targetDate];
+
+    if (gradeLevel) {
+      query += ' AND s.grade = $3';
+      params.push(gradeLevel);
+    }
+
+    query += ` GROUP BY CASE WHEN c.id IS NOT NULL THEN c.name ELSE s.grade END, c.id, COALESCE(c.section, '') 
+               ORDER BY CASE WHEN c.id IS NOT NULL THEN c.name ELSE s.grade END, COALESCE(c.section, '')`;
+
+    const result = await pool.query(query, params);
+    return {
+      date: targetDate,
+      summary: result.rows
+    };
+  }
+
+  // Get student attendance history (30-day average)
+  async getStudentAttendanceHistory(studentId: string, branchId: string, days: number = 30) {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const startDateStr = startDate.toLocaleDateString('en-CA');
+
+    const result = await pool.query(
+      `SELECT 
+        s.id,
+        s.grade,
+        COUNT(DISTINCT sa.date) as total_days,
+        COUNT(DISTINCT CASE WHEN sa.status = 'present' THEN sa.date END) as present_days,
+        COUNT(DISTINCT CASE WHEN sa.status = 'absent' THEN sa.date END) as absent_days,
+        COUNT(DISTINCT CASE WHEN sa.status = 'late' THEN sa.date END) as late_days,
+        ROUND(
+          (COUNT(DISTINCT CASE WHEN sa.status = 'present' THEN sa.date END)::numeric / 
+           NULLIF(COUNT(DISTINCT sa.date), 0)) * 100, 1
+        )::numeric as attendance_percentage
+      FROM students s
+      LEFT JOIN student_attendance sa ON s.id = sa.student_id AND sa.date >= $2
+      WHERE s.id = $1 AND s.branch_id = $3
+      GROUP BY s.id, s.grade`,
+      [studentId, startDateStr, branchId]
+    );
+
+    return result.rows[0] || null;
+  }
 }
 
 export default new SchoolAdminService();
