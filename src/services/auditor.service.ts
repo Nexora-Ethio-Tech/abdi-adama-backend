@@ -337,6 +337,8 @@ class AuditorService {
 
     const pendingFeeReductions = parseInt(pendingFeeResult.rows[0].count);
     const pendingLoans = parseInt(pendingLoansResult.rows[0].count);
+    const regFeeCount = regFeeResult.rows.length > 0 ? parseInt(regFeeResult.rows[0].count) : 0;
+    const regFeeTotal = regFeeResult.rows.length > 0 ? parseFloat(regFeeResult.rows[0].total) : 0;
 
     return {
       totalPayments: {
@@ -348,8 +350,8 @@ class AuditorService {
         total: parseFloat(monthlyResult.rows[0].total)
       },
       registrationFees: {
-        count: parseInt(regFeeResult.rows[0].count),
-        total: parseFloat(regFeeResult.rows[0].total)
+        count: regFeeCount,
+        total: regFeeTotal
       },
       pendingFeeReductions,
       pendingLoans,

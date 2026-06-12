@@ -585,11 +585,23 @@ class FinanceClerkService {
       // which must NOT be fed into new Date() — that would produce a wrong Gregorian date.
       const actualGregorianDateStr = new Date().toISOString().slice(0, 10);
       const ethDate = gregorianToEthiopic(new Date(actualGregorianDateStr));
-      await client.query(
-        `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, actualGregorianDateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
-      );
+
+      for (const it of itemsToPersist) {
+        if (it.cashAmount && it.cashAmount > 0) {
+          let displayType = 'Payment';
+          if (it.feeType === 'monthly') displayType = 'Monthly Tuition';
+          else if (it.feeType === 'bus') displayType = 'Bus Fee';
+          else if (it.feeType === 'penalty') displayType = 'Penalty Fee';
+          else if (it.feeType === 'registration') displayType = 'Registration Fee';
+          else displayType = it.feeType.charAt(0).toUpperCase() + it.feeType.slice(1);
+
+          await client.query(
+            `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [data.studentId, student.name, it.cashAmount, `${displayType} (${data.month})`, actualGregorianDateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
+          );
+        }
+      }
 
       // Recompute outstanding MONTHLY FEES ONLY (excluding registration) and update student_collections for the paid month
       // Registration is a one-time fee and should NOT affect collection status

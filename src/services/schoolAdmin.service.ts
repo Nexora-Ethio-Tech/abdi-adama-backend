@@ -1347,6 +1347,13 @@ class SchoolAdminService {
         const regMonth = `${ethParts.year}-${String(ethParts.month).padStart(2, '0')}`;
         const actualGregorianDateStr = now.toISOString().slice(0, 10);
 
+        // Get Finance Officer name from users table
+        const financeUserRes = await client.query(
+          `SELECT name FROM users WHERE id = $1`,
+          [financeUserId]
+        );
+        const financeOfficerName = financeUserRes.rows.length > 0 ? financeUserRes.rows[0].name : 'Unknown Officer';
+
         // 1. Insert into payments
         const paymentRes = await client.query(
           `INSERT INTO payments (student_id, payer_id, branch_id, month, date, total_amount, reference)
@@ -1379,7 +1386,7 @@ class SchoolAdminService {
             payment.amount,
             'Registration Fee',
             actualGregorianDateStr,
-            financeUserId,
+            financeOfficerName,
             app.branch_id,
             ethMonthName,
             ethParts.year
