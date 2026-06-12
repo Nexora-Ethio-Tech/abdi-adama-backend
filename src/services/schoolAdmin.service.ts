@@ -1386,13 +1386,15 @@ class SchoolAdminService {
           ]
         );
 
-        // 4. Update student_collections status for this month to cleared
+        // 4. Initialize student_collections status as 'pending' (not 'cleared')
+        // Registration fee is separate from monthly fees and should NOT affect collection status
+        // Collection status only becomes 'cleared' when all monthly fees (tuition, bus, etc.) are paid
         const deadlineDay = 10;
         const dueDate = ethiopianToGregorianDate({ year: ethParts.year, month: ethParts.month, day: deadlineDay });
         await client.query(
           `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
-           VALUES ($1, $2, $3, 'cleared', NOW())
-           ON CONFLICT (student_id, month) DO UPDATE SET status = 'cleared', updated_at = NOW()`,
+           VALUES ($1, $2, $3, 'pending', NOW())
+           ON CONFLICT (student_id, month) DO NOTHING`,
           [studentId, regMonth, dueDate.toISOString().slice(0, 10)]
         );
       }
