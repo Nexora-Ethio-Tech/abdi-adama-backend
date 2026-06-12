@@ -10,11 +10,11 @@ export function getEthiopianNow() {
   const eatDate = new Date(eatMs);
   const ethParts = gregorianToEthiopian(eatDate);
   const dateStr = `${ethParts.year}-${String(ethParts.month).padStart(2, '0')}-${String(ethParts.day).padStart(2, '0')}`;
-  
+
   let ethHour = eatDate.getHours() - 6;
   if (ethHour < 0) ethHour += 24;
   const time24 = `${ethHour.toString().padStart(2, '0')}:${eatDate.getMinutes().toString().padStart(2, '0')}:${eatDate.getSeconds().toString().padStart(2, '0')}`;
-  
+
   const meridiem = ethHour >= 12 ? 'PM' : 'AM';
   let displayHour = ethHour % 12;
   if (displayHour === 0) displayHour = 12;
