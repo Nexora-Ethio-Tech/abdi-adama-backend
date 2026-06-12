@@ -2,7 +2,7 @@ import pool from '../config/database';
 import userService from './user.service';
 import { generate4DigitPIN, hashPassword } from '../utils/password';
 import { sendAdmissionCredentialsEmail } from '../utils/emailService';
-import { gregorianToEthiopian } from '../shared/ethiopianCalendar';
+import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
 
 export function getEthiopianNow() {
   const now = new Date();
@@ -1336,6 +1336,66 @@ class SchoolAdminService {
          ON CONFLICT DO NOTHING`,
         [parentId, studentId]
       );
+
+      // ── Record financial transaction for registration fee ─────────────────
+      if (payment.amount && payment.amount > 0) {
+        const now = new Date();
+        const eatMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + (3 * 60 * 60 * 1000);
+        const eatDate = new Date(eatMs);
+        const ethParts = gregorianToEthiopian(eatDate);
+        const regMonth = `${ethParts.year}-${String(ethParts.month).padStart(2, '0')}`;
+        const actualGregorianDateStr = now.toISOString().slice(0, 10);
+
+        // 1. Insert into payments
+        const paymentRes = await client.query(
+          `INSERT INTO payments (student_id, payer_id, branch_id, month, date, total_amount, reference)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id`,
+          [studentId, null, app.branch_id, regMonth, actualGregorianDateStr, payment.amount, payment.reference || null]
+        );
+        const insertedPaymentId = paymentRes.rows[0].id;
+
+        // 2. Insert into payment_items
+        await client.query(
+          `INSERT INTO payment_items (payment_id, fee_type, amount)
+           VALUES ($1, $2, $3)`,
+          [insertedPaymentId, 'registration', payment.amount]
+        );
+
+        // 3. Insert into finance_transactions
+        const ethMonthNames = [
+          'Meskerem', 'Tikimt', 'Hidar', 'Tahsas', 'Tir', 'Yekatit',
+          'Megabit', 'Miazia', 'Ginbot', 'Sene', 'Hamle', 'Nehase', 'Pagume'
+        ];
+        const ethMonthName = ethMonthNames[ethParts.month - 1] || 'Meskerem';
+
+        await client.query(
+          `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+          [
+            studentId,
+            app.applicant_name,
+            payment.amount,
+            'Registration Fee',
+            actualGregorianDateStr,
+            financeUserId,
+            app.branch_id,
+            ethMonthName,
+            ethParts.year
+          ]
+        );
+
+        // 4. Update student_collections status for this month to cleared
+        const deadlineDay = 10;
+        const dueDate = ethiopianToGregorianDate({ year: ethParts.year, month: ethParts.month, day: deadlineDay });
+        await client.query(
+          `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+           VALUES ($1, $2, $3, 'cleared', NOW())
+           ON CONFLICT (student_id, month) DO UPDATE SET status = 'cleared', updated_at = NOW()`,
+          [studentId, regMonth, dueDate.toISOString().slice(0, 10)]
+        );
+      }
+
 
       // ── Persist payment + generated account IDs ─────────────────────────────
       const updateResult = await client.query(

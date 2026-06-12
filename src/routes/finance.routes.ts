@@ -18,11 +18,11 @@ const ETHIOPIAN_MONTH_NAMES = [
 // GET /api/finance/summary
 router.get('/summary', async (req: AuthRequest, res, next) => {
   try {
-    // 1. Total revenue: sum of all finance_transactions where type = 'Income' or starts with 'Payment'
+    // 1. Total revenue: sum of all finance_transactions where type = 'Income', starts with 'Payment', or is 'Registration Fee'
     const totalRevRes = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total
        FROM finance_transactions
-       WHERE type = 'Income' OR type LIKE 'Payment%'`
+       WHERE type = 'Income' OR type LIKE 'Payment%' OR type = 'Registration Fee'`
     );
     const totalRevenue = Number(totalRevRes.rows[0]?.total || 0);
 
@@ -34,7 +34,7 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
     const monthlyRevRes = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total
        FROM finance_transactions
-       WHERE (type = 'Income' OR type LIKE 'Payment%')
+       WHERE (type = 'Income' OR type LIKE 'Payment%' OR type = 'Registration Fee')
          AND LOWER(ethiopic_month) = LOWER($1)
          AND ethiopic_year = $2`,
       [ethMonthLabel, ethToday.year]
@@ -45,27 +45,45 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
     const currentMonthStr = `${ethToday.year}-${String(ethToday.month).padStart(2, '0')}`;
     const pendingFeesRes = await pool.query(
       `SELECT COALESCE(SUM(
-        COALESCE(s.monthly_fee, 0) + 
-        COALESCE(s.bus_fee, 0) + 
-        COALESCE(s.penalty_fee, 0) - 
-        COALESCE((
-          SELECT SUM(pi.amount)
-          FROM payments p
-          JOIN payment_items pi ON pi.payment_id = p.id
-          WHERE p.student_id = s.id
-            AND p.month = $1
-        ), 0)
-       ), 0) AS total
+         COALESCE(s.monthly_fee, 0) + 
+         COALESCE(s.bus_fee, 0) + 
+         COALESCE(s.penalty_fee, 0) - 
+         COALESCE((
+           SELECT SUM(pi.amount)
+           FROM payments p
+           JOIN payment_items pi ON pi.payment_id = p.id
+           WHERE p.student_id = s.id
+             AND p.month = $1
+         ), 0)
+        ), 0) AS total
        FROM students s
        WHERE s.is_scholarship = false AND s.status = 'active'`,
       [currentMonthStr]
     );
     const pendingFees = Math.max(0, Number(pendingFeesRes.rows[0]?.total || 0));
 
+    // 4. Monthly fees: sum of monthly tuition fees for all active, non-scholarship students
+    const monthlyFeesRes = await pool.query(
+      `SELECT COALESCE(SUM(s.monthly_fee), 0) AS total
+       FROM students s
+       WHERE s.is_scholarship = false AND s.status = 'active'`
+    );
+    const monthlyFees = Number(monthlyFeesRes.rows[0]?.total || 0);
+
+    // 5. Registration fees: sum of all finance_transactions where type = 'Registration Fee' or includes 'registration'
+    const regFeesRes = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM finance_transactions
+       WHERE type = 'Registration Fee' OR type ILIKE '%registration%'`
+    );
+    const registrationFees = Number(regFeesRes.rows[0]?.total || 0);
+
     res.json({
       total_revenue: totalRevenue,
       pending_fees: pendingFees,
-      monthly_revenue: monthlyRevenue
+      monthly_revenue: monthlyRevenue,
+      monthly_fees: monthlyFees,
+      registration_fees: registrationFees
     });
   } catch (error) {
     next(error);

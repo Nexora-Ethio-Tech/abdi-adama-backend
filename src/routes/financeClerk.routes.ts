@@ -77,6 +77,32 @@ router.get('/transport/routes', clerkOnly, financeClerkController.getTransportRo
 router.get('/transport/drivers', clerkOnly, financeClerkController.getTransportDrivers);
 router.get('/transport/policies', clerkOnly, financeClerkController.getTransportPolicies);
 router.get('/registration-fee', clerkOnly, financeClerkController.getGlobalRegistrationFee);
+router.get('/registration-fee-transactions', clerkOnly, async (req: AuthRequest, res: Response) => {
+  try {
+    const branchId = req.user!.branch_id;
+    const result = await pool.query(
+      `SELECT
+         ft.id,
+         ft.student_id,
+         ft.student_name,
+         ft.amount,
+         ft.type,
+         ft.date,
+         ft.verified_by,
+         ft.ethiopic_month,
+         ft.ethiopic_year,
+         ft.created_at
+       FROM finance_transactions ft
+       WHERE ft.branch_id = $1
+         AND (ft.type = 'Registration Fee' OR ft.type ILIKE '%registration%')
+       ORDER BY ft.created_at DESC`,
+      [branchId]
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { message: 'Failed to fetch registration fee transactions' } });
+  }
+});
 router.post('/transport/assign', clerkOnly, validate(assignTransportSchema), financeClerkController.assignTransportStudent);
 router.post('/transport/stop', clerkOnly, validate(stopTransportSchema), financeClerkController.stopTransportStudent);
 router.get('/dashboard', clerkOnly, financeClerkController.getDashboard);

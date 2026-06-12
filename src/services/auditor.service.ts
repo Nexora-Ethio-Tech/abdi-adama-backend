@@ -322,8 +322,7 @@ class AuditorService {
       [branchId]
     );
 
-    // Registration fee stats: count students with a cleared registration-fee month
-    // (summer months 07, 08, 13) and sum the amounts paid
+    // Registration fee stats: count students with a cleared registration-fee and sum the amounts paid
     const regFeeResult = await pool.query(
       `SELECT
          COUNT(DISTINCT p.student_id) AS count,
@@ -332,8 +331,7 @@ class AuditorService {
        JOIN payment_items pi ON pi.payment_id = p.id
        JOIN students s ON s.id = p.student_id
        WHERE s.branch_id = $1
-         AND pi.fee_type = 'registration'
-         AND SPLIT_PART(p.month, '-', 2)::integer IN (11, 12, 13)`,
+         AND pi.fee_type = 'registration'`,
       [branchId]
     );
 
