@@ -67,29 +67,7 @@ class AuditorService {
       throw new Error('Invalid fee approval status. Use pending, approved, or rejected.');
     }
 
-    // Ensure fee_deductions table exists
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS fee_deductions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-        month VARCHAR(20) NOT NULL,
-        requested_amount NUMERIC(10,2) NOT NULL,
-        approved_amount NUMERIC(10,2) DEFAULT 0,
-        status VARCHAR(50) DEFAULT 'pending',
-        approved_by UUID,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(student_id, month)
-      )
-    `);
-
-    // Ensure month column is large enough (in case table already exists with old schema)
-    await pool.query(`
-      ALTER TABLE fee_deductions 
-      ALTER COLUMN month TYPE VARCHAR(20)
-    `).catch(() => {}); // Ignore error if column already correct size
-
-    // Get the student to find their requested aid amount and current fee status
+    // Schema is now managed by migrations; the fee_deductions table should exist at startup.
     const studentRes = await pool.query(
       `SELECT s.id, s.branch_id, s.grade, s.monthly_fee, s.requested_aid_amount, s.fee_approval_status 
        FROM students s WHERE s.id = $1 AND s.branch_id = $2`,
