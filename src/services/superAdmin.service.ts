@@ -321,16 +321,41 @@ class SuperAdminService {
   }
 
   async deleteBranch(id: string) {
-    const usersCheck = await pool.query(`SELECT COUNT(*) FROM users WHERE branch_id = $1`, [id]);
-    if (parseInt(usersCheck.rows[0].count) > 0) {
-      throw new Error('Cannot delete branch with existing users');
-    }
-
-    const result = await pool.query(`DELETE FROM branches WHERE id = $1 RETURNING *`, [id]);
-    if (result.rows.length === 0) {
+    // Verify branch exists
+    const branchCheck = await pool.query(`SELECT id, name FROM branches WHERE id = $1`, [id]);
+    if (branchCheck.rows.length === 0) {
       throw new Error('Branch not found');
     }
-    return { message: 'Branch deleted successfully' };
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Delete students in this branch first (students table may not cascade from branches)
+      await client.query(`DELETE FROM students WHERE branch_id = $1`, [id]);
+
+      // Delete all users in this branch (ON DELETE CASCADE handles their related records:
+      // employee_attendance, employee_payroll_profiles, credential_logs, etc.)
+      await client.query(`DELETE FROM users WHERE branch_id = $1`, [id]);
+
+      // Delete other branch-level records that may not cascade
+      await client.query(`DELETE FROM classes WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM academic_years WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM branch_grade_fees WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM finance_transactions WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM events WHERE branch_id = $1`, [id]);
+
+      // Finally delete the branch itself
+      await client.query(`DELETE FROM branches WHERE id = $1`, [id]);
+
+      await client.query('COMMIT');
+      return { message: `Branch "${branchCheck.rows[0].name}" deleted successfully` };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // ─── User Management ──────────────────────────────────────────────────────
