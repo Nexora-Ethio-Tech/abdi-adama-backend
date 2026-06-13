@@ -60,14 +60,16 @@ const createEventSchema = Joi.object({
   title: Joi.string().min(3).max(200).required(),
   date: Joi.date().iso().required(),
   type: Joi.string().min(2).max(50).required(),
-  description: Joi.string().max(1000).allow('', null)
+  description: Joi.string().max(1000).allow('', null),
+  branchId: Joi.string().uuid().allow('', null)
 });
 
 const updateEventSchema = Joi.object({
   title: Joi.string().min(3).max(200),
   date: Joi.date().iso(),
   type: Joi.string().min(2).max(50),
-  description: Joi.string().max(1000).allow('', null)
+  description: Joi.string().max(1000).allow('', null),
+  branchId: Joi.string().uuid().allow('', null)
 }).min(1);
 
 // ============================================================
@@ -168,6 +170,7 @@ router.post('/staff-attendance', schoolAdminController.recordStaffAttendance);
 
 // Events Calendar
 router.get('/dashboard/upcoming-events', schoolAdminController.getUpcomingEvents);
+router.get('/events', schoolAdminController.getEvents);
 router.post('/events', validate(createEventSchema), schoolAdminController.createEvent);
 router.post('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
 router.delete('/events/:id', schoolAdminController.deleteEvent);

@@ -2,6 +2,7 @@ import pool from '../config/database';
 import { hashPassword, generateRandomPassword } from '../utils/password';
 import { sendWelcomeEmail } from '../utils/emailService';
 import { todayEthiopic } from '../utils/ethiopicUtils';
+import { syncSchoolCalendarForEvent } from './schoolAdmin.service';
 
 // Roles that receive a welcome email on creation — must match user.service.ts
 const EMAIL_ON_CREATE_ROLES = ['school-admin', 'vice-principal', 'auditor'];
@@ -1201,33 +1202,57 @@ class SuperAdminService {
   }
 
   async createEvent(data: { title: string; date: string; type: string; description?: string; branchId: string | null }) {
-    const result = await pool.query(
-      `INSERT INTO events (title, date, type, description, branch_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [data.title, data.date, data.type, data.description || null, data.branchId]
-    );
-    return result.rows[0];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `INSERT INTO events (title, date, type, description, branch_id)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [data.title, data.date, data.type, data.description || null, data.branchId]
+      );
+      const newEvent = result.rows[0];
+      await syncSchoolCalendarForEvent(client, newEvent);
+      await client.query('COMMIT');
+      return newEvent;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async updateEvent(id: string, data: { title?: string; date?: string; type?: string; description?: string; branchId?: string | null }) {
-    const fields: string[] = [];
-    const values: any[] = [];
-    let p = 0;
-    if (data.title !== undefined) { p++; fields.push(`title = $${p}`); values.push(data.title); }
-    if (data.date !== undefined) { p++; fields.push(`date = $${p}`); values.push(data.date); }
-    if (data.type !== undefined) { p++; fields.push(`type = $${p}`); values.push(data.type); }
-    if (data.description !== undefined) { p++; fields.push(`description = $${p}`); values.push(data.description); }
-    if (data.branchId !== undefined) { p++; fields.push(`branch_id = $${p}`); values.push(data.branchId); }
-    if (fields.length === 0) throw new Error('No fields to update');
-    p++;
-    values.push(id);
-    const result = await pool.query(
-      `UPDATE events SET ${fields.join(', ')} WHERE id = $${p} RETURNING *`,
-      values
-    );
-    if (result.rows.length === 0) throw new Error('Event not found');
-    return result.rows[0];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const fields: string[] = [];
+      const values: any[] = [];
+      let p = 0;
+      if (data.title !== undefined) { p++; fields.push(`title = $${p}`); values.push(data.title); }
+      if (data.date !== undefined) { p++; fields.push(`date = $${p}`); values.push(data.date); }
+      if (data.type !== undefined) { p++; fields.push(`type = $${p}`); values.push(data.type); }
+      if (data.description !== undefined) { p++; fields.push(`description = $${p}`); values.push(data.description); }
+      if (data.branchId !== undefined) { p++; fields.push(`branch_id = $${p}`); values.push(data.branchId); }
+      if (fields.length === 0) throw new Error('No fields to update');
+      p++;
+      values.push(id);
+      const result = await client.query(
+        `UPDATE events SET ${fields.join(', ')} WHERE id = $${p} RETURNING *`,
+        values
+      );
+      if (result.rows.length === 0) throw new Error('Event not found');
+      const updatedEvent = result.rows[0];
+      await syncSchoolCalendarForEvent(client, updatedEvent);
+      await client.query('COMMIT');
+      return updatedEvent;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async deleteEvent(id: string) {

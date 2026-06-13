@@ -1,5 +1,5 @@
 import pool from '../config/database';
-import { getCurrentECYear, getCurrentSemester, formatSemester } from '../shared/ethiopianCalendar';
+import { getCurrentECYear, getCurrentSemester, formatSemester, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
 import { getEthiopianNow } from './schoolAdmin.service';
 
 class VicePrincipalService {
@@ -206,6 +206,7 @@ class VicePrincipalService {
   async getStaffAttendance(branchId: string, date: string) {
     const ethNow = getEthiopianNow();
     const targetDate = date || ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
 
     const result = await pool.query(
       `SELECT
@@ -233,11 +234,31 @@ class VicePrincipalService {
           ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
+          CASE
+            WHEN EXTRACT(ISODOW FROM $5::date) IN (6, 7) THEN 'Weekend'
+            WHEN EXISTS (
+              SELECT 1 FROM school_calendar sc
+              WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+            ) THEN 'Holiday'
+            ELSE 'Pending'
+          END                              AS day_off_type,
           -- Effective status: staff auto-absent when past 02:20 AM Ethiopian time with no punch
+          -- AND it is a teaching day (not a weekend, holiday, or school break)
           CASE
             WHEN ea.status IS NOT NULL THEN ea.status
             WHEN ea.id IS NULL
               AND u.role::text IN ('teacher', 'vice-principal')
+              -- Not a weekend (based on Gregorian calendar)
+              AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+              -- Not a holiday or break in the school calendar (based on Gregorian calendar)
+              AND NOT EXISTS (
+                SELECT 1 FROM school_calendar sc
+                WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                  AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                  AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+              )
               AND (
                 $2::date < $3::date
                 OR ($2::date = $3::date AND $4::time > TIME '02:20:00')
@@ -270,6 +291,13 @@ class VicePrincipalService {
            WHEN COALESCE(ea.status,
              CASE
                WHEN ea.id IS NULL AND u.role::text IN ('teacher', 'vice-principal')
+                 AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+                 AND NOT EXISTS (
+                   SELECT 1 FROM school_calendar sc
+                   WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                     AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                     AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+                 )
                  AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
                THEN 'absent' ELSE 'zzz' END
            ) = 'absent'   THEN 1
@@ -279,7 +307,7 @@ class VicePrincipalService {
            ELSE 5
          END,
          u.name`,
-      [branchId, targetDate, ethNow.dateStr, ethNow.time24]
+      [branchId, targetDate, ethNow.dateStr, ethNow.time24, gregDateStr]
     );
 
     return result.rows;

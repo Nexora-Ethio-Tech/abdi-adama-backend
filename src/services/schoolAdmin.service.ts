@@ -2,7 +2,7 @@ import pool from '../config/database';
 import userService from './user.service';
 import { generate4DigitPIN, hashPassword } from '../utils/password';
 import { sendAdmissionCredentialsEmail } from '../utils/emailService';
-import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
+import { gregorianToEthiopian, ethiopianToGregorianDate, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
 
 export function getEthiopianNow() {
   const now = new Date();
@@ -31,6 +31,27 @@ export function formatEthiopianTime(date: Date): string {
   if (displayHour === 0) displayHour = 12;
   return `${displayHour.toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')} ${meridiem}`;
 }
+export async function syncSchoolCalendarForEvent(client: any, event: { id: string; title: string; date: any; type: string; description?: string | null; branch_id: string | null }) {
+  const rawType = event.type.toLowerCase().trim();
+  let dayType = 'event_day';
+  if (rawType.includes('holiday')) dayType = 'holiday';
+  else if (rawType.includes('summer break') || rawType.includes('summer_break')) dayType = 'summer_break';
+  else if (rawType.includes('semester break') || rawType.includes('semester_break')) dayType = 'semester_break';
+  else if (rawType.includes('exam day') || rawType.includes('exam_day')) dayType = 'exam_day';
+  else if (rawType.includes('half day') || rawType.includes('half_day')) dayType = 'half_day';
+  else if (rawType === 'break') dayType = 'holiday';
+
+  // Delete existing calendar entry if it exists
+  await client.query('DELETE FROM school_calendar WHERE event_id = $1', [event.id]);
+
+  // Insert new calendar entry
+  await client.query(
+    `INSERT INTO school_calendar (title, description, start_date, end_date, day_type, branch_id, event_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [event.title, event.description || null, event.date, event.date, dayType, event.branch_id, event.id]
+  );
+}
+
 
 
 class SchoolAdminService {
@@ -79,6 +100,7 @@ class SchoolAdminService {
   async getStaffAttendance(branchId: string, date: string) {
     const ethNow = getEthiopianNow();
     const targetDate = date || ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
 
     const result = await pool.query(
       `SELECT
@@ -106,11 +128,31 @@ class SchoolAdminService {
           ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
+          CASE
+            WHEN EXTRACT(ISODOW FROM $5::date) IN (6, 7) THEN 'Weekend'
+            WHEN EXISTS (
+              SELECT 1 FROM school_calendar sc
+              WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+            ) THEN 'Holiday'
+            ELSE 'Pending'
+          END                              AS day_off_type,
           -- Effective status: teachers auto-absent when past 02:20 AM Ethiopian time with no punch
+          -- AND it is a teaching day (not a weekend, holiday, or school break)
           CASE
             WHEN ea.status IS NOT NULL THEN ea.status
             WHEN ea.id IS NULL
               AND u.role::text IN ('teacher', 'vice-principal')
+              -- Not a weekend (based on Gregorian calendar)
+              AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+              -- Not a holiday or break in the school calendar (based on Gregorian calendar)
+              AND NOT EXISTS (
+                SELECT 1 FROM school_calendar sc
+                WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                  AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                  AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+              )
               AND (
                 $2::date < $3::date
                 OR ($2::date = $3::date AND $4::time > TIME '02:20:00')
@@ -143,6 +185,13 @@ class SchoolAdminService {
            WHEN COALESCE(ea.status,
              CASE
                WHEN ea.id IS NULL AND u.role::text IN ('teacher', 'vice-principal')
+                 AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+                 AND NOT EXISTS (
+                   SELECT 1 FROM school_calendar sc
+                   WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                     AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                     AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+                 )
                  AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
                THEN 'absent' ELSE 'zzz' END
            ) = 'absent'   THEN 1
@@ -152,7 +201,7 @@ class SchoolAdminService {
            ELSE 5
          END,
          u.name`,
-      [branchId, targetDate, ethNow.dateStr, ethNow.time24]
+      [branchId, targetDate, ethNow.dateStr, ethNow.time24, gregDateStr]
     );
 
     return result.rows;
@@ -1994,14 +2043,25 @@ class SchoolAdminService {
     description?: string;
     branchId: string;
   }) {
-    const result = await pool.query(
-      `INSERT INTO events (title, date, type, description, branch_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [data.title, data.date, data.type, data.description || null, data.branchId]
-    );
-
-    return result.rows[0];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `INSERT INTO events (title, date, type, description, branch_id)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [data.title, data.date, data.type, data.description || null, data.branchId]
+      );
+      const newEvent = result.rows[0];
+      await syncSchoolCalendarForEvent(client, newEvent);
+      await client.query('COMMIT');
+      return newEvent;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // Update Event
@@ -2011,59 +2071,71 @@ class SchoolAdminService {
     type?: string;
     description?: string;
   }) {
-    // Verify event belongs to branch
-    const checkResult = await pool.query(
-      'SELECT id FROM events WHERE id = $1 AND branch_id = $2',
-      [eventId, branchId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Verify event belongs to branch
+      const checkResult = await client.query(
+        'SELECT id FROM events WHERE id = $1 AND branch_id = $2 FOR UPDATE',
+        [eventId, branchId]
+      );
 
-    if (checkResult.rows.length === 0) {
-      throw new Error('Event not found or access denied');
-    }
+      if (checkResult.rows.length === 0) {
+        throw new Error('Event not found or access denied');
+      }
 
-    const fields: string[] = [];
-    const values: any[] = [];
-    let paramCount = 0;
+      const fields: string[] = [];
+      const values: any[] = [];
+      let paramCount = 0;
 
-    if (data.title) {
+      if (data.title) {
+        paramCount++;
+        fields.push(`title = $${paramCount}`);
+        values.push(data.title);
+      }
+
+      if (data.date) {
+        paramCount++;
+        fields.push(`date = $${paramCount}`);
+        values.push(data.date);
+      }
+
+      if (data.type) {
+        paramCount++;
+        fields.push(`type = $${paramCount}`);
+        values.push(data.type);
+      }
+
+      if (data.description !== undefined) {
+        paramCount++;
+        fields.push(`description = $${paramCount}`);
+        values.push(data.description);
+      }
+
+      if (fields.length === 0) {
+        throw new Error('No fields to update');
+      }
+
       paramCount++;
-      fields.push(`title = $${paramCount}`);
-      values.push(data.title);
+      values.push(eventId);
+
+      const result = await client.query(
+        `UPDATE events SET ${fields.join(', ')}
+         WHERE id = $${paramCount}
+         RETURNING *`,
+        values
+      );
+
+      const updatedEvent = result.rows[0];
+      await syncSchoolCalendarForEvent(client, updatedEvent);
+      await client.query('COMMIT');
+      return updatedEvent;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
     }
-
-    if (data.date) {
-      paramCount++;
-      fields.push(`date = $${paramCount}`);
-      values.push(data.date);
-    }
-
-    if (data.type) {
-      paramCount++;
-      fields.push(`type = $${paramCount}`);
-      values.push(data.type);
-    }
-
-    if (data.description !== undefined) {
-      paramCount++;
-      fields.push(`description = $${paramCount}`);
-      values.push(data.description);
-    }
-
-    if (fields.length === 0) {
-      throw new Error('No fields to update');
-    }
-
-    paramCount++;
-    values.push(eventId);
-
-    const result = await pool.query(
-      `UPDATE events SET ${fields.join(', ')}
-       WHERE id = $${paramCount}
-       RETURNING *`,
-      values
-    );
-
-    return result.rows[0];
   }
 
   // Delete Event
