@@ -39,7 +39,9 @@ async function ensureSchemaExtensions(): Promise<void> {
     '23rd_library_loans_enhancement.sql',
     '24th_fix_weekly_plans_deletion.sql',
     '25th_create_zk_device_id_seq.sql',
-    '26th_create_fee_deductions_table.sql'
+    '26th_create_fee_deductions_table.sql',
+    '27th_teacher_ratings_constraints.sql',
+    '28th_add_online_exams_password.sql'
   ];
 
   for (const fileName of migrationFiles) {

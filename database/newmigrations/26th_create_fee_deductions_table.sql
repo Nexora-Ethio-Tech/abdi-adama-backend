@@ -1,6 +1,6 @@
-CREATE TABLE IF NOT EXISTS fee_deductions (
+CREATE TABLE IF NOT EXISTS public.fee_deductions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  student_id UUID NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
   month VARCHAR(20) NOT NULL,
   requested_amount NUMERIC(10,2) NOT NULL,
   approved_amount NUMERIC(10,2) DEFAULT 0,

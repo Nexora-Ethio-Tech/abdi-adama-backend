@@ -590,18 +590,6 @@ class SchoolAdminService {
   }
 
   async getClasses(branchId: string) {
-    // Ensure class_teachers table exists (safe no-op if already created)
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS class_teachers (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-        branch_id UUID NOT NULL,
-        assigned_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(class_id, teacher_id)
-      )
-    `);
-
     const result = await pool.query(
       `SELECT 
         c.*,
@@ -733,18 +721,6 @@ class SchoolAdminService {
 
     // Use the actual teacher table id
     const actualTeacherId = teacherRecord.rows[0].id;
-
-    // Ensure class_teachers table exists
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS class_teachers (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-        branch_id UUID NOT NULL,
-        assigned_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(class_id, teacher_id)
-      )
-    `);
 
     // Delete any existing assignments for this class (replace its teacher)
     await pool.query(
@@ -2337,18 +2313,6 @@ class SchoolAdminService {
       if (isRoomTeacher && htConfig) {
         const htGrades = htConfig.grades || [];
         const htSections = htConfig.sections || {};
-
-        // Ensure class_teachers table exists
-        await client.query(`
-          CREATE TABLE IF NOT EXISTS class_teachers (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-            teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-            branch_id UUID NOT NULL,
-            assigned_at TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE(class_id, teacher_id)
-          )
-        `);
 
         for (const grade of htGrades) {
           const secList = htSections[grade] || [];

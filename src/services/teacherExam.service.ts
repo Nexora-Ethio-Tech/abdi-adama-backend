@@ -60,6 +60,7 @@ class TeacherExamService {
            oe.is_published,
            oe.created_at,
            oe.show_score,
+           oe.password_required,
            u.name AS teacher_name,
            COUNT(oeq.id)::int AS question_count,
            oes.status AS session_status,
@@ -74,7 +75,7 @@ class TeacherExamService {
          LEFT JOIN online_exam_questions oeq ON oeq.exam_id = oe.id
          LEFT JOIN online_exam_sessions oes ON oes.exam_id = oe.id AND oes.student_id = $1
          WHERE oe.is_published = TRUE
-         GROUP BY oe.id, u.name, oes.status, oes.terminated, oes.violation_count, oes.final_score, oe.show_score
+         GROUP BY oe.id, u.name, oes.status, oes.terminated, oes.violation_count, oes.final_score, oe.show_score, oe.password_required
          ORDER BY oe.created_at DESC`,
         [studentId || userId]);
 
@@ -92,7 +93,7 @@ class TeacherExamService {
         finalScore: (exam.final_score !== null && exam.show_score !== false) ? Math.round(Number(exam.final_score)) : null,
         violated: exam.terminated,
         violationCount: exam.violation_count,
-        passwordRequired: false,
+        passwordRequired: !!exam.password_required,
       }));
     } catch (error) { logger.error('Error fetching published exams:', error); throw error; }
   }
@@ -194,7 +195,7 @@ class TeacherExamService {
           totalMarks: questions.reduce((s: number, q: any) => s + (q.points || 1), 0),
           instructions: '',
           teacherName: exam.teacher_name,
-          passwordRequired: false,
+          passwordRequired: !!exam.password_required,
           showScore: exam.show_score !== false,
           isGraded: !!exam.is_graded,
           assessmentType: exam.assessment_type || null,
@@ -412,13 +413,15 @@ class TeacherExamService {
     const showScore = input.showScore !== undefined ? input.showScore : (input.show_score !== undefined ? input.show_score : true);
     const isGraded = input.isGraded !== undefined ? input.isGraded : (input.is_graded !== undefined ? input.is_graded : false);
     const assessmentType = input.assessmentType !== undefined ? input.assessmentType : (input.assessment_type !== undefined ? input.assessment_type : null);
+    const examPassword = input.examPassword !== undefined ? input.examPassword : null;
+    const passwordRequired = input.passwordRequired !== undefined ? !!input.passwordRequired : false;
 
     const creatorRes = await pool.query(`SELECT id FROM users WHERE id=$1`, [teacherId]);
     const creatorId = creatorRes.rows[0]?.id || teacherId;
     const result = await pool.query(
-      `INSERT INTO online_exams (creator_id, subject_id, section_id, title, duration_minutes, is_published, start_window, total_points, show_score, is_graded, assessment_type)
-       VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), $6, $7, $8, $9) RETURNING *`,
-      [creatorId, subjectId || null, classId || null, title, duration, totalMarks || 100, showScore, isGraded, assessmentType]);
+      `INSERT INTO online_exams (creator_id, subject_id, section_id, title, duration_minutes, is_published, start_window, total_points, show_score, is_graded, assessment_type, exam_password, password_required)
+       VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [creatorId, subjectId || null, classId || null, title, duration, totalMarks || 100, showScore, isGraded, assessmentType, examPassword, passwordRequired]);
     const exam = result.rows[0];
     if (Array.isArray(questions) && questions.length > 0) {
       for (let i = 0; i < questions.length; i++) {
@@ -488,6 +491,8 @@ class TeacherExamService {
     const showScore = input.showScore !== undefined ? input.showScore : input.show_score;
     const isGraded = input.isGraded !== undefined ? input.isGraded : input.is_graded;
     const assessmentType = input.assessmentType !== undefined ? input.assessmentType : input.assessment_type;
+    const examPassword = input.examPassword !== undefined ? input.examPassword : input.exam_password;
+    const passwordRequired = input.passwordRequired !== undefined ? input.passwordRequired : input.password_required;
     const questions = input.questions;
 
     const updates: string[] = []; const vals: any[] = []; let p = 1;
@@ -499,6 +504,8 @@ class TeacherExamService {
     if (showScore !== undefined) { updates.push(`show_score=$${p++}`); vals.push(!!showScore); }
     if (isGraded !== undefined) { updates.push(`is_graded=$${p++}`); vals.push(!!isGraded); }
     if (assessmentType !== undefined) { updates.push(`assessment_type=$${p++}`); vals.push(assessmentType || null); }
+    if (examPassword !== undefined) { updates.push(`exam_password=$${p++}`); vals.push(examPassword); }
+    if (passwordRequired !== undefined) { updates.push(`password_required=$${p++}`); vals.push(!!passwordRequired); }
 
     const client = await pool.connect();
     try {
@@ -564,8 +571,18 @@ class TeacherExamService {
     }
   }
 
-  async verifyExamPassword(_examId: string, _password: string): Promise<boolean> {
-    return true; // online_exams has no password field
+  async verifyExamPassword(examId: string, password: string): Promise<boolean> {
+    try {
+      const res = await pool.query(
+        `SELECT exam_password, password_required FROM online_exams WHERE id=$1`, [examId]);
+      if (res.rows.length === 0) return false;
+      const exam = res.rows[0];
+      if (!exam.password_required) return true;
+      return exam.exam_password === password;
+    } catch (error) {
+      logger.error('Error verifying exam password:', error);
+      return false;
+    }
   }
 
   async markPasswordVerified(_examId: string, _userId: string) {
