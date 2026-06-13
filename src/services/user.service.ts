@@ -190,6 +190,12 @@ class UserService {
     try {
       await client.query('BEGIN');
 
+      // Check user role before deleting
+      const checkRole = await client.query('SELECT role FROM users WHERE id = $1', [userId]);
+      if (checkRole.rows.length > 0 && checkRole.rows[0].role === 'student') {
+        throw new Error('Student records cannot be deleted to preserve historical academic and financial records.');
+      }
+
       const result = await client.query<{ email: string; role: string }>(
         'DELETE FROM users WHERE id = $1 RETURNING email, role',
         [userId]

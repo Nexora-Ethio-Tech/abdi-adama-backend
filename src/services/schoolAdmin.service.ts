@@ -439,6 +439,11 @@ class SchoolAdminService {
       throw new Error('You cannot delete admin roles. Contact Super Admin.');
     }
 
+    // Prevent deletion of student records to preserve historical academic and financial records
+    if (user.role === 'student') {
+      throw new Error('Student records cannot be deleted to preserve historical academic and financial records. Please update their status to Suspended, Inactive, or Graduated instead.');
+    }
+
     // Delete user (CASCADE will handle related records)
     await pool.query('DELETE FROM users WHERE id = $1', [userId]);
 
@@ -487,7 +492,7 @@ class SchoolAdminService {
       values.push(updateData.email);
     }
 
-    if (fields.length === 0 && (!updateData.grade && !updateData.parentPhone)) {
+    if (fields.length === 0 && (!updateData.grade && !updateData.parentPhone && !updateData.status)) {
       throw new Error('No fields to update');
     }
 
@@ -504,7 +509,7 @@ class SchoolAdminService {
       );
     }
 
-    // If student, update grade and parent_phone in students table
+    // If student, update grade, parent_phone, and status in students table
     if (user.role === 'student') {
       const studentUpdates: string[] = [];
       const studentValues: any[] = [];
@@ -525,6 +530,24 @@ class SchoolAdminService {
         studentUpdates.push(`parent_phone = $${studentParamCount}`);
         studentValues.push(phoneValidation.formatted);
         studentParamCount++;
+      }
+
+      if (updateData.status) {
+        const allowedStatuses = ['Active', 'Inactive', 'Suspended', 'Graduated'];
+        const formattedStatus = updateData.status.charAt(0).toUpperCase() + updateData.status.slice(1).toLowerCase();
+        if (!allowedStatuses.includes(formattedStatus)) {
+          throw new Error(`Invalid student status: ${updateData.status}`);
+        }
+        studentUpdates.push(`status = $${studentParamCount}`);
+        studentValues.push(formattedStatus);
+        studentParamCount++;
+
+        // Also update users.is_active to match student status (Active -> true, others -> false)
+        const isActive = (formattedStatus === 'Active');
+        await pool.query(
+          `UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2`,
+          [isActive, userId]
+        );
       }
 
       if (studentUpdates.length > 0) {
@@ -1790,7 +1813,8 @@ class SchoolAdminService {
         u.digital_id,
         u.name,
         u.email,
-        u.status,
+        COALESCE(s.status, 'Active') AS status,
+        u.status AS user_status,
         u.is_active,
         u.created_at,
         u.updated_at,

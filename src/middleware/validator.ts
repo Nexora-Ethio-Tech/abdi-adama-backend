@@ -87,7 +87,8 @@ export const schemas = {
     name: Joi.string().min(2).max(150).optional(),
     email: Joi.string().email().optional(),
     grade: Joi.string().optional(),
-    parentPhone: Joi.string().optional()
+    parentPhone: Joi.string().optional(),
+    status: Joi.string().valid('Active', 'Inactive', 'Suspended', 'Graduated', 'Pending', 'Approved', 'Revoked').optional()
   }),
 
   assignStudentToClass: Joi.object({

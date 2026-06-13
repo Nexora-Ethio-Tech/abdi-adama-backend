@@ -151,6 +151,7 @@ router.get('/teachers', schoolAdminController.getBranchTeachers);
 router.get('/students', schoolAdminController.getBranchStudents);
 router.get('/students/:id/admission-record', schoolAdminController.getStudentAdmissionRecord);
 router.get('/students/:id', schoolAdminController.getStudentById);
+router.post('/students/:id', validate(schemas.updateUser), schoolAdminController.updateStudent);
 
 // Grading Configurations
 router.get('/grading-configs', schoolAdminController.getGradingConfigs);
