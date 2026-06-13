@@ -42,7 +42,8 @@ async function ensureSchemaExtensions(): Promise<void> {
     '26th_create_fee_deductions_table.sql',
     '27th_teacher_ratings_constraints.sql',
     '28th_add_online_exams_password.sql',
-    '29th_add_bus_start_date_to_students.sql'
+    '29th_add_bus_start_date_to_students.sql',
+    '30th_remove_courses_code_unique_constraint.sql'
   ];
 
   for (const fileName of migrationFiles) {
