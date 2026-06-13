@@ -166,7 +166,7 @@ class SuperAdminController {
   async getAllUsers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { role, branchId, status } = req.query;
-      
+
       const filters: any = {};
       if (role) filters.role = role as UserRole;
       if (branchId) filters.branchId = branchId as string;
@@ -333,6 +333,49 @@ class SuperAdminController {
       next(error);
     }
   }
+
+  // Create public post
+
+  async CreatePublicPost(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const PublicPost = await superAdminService.CreatePublicPost(req.body);
+      res.status(201).json({
+        success: true,
+        data: PublicPost,
+        message: 'Posted sucessfully!'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getPublicPosts(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const PublicPosts = await superAdminService.getPublicPosts();
+      res.status(201).json({
+        success: true,
+        data: PublicPosts,
+        message: 'Fetch successful!'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deletePublicPost(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const PublicPosts = await superAdminService.deletePublicPost(req.body);
+      res.status(201).json({
+        success: true,
+        data: PublicPosts,
+        message: 'Delete successful!'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  //
 
   async getGlobalAcademicYears(_req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

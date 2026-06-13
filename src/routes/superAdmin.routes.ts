@@ -27,6 +27,12 @@ const academicYearSchema = Joi.object({
   endDate: Joi.date().iso().required()
 });
 
+const PostSchema = Joi.object({
+  post_text: Joi.string().required(),
+  image_url: Joi.string().required(),
+  media_type: Joi.string().required()
+});
+
 const capacitySchema = Joi.object({
   capacity: Joi.number().integer().min(0).required()
 });
@@ -146,6 +152,12 @@ router.get('/dashboard', superAdminController.getDashboard);
 
 // Finance Settings Management
 router.post('/finance-settings/:key', superAdminController.updateFinanceSetting);
+
+
+//Public post
+router.post('/public-post', validate(PostSchema), superAdminController.CreatePublicPost);
+router.get('/public-post',  superAdminController.getPublicPosts);
+router.delete('/public-post', superAdminController.deletePublicPost);
 
 // Branch-based finance endpoints
 router.post('/branch-grade-fees', validate(branchGradeFeeSchema), superAdminController.upsertBranchGradeFee);

@@ -2,6 +2,7 @@ import pool from '../config/database';
 import { hashPassword, generateRandomPassword } from '../utils/password';
 import { sendWelcomeEmail } from '../utils/emailService';
 import { todayEthiopic } from '../utils/ethiopicUtils';
+import { UUID } from 'crypto';
 
 // Roles that receive a welcome email on creation — must match user.service.ts
 const EMAIL_ON_CREATE_ROLES = ['school-admin', 'vice-principal', 'auditor'];
@@ -593,6 +594,33 @@ class SuperAdminService {
     );
     return result.rows[0];
   }
+
+  // public post
+  async CreatePublicPost(data: { post_text: string; image_url: string, media_type: string }) {
+    const result = await pool.query(
+      `INSERT INTO public_posts (post_text, image_url, media_type)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [data.post_text, data.image_url, data.media_type]
+    );
+    return result.rows[0];
+  }
+
+  async getPublicPosts() {
+    const result = await pool.query(
+      `SELECT * FROM public_posts`,
+    );
+    return result.rows;
+  }
+
+  async deletePublicPost(data: { id: UUID; }) {
+    const result = await pool.query(
+      `DELETE FROM public_posts WHERE id=$1`,
+      [data.id]
+    );
+    return result.rows[0];
+  }
+  //
 
   async activateGlobalAcademicYear(yearId: string) {
     await pool.query(`UPDATE academic_years SET is_active = false WHERE is_active = true`);

@@ -4,6 +4,7 @@ import { Router, Request, Response } from 'express';
 import authController from '../controllers/auth.controller';
 import { validate, schemas } from '../middleware/validator';
 import superAdminController from '../controllers/superAdmin.controller';
+import superAdminService from '../services/superAdmin.service';
 
 const router = Router();
 
@@ -54,6 +55,19 @@ router.post('/chat', async (req: Request, res: Response) => {
     console.error('Chat routing error:', error);
     return res.status(500).json({ error: 'An unexpected internal error occurred.' });
   }
+});
+
+router.get('/public-post',async (req: Request, res: Response) => {
+  try {
+      const PublicPosts = await superAdminService.getPublicPosts();
+      res.status(201).json({
+        success: true,
+        data: PublicPosts,
+        message: 'Fetch successful!'
+      });
+    } catch (error) {
+      res.json(error);
+    }
 });
 
 export default router;
