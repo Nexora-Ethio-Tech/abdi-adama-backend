@@ -860,6 +860,55 @@ class SchoolAdminController {
     }
   }
 
+  // Replace/Re-upload Application Transcript
+  async replaceApplicationTranscript(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { id } = req.params;
+
+      if (!req.file) {
+        res.status(400).json({ success: false, message: 'No file uploaded' });
+        return;
+      }
+
+      // Validate file size (max 2MB)
+      const fileSizeValidation = validateFileSize(req.file.size);
+      if (!fileSizeValidation.isValid) {
+        res.status(400).json({
+          success: false,
+          message: 'File upload failed',
+          errors: {
+            transcriptFile: fileSizeValidation.error,
+          },
+        });
+        return;
+      }
+
+      const updated = await schoolAdminService.replaceApplicationTranscript({
+        applicationId: id,
+        branchId: branchId!,
+        fileBuffer: req.file.buffer,
+        fileName: req.file.originalname,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+      });
+
+      if (!updated) {
+        res.status(404).json({ success: false, message: 'Application not found' });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: 'Document replaced successfully',
+        data: updated,
+      });
+    } catch (error) {
+      logger.error('Error replacing application transcript:', error instanceof Error ? error.message : error);
+      next(error);
+    }
+  }
+
   // Financial Policy Management
   async setFinancialPolicy(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

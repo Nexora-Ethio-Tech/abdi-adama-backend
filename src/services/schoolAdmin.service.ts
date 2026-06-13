@@ -1212,6 +1212,36 @@ class SchoolAdminService {
     return result.rows[0];
   }
 
+  // Replace application transcript file binary data
+  async replaceApplicationTranscript(params: {
+    applicationId: string;
+    branchId: string;
+    fileBuffer: Buffer;
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+  }) {
+    const { applicationId, branchId, fileBuffer, fileName, fileSize, mimeType } = params;
+
+    const result = await pool.query(
+      `UPDATE pending_applications 
+       SET transcript_data = $1, 
+           transcript_file_name = $2, 
+           transcript_file_size = $3, 
+           transcript_mime_type = $4,
+           updated_at = NOW()
+       WHERE id = $5 AND branch_id = $6
+       RETURNING id, transcript_file_name, transcript_file_size, transcript_mime_type`,
+      [fileBuffer, fileName, fileSize, mimeType, applicationId, branchId]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return result.rows[0];
+  }
+
   async getPendingApplications(branchId: string, status?: string) {
     let query = `
             SELECT id, branch_id, applicant_name, applicant_email, applicant_phone, digital_id, dob, gender,

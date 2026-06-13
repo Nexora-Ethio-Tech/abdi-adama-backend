@@ -88,6 +88,12 @@ router.post('/applications',
 );
 router.get('/applications', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getPendingApplications);
 router.get('/applications/:id/transcript', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.getApplicationTranscript);
+router.post('/applications/:id/transcript/replace',
+  roleGuard([UserRole.SCHOOL_ADMIN]),
+  uploadTranscript.single('transcript'),
+  handleUploadError,
+  schoolAdminController.replaceApplicationTranscript
+);
 router.post('/applications/:id/status', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.updateApplicationStatus);
 
 // ============================================================
