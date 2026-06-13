@@ -65,6 +65,7 @@ router.post('/teachers/:id/rate', vicePrincipalController.rateTeacher);
 router.get('/students/search', vicePrincipalController.searchStudents);
 
 router.get('/attendance-summary', vicePrincipalController.getAttendanceSummary);
+router.get('/communication-logs/summary', vicePrincipalController.getCommunicationSummary);
 router.get('/academic-performance', vicePrincipalController.getAcademicPerformance);
 router.get('/dashboard', vicePrincipalController.getDashboard);
 router.get('/teacher-of-week/votes', vicePrincipalController.getTeacherOfWeekVotes);

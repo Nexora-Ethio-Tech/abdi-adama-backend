@@ -1229,6 +1229,79 @@ class VicePrincipalService {
       client.release();
     }
   }
+
+  async getCommunicationSummary(sectionId: string, weekEnding: string, branchId: string) {
+    // 1. Get homeroom teacher
+    const teacherResult = await pool.query(
+      `SELECT u.name as teacher_name
+       FROM classes c
+       LEFT JOIN class_teachers ct ON ct.class_id = c.id
+       LEFT JOIN teachers t ON ct.teacher_id = t.id OR (t.is_room_teacher = true AND t.assigned_room_class = c.name)
+       LEFT JOIN users u ON t.user_id = u.id
+       WHERE c.id = $1 AND c.branch_id = $2
+       ORDER BY ct.assigned_at DESC, t.updated_at DESC
+       LIMIT 1`,
+      [sectionId, branchId]
+    );
+
+    const homeroomTeacher = teacherResult.rows[0]?.teacher_name || 'Not Assigned';
+
+    // 2. Get all students in the section with their parent name
+    const studentsResult = await pool.query(
+      `SELECT 
+        s.id,
+        s.user_id,
+        u.name as student_name,
+        COALESCE(
+          (SELECT up.name 
+           FROM parent_student ps 
+           JOIN parents p ON ps.parent_id = p.id 
+           JOIN users up ON p.user_id = up.id 
+           WHERE ps.student_id = s.id 
+           LIMIT 1),
+          s.parent_name,
+          (SELECT pa.parent_name FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1),
+          'Not Assigned'
+        ) as parent_name
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       WHERE s.section_id = $1 AND s.branch_id = $2
+       ORDER BY u.name`,
+      [sectionId, branchId]
+    );
+
+    // 3. For each student, check if they have a communication log submitted for this weekEnding
+    const logsResult = await pool.query(
+      `SELECT student_id, created_at
+       FROM communication_logs
+       WHERE DATE(week_ending) = $1::date`,
+      [weekEnding]
+    );
+
+    const logsMap = new Set(logsResult.rows.map(row => row.student_id));
+    const logsDateMap = new Map(logsResult.rows.map(row => [row.student_id, row.created_at]));
+
+    const students = studentsResult.rows.map(student => {
+      const sent = logsMap.has(student.id);
+      return {
+        id: student.id,
+        name: student.student_name,
+        parentName: student.parent_name,
+        sent,
+        sentAt: sent ? logsDateMap.get(student.id) : null
+      };
+    });
+
+    const totalStudents = students.length;
+    const sentCount = students.filter(s => s.sent).length;
+
+    return {
+      homeroomTeacher,
+      totalStudents,
+      sentCount,
+      students
+    };
+  }
 }
 
 export default new VicePrincipalService();

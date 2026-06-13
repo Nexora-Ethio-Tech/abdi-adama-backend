@@ -140,6 +140,9 @@ router.get('/financial-policies', schoolAdminController.getFinancialPolicies);
 
 // Dashboard & Utilities
 router.get('/dashboard', schoolAdminController.getDashboard);
+router.post('/notices', schoolAdminController.postNotice);
+router.get('/notices', schoolAdminController.getNotices);
+router.delete('/notices/:id', schoolAdminController.deleteNotice);
 router.get('/teachers', schoolAdminController.getBranchTeachers);
 router.get('/students', schoolAdminController.getBranchStudents);
 router.get('/students/:id/admission-record', schoolAdminController.getStudentAdmissionRecord);
