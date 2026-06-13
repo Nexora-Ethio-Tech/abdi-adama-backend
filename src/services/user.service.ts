@@ -10,10 +10,13 @@ import { CreateUserDTO, User, UserFilters, CreateUserResult, UserStatus } from '
 // Roles that use 4-digit PIN instead of complex password
 const PIN_BASED_ROLES = ['teacher', 'student', 'parent', 'finance-clerk', 'librarian', 'clinic-admin', 'driver'];
 
-// Only these roles receive a welcome email — they are created by the super admin,
-// work remotely, and have real email addresses. All other roles (teachers, students,
-// etc.) are on-site staff whose credentials are handed to them in person.
-const EMAIL_ON_CREATE_ROLES = ['school-admin', 'vice-principal', 'auditor'];
+// All staff roles receive a welcome email with their login credentials.
+// The Super Admin always provides a real email address in the creation form,
+// so every newly created user should receive their Digital ID and password automatically.
+const EMAIL_ON_CREATE_ROLES = [
+  'school-admin', 'vice-principal', 'auditor',
+  'teacher', 'finance-clerk', 'librarian', 'clinic-admin', 'driver',
+];
 
 class UserService {
   async createUser(userData: CreateUserDTO, createdBy: string): Promise<CreateUserResult> {
@@ -131,7 +134,7 @@ class UserService {
         logger.info(`User created: ${user.email} (${role}) by ${createdBy}`);
 
         if (EMAIL_ON_CREATE_ROLES.includes(role) && user.email && !user.email.endsWith('@no-reply.local')) {
-          sendWelcomeEmail(user.name, user.email, userPassword, user.role).catch((e) => {
+          sendWelcomeEmail(user.name, user.email, userPassword, user.role, user.digital_id).catch((e) => {
             logger.error('Failed to send welcome email:', e);
           });
         }
@@ -334,6 +337,39 @@ class UserService {
     );
 
     return { userId, name: user.name, newPIN };
+  }
+
+  async resetUserPassword(userId: string): Promise<{ userId: string; name: string; temporaryPassword: string }> {
+    const userCheck = await pool.query(
+      `SELECT id, name, email, role FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      throw new Error('User not found');
+    }
+
+    const user = userCheck.rows[0];
+
+    // Generate a 4-digit PIN
+    const temporaryPassword = generate4DigitPIN();
+    const hashedPassword = await hashPassword(temporaryPassword);
+
+    await pool.query(
+      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [hashedPassword, userId]
+    );
+
+    logger.info(`Password reset for user: ${userId} (${user.name})`);
+
+    // Send email with new PIN
+    if (user.email && !user.email.endsWith('@no-reply.local')) {
+      sendWelcomeEmail(user.name, user.email, temporaryPassword, user.role).catch((e) => {
+        logger.error('Failed to send password reset email:', e);
+      });
+    }
+
+    return { userId, name: user.name, temporaryPassword };
   }
 }
 

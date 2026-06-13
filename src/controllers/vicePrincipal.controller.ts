@@ -513,6 +513,34 @@ class VicePrincipalController {
     }
   }
 
+  async getCommunicationSummary(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { sectionId, weekEnding } = req.query;
+
+      if (!sectionId || !weekEnding) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'sectionId and weekEnding are required parameters.' }
+        });
+        return;
+      }
+
+      const summary = await vicePrincipalService.getCommunicationSummary(
+        sectionId as string,
+        weekEnding as string,
+        branchId!
+      );
+
+      res.json({
+        success: true,
+        data: summary
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async resetLeaderboard(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;

@@ -61,34 +61,52 @@ class AuditorService {
   }
 
   // Approve/Reject fee reduction (ONLY write permission)
-  async updateFeeReductionStatus(studentId: string, branchId: string, status: string, _auditorId: string) {
+  async updateFeeReductionStatus(studentId: string, branchId: string, status: string, auditorId: string) {
     const normalized = String(status).toLowerCase();
     if (!['pending', 'approved', 'rejected'].includes(normalized)) {
       throw new Error('Invalid fee approval status. Use pending, approved, or rejected.');
     }
 
-    const feeStatus = normalized === 'rejected' ? 'standard' : 'reduced';
+    // Schema is now managed by migrations; the fee_deductions table should exist at startup.
+    const studentRes = await pool.query(
+      `SELECT s.id, s.branch_id, s.grade, s.monthly_fee, s.requested_aid_amount, s.fee_approval_status 
+       FROM students s WHERE s.id = $1 AND s.branch_id = $2`,
+      [studentId, branchId]
+    );
+
+    if (studentRes.rows.length === 0) {
+      throw new Error('Student not found in your branch');
+    }
+
+    const student = studentRes.rows[0];
+    const requestedAmount = student.requested_aid_amount || 0;
+    const approvedAmount = normalized === 'approved' ? requestedAmount : 0;
+
+    // Get the current month in Ethiopian calendar
+    const now = new Date();
+    const eatMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + (3 * 60 * 60 * 1000);
+    const eatDate = new Date(eatMs);
+    const ethDate = require('../utils/ethiopicUtils').gregorianToEthiopic(eatDate);
+    const currentMonth = `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
+
+    // Insert or update fee_deductions table
+    await pool.query(
+      `INSERT INTO fee_deductions (student_id, month, requested_amount, approved_amount, status, approved_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (student_id, month) DO UPDATE SET 
+         approved_amount = $4,
+         status = $5,
+         approved_by = $6,
+         updated_at = NOW()`,
+      [studentId, currentMonth, requestedAmount, approvedAmount, normalized, auditorId || null]
+    );
+
+    // Update students table for UI display (showing reduced status when approved)
+    const feeStatus = normalized === 'rejected' ? 'standard' : (approvedAmount > 0 ? 'reduced' : 'standard');
 
     const result = await pool.query(
-      `WITH fee_calc AS (
-         SELECT 
-           COALESCE(
-             NULLIF(s.monthly_fee, 0),
-             (SELECT bgf.monthly_fee FROM branch_grade_fees bgf 
-              WHERE bgf.branch_id = s.branch_id 
-                AND REPLACE(REPLACE(LOWER(bgf.grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
-              LIMIT 1),
-             0
-           ) AS effective_fee
-         FROM students s WHERE s.id = $3
-       )
-       UPDATE students 
+      `UPDATE students 
        SET 
-           monthly_fee = CASE 
-             WHEN $1 = 'approved' AND fee_approval_status != 'approved' THEN GREATEST(0, (SELECT effective_fee FROM fee_calc) - COALESCE(requested_aid_amount, 0))
-             WHEN $1 != 'approved' AND fee_approval_status = 'approved' THEN (SELECT effective_fee FROM fee_calc) + COALESCE(requested_aid_amount, 0)
-             ELSE monthly_fee 
-           END,
            fee_approval_status = $1,
            fee_status = $2,
            updated_at = NOW()
@@ -98,7 +116,7 @@ class AuditorService {
     );
 
     if (result.rows.length === 0) {
-      throw new Error('Student not found in your branch');
+      throw new Error('Failed to update fee reduction status');
     }
 
     return result.rows[0];
@@ -322,8 +340,7 @@ class AuditorService {
       [branchId]
     );
 
-    // Registration fee stats: count students with a cleared registration-fee month
-    // (summer months 07, 08, 13) and sum the amounts paid
+    // Registration fee stats: count students with a cleared registration-fee and sum the amounts paid
     const regFeeResult = await pool.query(
       `SELECT
          COUNT(DISTINCT p.student_id) AS count,
@@ -332,13 +349,14 @@ class AuditorService {
        JOIN payment_items pi ON pi.payment_id = p.id
        JOIN students s ON s.id = p.student_id
        WHERE s.branch_id = $1
-         AND pi.fee_type = 'registration'
-         AND SPLIT_PART(p.month, '-', 2)::integer IN (11, 12, 13)`,
+         AND pi.fee_type = 'registration'`,
       [branchId]
     );
 
     const pendingFeeReductions = parseInt(pendingFeeResult.rows[0].count);
     const pendingLoans = parseInt(pendingLoansResult.rows[0].count);
+    const regFeeCount = regFeeResult.rows.length > 0 ? parseInt(regFeeResult.rows[0].count) : 0;
+    const regFeeTotal = regFeeResult.rows.length > 0 ? parseFloat(regFeeResult.rows[0].total) : 0;
 
     return {
       totalPayments: {
@@ -350,8 +368,8 @@ class AuditorService {
         total: parseFloat(monthlyResult.rows[0].total)
       },
       registrationFees: {
-        count: parseInt(regFeeResult.rows[0].count),
-        total: parseFloat(regFeeResult.rows[0].total)
+        count: regFeeCount,
+        total: regFeeTotal
       },
       pendingFeeReductions,
       pendingLoans,

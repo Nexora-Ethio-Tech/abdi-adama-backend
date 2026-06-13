@@ -71,3 +71,22 @@ export function getCurrentSemester(): 1 | 2 {
 export function formatSemester(semester: 1 | 2): string {
   return semester === 1 ? 'First Semester' : 'Second Semester';
 }
+
+export function ethiopianToGregorianIso(ethDateStr: string): string | null {
+  if (!ethDateStr) return null;
+  const parts = ethDateStr.split('-');
+  if (parts.length !== 3) return null;
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  const day = parseInt(parts[2], 10);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
+  try {
+    const gregDate = ethiopianToGregorianDate({ year, month, day });
+    const y = gregDate.getFullYear();
+    const m = String(gregDate.getMonth() + 1).padStart(2, '0');
+    const d = String(gregDate.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  } catch (e) {
+    return null;
+  }
+}

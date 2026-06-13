@@ -60,88 +60,9 @@ interface ScheduleEntry {
 
 class ScheduleService {
 
-  private async ensureScheduleEngineTables() {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS schedule_config (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-        academic_year VARCHAR(20) NOT NULL DEFAULT '2025/2026',
-        periods_per_day INT NOT NULL DEFAULT 8 CHECK (periods_per_day BETWEEN 3 AND 12),
-        start_time TIME NOT NULL DEFAULT '08:00',
-        end_time TIME NOT NULL DEFAULT '15:30',
-        max_consecutive_periods INT NOT NULL DEFAULT 3 CHECK (max_consecutive_periods BETWEEN 1 AND 6),
-        distribute_subjects BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(branch_id, academic_year)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_schedule_config_branch ON schedule_config(branch_id);
-
-      CREATE TABLE IF NOT EXISTS teacher_unavailability (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-        branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-        academic_year VARCHAR(20) NOT NULL DEFAULT '2025/2026',
-        day_of_week VARCHAR(15) NOT NULL CHECK (day_of_week IN ('Monday','Tuesday','Wednesday','Thursday','Friday')),
-        period_number INT NOT NULL CHECK (period_number >= 1),
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(teacher_id, day_of_week, period_number, academic_year)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_teacher_unavail_teacher ON teacher_unavailability(teacher_id);
-      CREATE INDEX IF NOT EXISTS idx_teacher_unavail_branch ON teacher_unavailability(branch_id);
-
-      CREATE TABLE IF NOT EXISTS course_frequency (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        course_id UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-        branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-        academic_year VARCHAR(20) NOT NULL DEFAULT '2025/2026',
-        sessions_per_week INT NOT NULL DEFAULT 5 CHECK (sessions_per_week BETWEEN 1 AND 10),
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(course_id, academic_year)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_course_freq_course ON course_frequency(course_id);
-      CREATE INDEX IF NOT EXISTS idx_course_freq_branch ON course_frequency(branch_id);
-
-      CREATE TABLE IF NOT EXISTS timetable_runs (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-        academic_year VARCHAR(20) NOT NULL DEFAULT '2025/2026',
-        status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
-        candidates JSONB NOT NULL DEFAULT '[]',
-        approved_candidate INT,
-        total_slots_filled INT NOT NULL DEFAULT 0,
-        total_slots_possible INT NOT NULL DEFAULT 0,
-        conflicts_count INT NOT NULL DEFAULT 0,
-        generated_by UUID REFERENCES users(id),
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_timetable_runs_branch ON timetable_runs(branch_id);
-      CREATE INDEX IF NOT EXISTS idx_timetable_runs_status ON timetable_runs(status);
-
-      CREATE TABLE IF NOT EXISTS schedule_structure (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-        academic_year VARCHAR(20) NOT NULL,
-        class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-        subject VARCHAR(100) NOT NULL,
-        sessions_per_week INT NOT NULL DEFAULT 1,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(branch_id, academic_year, class_id, teacher_id, subject)
-      )
-    `);
-  }
-
   // ── Config CRUD ──────────────────────────────────────────────────────────────
 
   async saveConfig(branchId: string, config: ScheduleConfigInput) {
-    await this.ensureScheduleEngineTables();
     const year = config.academicYear || '2025/2026';
     const result = await pool.query(
       `INSERT INTO schedule_config
@@ -161,7 +82,6 @@ class ScheduleService {
   }
 
   async getConfig(branchId: string, academicYear?: string) {
-    await this.ensureScheduleEngineTables();
     const year = academicYear || '2025/2026';
     const result = await pool.query(
       `SELECT * FROM schedule_config WHERE branch_id = $1 AND academic_year = $2`,
@@ -176,7 +96,6 @@ class ScheduleService {
     teacherId: string, branchId: string,
     constraints: TeacherConstraintInput[], academicYear?: string
   ) {
-    await this.ensureScheduleEngineTables();
     const year = academicYear || '2025/2026';
     const client = await pool.connect();
     try {
@@ -210,7 +129,6 @@ class ScheduleService {
   }
 
   async getTeacherConstraints(branchId: string, academicYear?: string) {
-    await this.ensureScheduleEngineTables();
     const year = academicYear || '2025/2026';
     const result = await pool.query(
       `SELECT tu.*, u.name as teacher_name
@@ -229,7 +147,6 @@ class ScheduleService {
   async saveCourseFrequencies(
     branchId: string, frequencies: CourseFrequencyInput[], academicYear?: string
   ) {
-    await this.ensureScheduleEngineTables();
     const year = academicYear || '2025/2026';
     const client = await pool.connect();
     try {
@@ -256,7 +173,6 @@ class ScheduleService {
   }
 
   async getCourseFrequencies(branchId: string, academicYear?: string) {
-    await this.ensureScheduleEngineTables();
     const year = academicYear || '2025/2026';
     const result = await pool.query(
       `SELECT cf.*, c.name as course_name, c.code as course_code,
@@ -277,7 +193,6 @@ class ScheduleService {
 
   async saveStructure(branchId: string, structures: StructureRowInput[], academicYear?: string) {
     const year = academicYear || '2025/2026';
-    await this.ensureScheduleEngineTables();
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -357,7 +272,6 @@ class ScheduleService {
 
   async getStructure(branchId: string, academicYear?: string) {
     const year = academicYear || '2025/2026';
-    await this.ensureScheduleEngineTables();
     const result = await pool.query(
       `SELECT ss.*, c.name as class_name, c.section, u.name as teacher_name, u.digital_id as teacher_digital_id
        FROM schedule_structure ss
@@ -547,73 +461,137 @@ class ScheduleService {
     const classDaySubjects = new Map<string, Set<string>>(); // "classId-day" -> Set<courseName>
     const teacherDayPeriods = new Map<string, number[]>();   // "teacherId-day" -> sorted period list
 
+    // Seed-based random
+    let s = seed;
+    const nextRandom = () => {
+      s = (s * 1664525 + 1013904223) & 0x7fffffff;
+      return s / 0x7fffffff;
+    };
+
+    const unassigned = new Set(sessions);
     const result: ScheduleEntry[] = [];
+    let bestResult: ScheduleEntry[] = [];
+    let maxPlaced = 0;
 
-    // Shuffle sessions with seed-based randomization for diversity
-    const shuffled = [...sessions];
-    this.shuffleWithSeed(shuffled, seed);
+    // Time limit for backtracking to prevent freezing
+    const startTime = Date.now();
+    const TIME_LIMIT_MS = 800; // 800ms per attempt to keep overall execution snappy
 
-    // Sort by difficulty: sessions with fewest valid slots go first
-    shuffled.sort((a, b) => {
-      const aValid = this.countValidSlots(a, allSlots, unavailMap, teacherSlots, classSlots);
-      const bValid = this.countValidSlots(b, allSlots, unavailMap, teacherSlots, classSlots);
-      return aValid - bValid;
-    });
-
-    // Try to place each session
-    for (const session of shuffled) {
-      const validSlots = this.getValidSlots(
-        session, allSlots, unavailMap, teacherSlots, classSlots,
-        classDaySubjects, teacherDayPeriods, maxConsec, distributeSubs, periodsPerDay
-      );
-
-      // Randomize among valid slots for variety
-      this.shuffleWithSeed(validSlots, seed + result.length);
-
-      if (validSlots.length === 0) {
-        // Can't place this session — skip (partial schedule)
-        continue;
+    const backtrack = (): boolean => {
+      // If we placed all sessions, we are done!
+      if (unassigned.size === 0) {
+        bestResult = [...result];
+        return true;
       }
 
-      const slot = validSlots[0];
-      const entry: ScheduleEntry = {
-        teacherId: session.teacherId,
-        teacherName: session.teacherName,
-        day: slot.day,
-        period: slot.period,
-        timeSlot: this.periodToTimeSlot(slot.period),
-        classId: session.classId,
-        className: session.className,
-        courseId: session.courseId,
-        subject: session.courseName
-      };
+      // Track the best partial result we have found so far
+      if (result.length > maxPlaced) {
+        maxPlaced = result.length;
+        bestResult = [...result];
+      }
 
-      result.push(entry);
+      // If we exceed time limit, abort search
+      if (Date.now() - startTime > TIME_LIMIT_MS) {
+        return false;
+      }
 
-      // Update state
-      const slotKey = `${slot.day}-${slot.period}`;
-      if (!teacherSlots.has(session.teacherId)) teacherSlots.set(session.teacherId, new Set());
-      teacherSlots.get(session.teacherId)!.add(slotKey);
+      // Dynamic MRV (Minimum Remaining Values)
+      let bestSession: typeof sessions[0] | null = null;
+      let minSlotsCount = Infinity;
+      let bestValidSlots: SlotKey[] = [];
 
-      if (!classSlots.has(session.classId)) classSlots.set(session.classId, new Set());
-      classSlots.get(session.classId)!.add(slotKey);
+      for (const session of unassigned) {
+        const validSlots = this.getValidSlots(
+          session, allSlots, unavailMap, teacherSlots, classSlots,
+          classDaySubjects, teacherDayPeriods, maxConsec, distributeSubs, periodsPerDay
+        );
+        // If a session has 0 valid slots, we have failed. Backtrack immediately!
+        if (validSlots.length === 0) {
+          return false;
+        }
+        if (validSlots.length < minSlotsCount) {
+          minSlotsCount = validSlots.length;
+          bestSession = session;
+          bestValidSlots = validSlots;
+        }
+      }
 
-      const cdKey = `${session.classId}-${slot.day}`;
-      if (!classDaySubjects.has(cdKey)) classDaySubjects.set(cdKey, new Set());
-      classDaySubjects.get(cdKey)!.add(session.courseName);
+      if (!bestSession) {
+        return false;
+      }
 
-      const tdKey = `${session.teacherId}-${slot.day}`;
-      if (!teacherDayPeriods.has(tdKey)) teacherDayPeriods.set(tdKey, []);
-      teacherDayPeriods.get(tdKey)!.push(slot.period);
-      teacherDayPeriods.get(tdKey)!.sort((a, b) => a - b);
-    }
+      // Randomize the order of valid slots using our seeded shuffle
+      for (let i = bestValidSlots.length - 1; i > 0; i--) {
+        const j = Math.floor(nextRandom() * (i + 1));
+        [bestValidSlots[i], bestValidSlots[j]] = [bestValidSlots[j], bestValidSlots[i]];
+      }
+
+      unassigned.delete(bestSession);
+
+      for (const slot of bestValidSlots) {
+        const slotKey = `${slot.day}-${slot.period}`;
+        const cdKey = `${bestSession.classId}-${slot.day}`;
+        const tdKey = `${bestSession.teacherId}-${slot.day}`;
+
+        // Apply constraints
+        if (!teacherSlots.has(bestSession.teacherId)) teacherSlots.set(bestSession.teacherId, new Set());
+        teacherSlots.get(bestSession.teacherId)!.add(slotKey);
+
+        if (!classSlots.has(bestSession.classId)) classSlots.set(bestSession.classId, new Set());
+        classSlots.get(bestSession.classId)!.add(slotKey);
+
+        if (!classDaySubjects.has(cdKey)) classDaySubjects.set(cdKey, new Set());
+        classDaySubjects.get(cdKey)!.add(bestSession.courseName);
+
+        if (!teacherDayPeriods.has(tdKey)) teacherDayPeriods.set(tdKey, []);
+        teacherDayPeriods.get(tdKey)!.push(slot.period);
+        teacherDayPeriods.get(tdKey)!.sort((a, b) => a - b);
+
+        const entry: ScheduleEntry = {
+          teacherId: bestSession.teacherId,
+          teacherName: bestSession.teacherName,
+          day: slot.day,
+          period: slot.period,
+          timeSlot: this.periodToTimeSlot(slot.period),
+          classId: bestSession.classId,
+          className: bestSession.className,
+          courseId: bestSession.courseId,
+          subject: bestSession.courseName
+        };
+        result.push(entry);
+
+        // Recurse to next session
+        if (backtrack()) {
+          return true;
+        }
+
+        // Backtrack constraints
+        result.pop();
+        
+        teacherSlots.get(bestSession.teacherId)!.delete(slotKey);
+        classSlots.get(bestSession.classId)!.delete(slotKey);
+        classDaySubjects.get(cdKey)!.delete(bestSession.courseName);
+        
+        const periods = teacherDayPeriods.get(tdKey)!;
+        const pIdx = periods.indexOf(slot.period);
+        if (pIdx > -1) {
+          periods.splice(pIdx, 1);
+        }
+      }
+
+      unassigned.add(bestSession);
+      return false;
+    };
+
+    // Run backtracking search
+    backtrack();
 
     // Only return if we filled at least 80% of sessions
-    if (result.length < sessions.length * 0.8) {
+    if (bestResult.length < sessions.length * 0.8) {
       return null;
     }
 
-    return result;
+    return bestResult;
   }
 
   private getValidSlots(
@@ -628,18 +606,17 @@ class ScheduleService {
     distributeSubs: boolean,
     periodsPerDay: number
   ): SlotKey[] {
-    return allSlots.filter(slot => {
+    // 1. Hard constraints filter
+    const hardFiltered = allSlots.filter(slot => {
       const slotKey = `${slot.day}-${slot.period}`;
-
-      // Hard constraint: teacher unavailability
       if (unavailMap.get(session.teacherId)?.has(slotKey)) return false;
-
-      // Hard constraint: teacher not double-booked
       if (teacherSlots.get(session.teacherId)?.has(slotKey)) return false;
-
-      // Hard constraint: class not double-booked
       if (classSlots.get(session.classId)?.has(slotKey)) return false;
+      return true;
+    });
 
+    // 2. Soft constraints filter
+    const softFiltered = hardFiltered.filter(slot => {
       // Soft constraint: distribute subjects — avoid same subject twice in one day per class
       if (distributeSubs) {
         const cdKey = `${session.classId}-${slot.day}`;
@@ -666,6 +643,13 @@ class ScheduleService {
 
       return true;
     });
+
+    // 3. Fallback: if soft constraints leave no options, return hard-filtered slots!
+    if (softFiltered.length === 0) {
+      return hardFiltered;
+    }
+
+    return softFiltered;
   }
 
   private countValidSlots(

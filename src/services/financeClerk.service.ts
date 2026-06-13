@@ -216,7 +216,8 @@ class FinanceClerkService {
       if (monthsStatusMap.get(month) === 'cleared') {
         continue;
       }
-      const outstandingTotal = await this.computeMonthlyOutstanding(client, student, branchId, month, now);
+      // Use computeMonthlyFeesOutstanding to exclude registration fee from collection status
+      const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, branchId, month, now);
       const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
       let status = 'in_collections';
       const [_, mNum] = month.split('-').map(Number);
@@ -233,24 +234,6 @@ class FinanceClerkService {
          DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
         [studentId, month, dueDate.toISOString().slice(0, 10), status]
       );
-
-      // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-      if (student.fee_approval_status === 'approved' && (status === 'cleared' || status === 'overdue')) {
-        await client.query(
-          `UPDATE students
-           SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-               fee_status = 'standard',
-               fee_approval_status = 'none',
-               requested_aid_amount = 0,
-               updated_at = NOW()
-           WHERE id = $1`,
-          [studentId]
-        );
-        student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-        student.fee_status = 'standard';
-        student.fee_approval_status = 'none';
-        student.requested_aid_amount = 0;
-      }
     }
   }
 
@@ -321,6 +304,62 @@ class FinanceClerkService {
       else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
       else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
       else if (ft === 'registration') due = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
+
+      const paidRes = await client.query(
+        `SELECT COALESCE(SUM(pi.amount),0) as paid
+         FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
+        [student.id, month, ft]
+      );
+
+      let paid = Number(paidRes.rows[0].paid || 0);
+      if (ft === 'monthly') {
+        const aidPaidRes = await client.query(
+          `SELECT COALESCE(SUM(amount),0) as paid
+           FROM student_aid_usages
+           WHERE student_id = $1 AND month = $2`,
+          [student.id, month]
+        );
+        paid += Number(aidPaidRes.rows[0].paid || 0);
+      }
+
+      outstandingTotal += Math.max(0, due - paid);
+    }
+
+    return outstandingTotal;
+  }
+
+  /**
+   * Compute outstanding for MONTHLY FEES ONLY (monthly, bus, penalty)
+   * EXCLUDES registration fee - which is a one-time fee that should NOT affect collection status
+   * This method is used to determine if a month's collection_status should be 'cleared'
+   */
+  private async computeMonthlyFeesOutstanding(
+    client: any, student: any, branchId: string, month: string, now = new Date()
+  ) {
+    // Only include recurring monthly fees, NOT registration (one-time fee)
+    const feeTypes = ['monthly', 'bus', 'penalty'];
+    let outstandingTotal = 0;
+
+    const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
+    const [_, monthNum] = month.split('-').map(Number);
+    const isSummer = monthNum === 11 || monthNum === 12 || monthNum === 13;
+
+    for (const ft of feeTypes) {
+      let due = 0;
+      if (ft === 'monthly') {
+        const standardFee = isSummer ? 0 : Number(student.monthly_fee || 0);
+        const dedRes = await client.query(
+          `SELECT COALESCE(approved_amount, 0) as approved_amount
+           FROM fee_deductions
+           WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+          [student.id, month]
+        );
+        const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+        due = Math.max(0, standardFee - approvedDeduction);
+      }
+      else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+      else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
 
       const paidRes = await client.query(
         `SELECT COALESCE(SUM(pi.amount),0) as paid
@@ -438,7 +477,17 @@ class FinanceClerkService {
 
         // Determine amount due for fee type
         let dueForType = 0;
-        if (feeType === 'monthly') dueForType = Number(student.monthly_fee || 0);
+        if (feeType === 'monthly') {
+          const standardFee = Number(student.monthly_fee || 0);
+          const dedRes = await client.query(
+            `SELECT COALESCE(approved_amount, 0) as approved_amount
+             FROM fee_deductions
+             WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+            [data.studentId, data.month]
+          );
+          const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+          dueForType = Math.max(0, standardFee - approvedDeduction);
+        }
         else if (feeType === 'bus') dueForType = Number(student.bus_fee || 0);
         else if (feeType === 'penalty') dueForType = await this.getPenaltyDueForMonth(client, student, data.month, paymentNow);
         else if (feeType === 'registration') {
@@ -533,19 +582,30 @@ class FinanceClerkService {
       }
 
       // Also record a finance_transactions summary (backwards compatibility) - amount is cash collected
-      // IMPORTANT: Always use the real Gregorian today for the date stored in finance_transactions.
-      // The frontend sends data.date as an Ethiopian calendar string (e.g. "2018-09-25 EC"),
-      // which must NOT be fed into new Date() — that would produce a wrong Gregorian date.
-      const actualGregorianDateStr = new Date().toISOString().slice(0, 10);
+      // Use the same converted Gregorian date as the payment for consistency
+      const actualGregorianDateStr = paymentDateGregorian;
       const ethDate = gregorianToEthiopic(new Date(actualGregorianDateStr));
-      await client.query(
-        `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [data.studentId, student.name, totalCashCollected, `Payment (${data.month})`, actualGregorianDateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
-      );
 
-      // Recompute outstanding and update student_collections for the paid month
-      const outstandingTotal = await this.computeMonthlyOutstanding(client, student, data.branchId, data.month);
+      for (const it of itemsToPersist) {
+        if (it.cashAmount && it.cashAmount > 0) {
+          let displayType = 'Payment';
+          if (it.feeType === 'monthly') displayType = 'Monthly Tuition';
+          else if (it.feeType === 'bus') displayType = 'Bus Fee';
+          else if (it.feeType === 'penalty') displayType = 'Penalty Fee';
+          else if (it.feeType === 'registration') displayType = 'Registration Fee';
+          else displayType = it.feeType.charAt(0).toUpperCase() + it.feeType.slice(1);
+
+          await client.query(
+            `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [data.studentId, student.name, it.cashAmount, `${displayType} (${data.month})`, actualGregorianDateStr, data.verifiedBy, data.branchId, ethDate.month, ethDate.year]
+          );
+        }
+      }
+
+      // Recompute outstanding MONTHLY FEES ONLY (excluding registration) and update student_collections for the paid month
+      // Registration is a one-time fee and should NOT affect collection status
+      const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, data.month);
       const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
       const dueDate = this.getPaymentDueDateForMonth(data.month, deadlineDay);
       const now = new Date();
@@ -560,24 +620,6 @@ class FinanceClerkService {
          ON CONFLICT (student_id, month) DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
         [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
       );
-
-      // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-      if (student.fee_approval_status === 'approved' && (status === 'cleared' || status === 'overdue')) {
-        await client.query(
-          `UPDATE students
-           SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-               fee_status = 'standard',
-               fee_approval_status = 'none',
-               requested_aid_amount = 0,
-               updated_at = NOW()
-           WHERE id = $1`,
-          [data.studentId]
-        );
-        student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-        student.fee_status = 'standard';
-        student.fee_approval_status = 'none';
-        student.requested_aid_amount = 0;
-      }
 
       // ── Summer / carry-over cross-month settlement ────────────────────────────
       // Registration fee is a ONE-TIME annual charge. If paid in any summer month
@@ -610,7 +652,8 @@ class FinanceClerkService {
       );
       for (const row of otherOverdueRes.rows) {
         const otherMonth: string = row.month;
-        const otherOutstanding = await this.computeMonthlyOutstanding(client, student, data.branchId, otherMonth);
+        // Use computeMonthlyFeesOutstanding to exclude registration fee from collection status calculation
+        const otherOutstanding = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, otherMonth);
         const otherDueDate = this.getPaymentDueDateForMonth(otherMonth, deadlineDay);
         let otherStatus = 'in_collections';
         const [__, otherMonthNum] = otherMonth.split('-').map(Number);
@@ -621,24 +664,6 @@ class FinanceClerkService {
            WHERE student_id = $2 AND month = $3`,
           [otherStatus, data.studentId, otherMonth]
         );
-
-        // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-        if (student.fee_approval_status === 'approved' && (otherStatus === 'cleared' || otherStatus === 'overdue')) {
-          await client.query(
-            `UPDATE students
-             SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-                 fee_status = 'standard',
-                 fee_approval_status = 'none',
-                 requested_aid_amount = 0,
-                 updated_at = NOW()
-             WHERE id = $1`,
-            [data.studentId]
-          );
-          student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-          student.fee_status = 'standard';
-          student.fee_approval_status = 'none';
-          student.requested_aid_amount = 0;
-        }
       }
 
       await client.query('COMMIT');
@@ -724,8 +749,18 @@ class FinanceClerkService {
 
       const penaltyDue = isSummer ? 0 : await this.getPenaltyDueForMonth(client, student, targetMonth);
       const registrationDue = await this.getRegistrationDueForMonth(client, studentId, student.branch_id, targetMonth);
+      
+      const dedRes = await client.query(
+        `SELECT COALESCE(approved_amount, 0) as approved_amount
+         FROM fee_deductions
+         WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+        [studentId, targetMonth]
+      );
+      const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+      const monthlyDue = Math.max(0, (isSummer ? 0 : Number(student.monthly_fee || 0)) - approvedDeduction);
+
       const feeTypes = [
-        { key: 'monthly', label: 'Monthly Tuition', due: isSummer ? 0 : Number(student.monthly_fee || 0) },
+        { key: 'monthly', label: 'Monthly Tuition', due: monthlyDue },
         { key: 'registration', label: 'Registration Fee', due: registrationDue },
         { key: 'bus', label: 'Bus Fee', due: (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0) },
         { key: 'penalty', label: 'Penalty Fee', due: penaltyDue }
@@ -818,7 +853,7 @@ class FinanceClerkService {
     let query = `
       SELECT 
         s.id, s.grade, s.branch_id, s.is_bus_user,
-        COALESCE(
+        GREATEST(0, COALESCE(
           NULLIF(s.monthly_fee, 0),
           (
             SELECT monthly_fee FROM branch_grade_fees 
@@ -827,7 +862,10 @@ class FinanceClerkService {
             LIMIT 1
           ),
           0
-        ) AS monthly_fee,
+        ) - COALESCE(
+          (SELECT approved_amount FROM fee_deductions WHERE student_id = s.id AND month = $1 AND status = 'approved'),
+          0
+        )) AS monthly_fee,
         CASE WHEN s.is_bus_user = TRUE THEN
           COALESCE(
             NULLIF(s.bus_fee, 0),
@@ -913,6 +951,7 @@ class FinanceClerkService {
         s.grade,
         s.bus_fee,
         s.is_bus_user,
+        s.bus_start_date,
         u.name,
         u.email,
         u.digital_id,
@@ -1104,6 +1143,7 @@ class FinanceClerkService {
     driverId: string;
     transportFee: number; // Ignored; fetched from policy
     verifiedBy: string;
+    busStartDay?: number; // Optional: day of month when student starts using bus (1-30). Defaults to today's day.
   }) {
     const client = await pool.connect();
     try {
@@ -1187,13 +1227,25 @@ class FinanceClerkService {
         [data.studentId, routeResult.rows[0].id]
       );
 
+      // Calculate bus_start_date based on provided day or today's Gregorian date
+      let busStartDate = new Date().toISOString().slice(0, 10); // Default: today's Gregorian date
+      if (data.busStartDay !== undefined && data.busStartDay >= 1 && data.busStartDay <= 30) {
+        // If a specific day is provided, calculate the Gregorian date for that day in current month
+        const today = new Date();
+        const currentMonth = today.getMonth();
+        const currentYear = today.getFullYear();
+        const startDateObj = new Date(currentYear, currentMonth, data.busStartDay);
+        busStartDate = startDateObj.toISOString().slice(0, 10);
+      }
+
       await client.query(
         `UPDATE students
          SET bus_fee = $1,
              is_bus_user = TRUE,
+             bus_start_date = $2,
              updated_at = NOW()
-         WHERE id = $2`,
-        [policyFee, data.studentId]
+         WHERE id = $3`,
+        [policyFee, busStartDate, data.studentId]
       );
 
       await this.syncStudentCollectionsAcrossAllMonths(client, data.studentId, data.branchId);
@@ -1228,7 +1280,7 @@ class FinanceClerkService {
       await client.query('BEGIN');
 
       const studentResult = await client.query(
-        `SELECT s.id, s.bus_fee, u.name
+        `SELECT s.id, s.bus_fee, s.bus_start_date, u.name
          FROM students s
          JOIN users u ON s.user_id = u.id
          WHERE s.id = $1 AND s.branch_id = $2
@@ -1246,8 +1298,20 @@ class FinanceClerkService {
         throw new Error('This student does not have an active transport fee');
       }
 
+      // Calculate actual days used based on start_date and stop_date using Ethiopian calendar
+      let actualDaysUsed = Number(data.daysUsed);
+      if (student.bus_start_date) {
+        const startEth = gregorianToEthiopian(new Date(student.bus_start_date));
+        const stopEth = gregorianToEthiopian(new Date());
+        
+        if (startEth.year === stopEth.year && startEth.month === stopEth.month) {
+          actualDaysUsed = stopEth.day - startEth.day + 1;
+        } else {
+          actualDaysUsed = stopEth.day;
+        }
+      }
 
-      const clampedDaysUsed = Math.min(30, Math.max(0, Number(data.daysUsed)));
+      const clampedDaysUsed = Math.min(30, Math.max(0, actualDaysUsed));
       // Charge the student for the days used this month (prorated)
       const amountDue = Number(((clampedDaysUsed * transportFee) / 30).toFixed(2));
 
@@ -1256,6 +1320,7 @@ class FinanceClerkService {
         `UPDATE students
          SET bus_fee = 0,
              is_bus_user = FALSE,
+             bus_start_date = NULL,
              updated_at = NOW()
          WHERE id = $1`,
         [data.studentId]
@@ -1370,6 +1435,30 @@ class FinanceClerkService {
       }
 
       const student = result.rows[0];
+
+      if (data.feeStatus === 'reduced') {
+        const ethNow = gregorianToEthiopian(new Date());
+        const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
+        await client.query(
+          `INSERT INTO fee_deductions (student_id, month, requested_amount, approved_amount, status, approved_by, updated_at)
+           VALUES ($1, $2, $3, 0, 'pending', null, NOW())
+           ON CONFLICT (student_id, month) DO UPDATE SET 
+             requested_amount = $3,
+             status = 'pending',
+             approved_amount = 0,
+             approved_by = null,
+             updated_at = NOW()`,
+          [studentId, currentMonth, data.requestedAidAmount || 0]
+        );
+      } else if (data.feeStatus === 'standard') {
+        const ethNow = gregorianToEthiopian(new Date());
+        const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
+        await client.query(
+          `DELETE FROM fee_deductions WHERE student_id = $1 AND month = $2`,
+          [studentId, currentMonth]
+        );
+      }
+
       await this.syncStudentCollectionsAcrossAllMonths(client, student.id, student.branch_id);
 
       await client.query('COMMIT');
@@ -1536,6 +1625,16 @@ class FinanceClerkService {
         let registration_unpaid = 0;
 
         for (const m of overdue_months) {
+          // Fetch approved fee deduction from fee_deductions table for this student and month
+          const dedRes = await client.query(
+            `SELECT COALESCE(approved_amount, 0) as approved_amount
+             FROM fee_deductions
+             WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+            [student.id, m]
+          );
+          const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+          const effectiveMFee = Math.max(0, mFee - approvedDeduction);
+
           // Monthly (cash + aid)
           const mPaidRes = await client.query(
             `SELECT COALESCE(
@@ -1546,7 +1645,7 @@ class FinanceClerkService {
              ) AS paid`,
             [student.id, m]
           );
-          monthly_unpaid += Math.max(0, mFee - Number(mPaidRes.rows[0].paid || 0));
+          monthly_unpaid += Math.max(0, effectiveMFee - Number(mPaidRes.rows[0].paid || 0));
 
           // Bus
           if (bFee > 0) {
@@ -1667,6 +1766,28 @@ class FinanceClerkService {
       const isSummerMonth = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
       for (const student of studentsRes.rows) {
+        // Rollover reset logic: if the student has fee reduction status (pending/approved/rejected)
+        // but it is for a past month, reset s.fee_status, s.fee_approval_status, and s.requested_aid_amount.
+        const latestDedRes = await client.query(
+          `SELECT month FROM fee_deductions WHERE student_id = $1 ORDER BY month DESC LIMIT 1`,
+          [student.id]
+        );
+        const latestDedMonth = latestDedRes.rows[0]?.month;
+        if (latestDedMonth && latestDedMonth !== month && student.fee_approval_status !== 'none') {
+          await client.query(
+            `UPDATE students
+             SET fee_status = 'standard',
+                 fee_approval_status = 'none',
+                 requested_aid_amount = 0,
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [student.id]
+          );
+          student.fee_status = 'standard';
+          student.fee_approval_status = 'none';
+          student.requested_aid_amount = 0;
+        }
+
         // Skip already cleared months
         const existingRes = await client.query(
           `SELECT status FROM student_collections WHERE student_id = $1 AND month = $2`,
@@ -1676,7 +1797,7 @@ class FinanceClerkService {
           continue;
         }
 
-        const outstandingTotal = await this.computeMonthlyOutstanding(client, student, student.branch_id, month);
+        const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, student.branch_id, month);
         let status = 'in_collections';
         if (outstandingTotal <= 0) {
           status = 'cleared';
@@ -1693,24 +1814,6 @@ class FinanceClerkService {
            DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
           [student.id, month, dueDate.toISOString().slice(0, 10), status]
         );
-
-        // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-        if (student.fee_approval_status === 'approved' && (status === 'cleared' || status === 'overdue')) {
-          await client.query(
-            `UPDATE students
-             SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-                 fee_status = 'standard',
-                 fee_approval_status = 'none',
-                 requested_aid_amount = 0,
-                 updated_at = NOW()
-             WHERE id = $1`,
-            [student.id]
-          );
-          student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-          student.fee_status = 'standard';
-          student.fee_approval_status = 'none';
-          student.requested_aid_amount = 0;
-        }
 
         // If a summer month just resolved to cleared, cascade-clear the other two
         // so the one-time registration fee shows as settled across all three months.
@@ -1743,7 +1846,7 @@ class FinanceClerkService {
         );
         for (const row of existingOverdueRes.rows) {
           const om: string = row.month;
-          const omOutstanding = await this.computeMonthlyOutstanding(client, student, student.branch_id, om);
+          const omOutstanding = await this.computeMonthlyFeesOutstanding(client, student, student.branch_id, om);
           const [, omNumStr] = om.split('-');
           const omNum = parseInt(omNumStr, 10);
           const omDueDate = this.getPaymentDueDateForMonth(om, deadlineDay);
@@ -1758,24 +1861,6 @@ class FinanceClerkService {
              WHERE student_id = $2 AND month = $3`,
             [omStatus, student.id, om]
           );
-
-          // Reversion logic: if fee reduction was approved and status is now cleared or overdue, revert to standard fee
-          if (student.fee_approval_status === 'approved' && (omStatus === 'cleared' || omStatus === 'overdue')) {
-            await client.query(
-              `UPDATE students
-               SET monthly_fee = monthly_fee + COALESCE(requested_aid_amount, 0),
-                   fee_status = 'standard',
-                   fee_approval_status = 'none',
-                   requested_aid_amount = 0,
-                   updated_at = NOW()
-               WHERE id = $1`,
-              [student.id]
-            );
-            student.monthly_fee = Number(student.monthly_fee || 0) + Number(student.requested_aid_amount || 0);
-            student.fee_status = 'standard';
-            student.fee_approval_status = 'none';
-            student.requested_aid_amount = 0;
-          }
         }
       }
 
@@ -1825,7 +1910,7 @@ class FinanceClerkService {
     financeUserId: string
   ) {
     const appRes = await pool.query(
-      `SELECT branch_id, grade_applying FROM pending_applications WHERE id = $1`,
+      `SELECT branch_id, grade_applying, applicant_name FROM pending_applications WHERE id = $1`,
       [applicationId]
     );
     if (appRes.rows.length === 0) {
@@ -1841,11 +1926,59 @@ class FinanceClerkService {
       );
     }
 
-    return await schoolAdminService.financeApproveApplication(
+    const result = await schoolAdminService.financeApproveApplication(
       applicationId,
       { amount: resolved.amount, reference: payment.reference, parentDigitalId: payment.parentDigitalId },
       financeUserId
     );
+
+    const studentId = result.student?.id;
+    if (studentId) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const paymentDateGregorian = new Date().toISOString().slice(0, 10);
+        const ethDate = gregorianToEthiopic(new Date());
+        const currentMonth = `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
+
+        // Insert into payments
+        const paymentRes = await client.query(
+          `INSERT INTO payments (student_id, payer_id, branch_id, month, date, total_amount, reference)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id`,
+          [studentId, null, app.branch_id, currentMonth, paymentDateGregorian, resolved.amount, payment.reference || null]
+        );
+
+        const paymentId = paymentRes.rows[0].id;
+
+        // Insert into payment_items
+        await client.query(
+          `INSERT INTO payment_items (payment_id, fee_type, amount) VALUES ($1, $2, $3)`,
+          [paymentId, 'registration', resolved.amount]
+        );
+
+        // Fetch user name for finance_transactions
+        const userRes = await client.query(`SELECT name FROM users WHERE id = $1`, [financeUserId]);
+        const verifiedBy = userRes.rows[0]?.name || 'Finance Clerk';
+
+        // Insert into finance_transactions
+        await client.query(
+          `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [studentId, app.applicant_name, resolved.amount, 'Registration Fee', paymentDateGregorian, verifiedBy, app.branch_id, ethDate.month, ethDate.year]
+        );
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error recording registration payment:', err);
+      } finally {
+        client.release();
+      }
+    }
+
+    return result;
   }
 
   // Reject an application: return it to school admin with a reason (do not delete)
@@ -1878,6 +2011,94 @@ class FinanceClerkService {
     } finally {
       client.release();
     }
+  }
+
+  // Get student info and parent phone for SMS sending
+  async getStudentParentPhone(studentId: string, branchId?: string) {
+    const query = `
+      SELECT 
+        s.id,
+        s.parent_phone,
+        u.name as student_name,
+        u.digital_id,
+        s.grade,
+        s.branch_id
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.id = $1
+    `;
+
+    const params: any[] = [studentId];
+
+    if (branchId) {
+      // Verify the student belongs to the requesting finance clerk's branch
+      const branchCheckRes = await pool.query(query + ' AND s.branch_id = $2', [...params, branchId]);
+      if (branchCheckRes.rows.length === 0) {
+        throw new Error('Student not found or does not belong to your branch');
+      }
+      return branchCheckRes.rows[0];
+    }
+
+    const res = await pool.query(query, params);
+    if (res.rows.length === 0) {
+      throw new Error('Student not found');
+    }
+    return res.rows[0];
+  }
+
+  // Send SMS to parent about overdue payments
+  async sendSmsToParent(studentId: string, message: string, branchId?: string) {
+    // 1. Get student and parent phone
+    const student = await this.getStudentParentPhone(studentId, branchId);
+
+    if (!student.parent_phone || !student.parent_phone.trim()) {
+      throw new Error('Parent phone number not found for this student');
+    }
+
+    // 2. Validate phone format (Ethiopian phone numbers typically start with +251 or 0)
+    const phone = student.parent_phone.trim();
+    const phoneRegex = /^(\+?251|0)[0-9]{9}$/;
+    if (!phoneRegex.test(phone)) {
+      throw new Error(`Invalid phone number format: ${phone}`);
+    }
+
+    // 3. Validate message length
+    if (!message || message.trim().length === 0) {
+      throw new Error('Message cannot be empty');
+    }
+
+    if (message.length > 160) {
+      throw new Error('Message cannot exceed 160 characters');
+    }
+
+    // 4. Send SMS via SMS service
+    const { smsService } = require('./sms.service');
+    const sent = await smsService.sendSMS(phone, message);
+
+    if (!sent) {
+      throw new Error('Failed to send SMS. Modem may be unavailable.');
+    }
+
+    // 5. Log the SMS attempt (optional - for audit trail)
+    try {
+      await pool.query(
+        `INSERT INTO sms_logs (student_id, parent_phone, message, status, sent_at, branch_id)
+         VALUES ($1, $2, $3, $4, NOW(), $5)`,
+        [studentId, phone, message, 'sent', branchId || null]
+      );
+    } catch (logErr) {
+      console.warn('[FinanceClerk SMS] Could not log SMS attempt:', logErr);
+      // Don't throw - SMS was sent, just couldn't log it
+    }
+
+    return {
+      success: true,
+      studentId,
+      studentName: student.student_name,
+      phone,
+      message,
+      sentAt: new Date().toISOString()
+    };
   }
 }
 

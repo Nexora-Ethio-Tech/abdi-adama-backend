@@ -110,7 +110,7 @@ export const postNotice = async (req: AuthRequest, res: Response) => {
     };
     const broadcastPayload = {
       ...noticePayload,
-      content: notice.message,
+      content: notice.content,
     };
 
     // 3. Find assigned students for this driver (to restrict broadcast)
@@ -148,34 +148,31 @@ export const getNotices = async (req: AuthRequest, res: Response) => {
   try {
     const role = req.user?.role;
     const identityId = req.user?.identity_id;
+    const normalizedRole = role?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
 
     let query = `
       SELECT 
         n.id,
         n.title,
-        n.message      AS content,
+        n.content,
         n.stations,
-        n.timestamp    AS time,
-        n.published_at,
-        n.expires_at,
+        n.created_at   AS time,
         n.branch_id,
         n.driver_name  AS driverName,
         'Logistics'::text AS category,
         false AS is_pending
       FROM logistics_notices n
-      WHERE n.deleted_at IS NULL
-        AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
-        AND n.branch_id = $1
+      WHERE n.branch_id = $1
     `;
     const params: any[] = [branchId];
 
     // Driver only sees their OWN notices. Admin/VP sees ALL notices for the branch.
-    if (role === 'Driver') {
-      query += ` AND n.sender_id = $${params.length + 1}`;
+    if (normalizedRole === 'driver') {
+      query += ` AND n.driver_id = $${params.length + 1}`;
       params.push(identityId);
     }
 
-    query += ` ORDER BY n.timestamp DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    query += ` ORDER BY n.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
     const result = await pool.query(query, params);

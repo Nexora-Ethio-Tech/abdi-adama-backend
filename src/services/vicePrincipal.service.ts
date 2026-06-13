@@ -1,5 +1,6 @@
 import pool from '../config/database';
-import { getCurrentECYear, getCurrentSemester, formatSemester } from '../shared/ethiopianCalendar';
+import { getCurrentECYear, getCurrentSemester, formatSemester, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
+import { getEthiopianNow } from './schoolAdmin.service';
 
 class VicePrincipalService {
   // Absence Queue Management
@@ -203,7 +204,9 @@ class VicePrincipalService {
    * Excludes students and parents. Used by Vice Principal for dashboard monitoring and proxy suggestions.
    */
   async getStaffAttendance(branchId: string, date: string) {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const ethNow = getEthiopianNow();
+    const targetDate = date || ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
 
     const result = await pool.query(
       `SELECT
@@ -214,29 +217,97 @@ class VicePrincipalService {
           u.role,
           u.zk_device_id,
           u.status,
+          b.name AS branch_name,
+          COALESCE(
+            t.department,
+            CASE u.role
+              WHEN 'teacher'        THEN 'Academics'
+              WHEN 'finance-clerk'  THEN 'Finance'
+              WHEN 'librarian'      THEN 'Library'
+              WHEN 'clinic-admin'   THEN 'Clinic'
+              WHEN 'driver'         THEN 'Transport'
+              WHEN 'auditor'        THEN 'Audit'
+              WHEN 'school-admin'   THEN 'Administration'
+              WHEN 'vice-principal' THEN 'Administration'
+              ELSE u.role::text
+            END
+          ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
-          ea.status           AS attendance_status,
+          CASE
+            WHEN EXTRACT(ISODOW FROM $5::date) IN (6, 7) THEN 'Weekend'
+            WHEN EXISTS (
+              SELECT 1 FROM school_calendar sc
+              WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
+            ) THEN 'Holiday'
+            ELSE 'Pending'
+          END                              AS day_off_type,
+          -- Effective status: staff auto-absent when past 02:20 AM Ethiopian time with no punch
+          -- AND it is a teaching day (not a weekend, holiday, or school break)
+          CASE
+            WHEN ea.status IS NOT NULL THEN ea.status
+            WHEN ea.id IS NULL
+              AND u.role::text IN ('teacher', 'vice-principal')
+              -- Not a weekend (based on Gregorian calendar)
+              AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+              -- Not a holiday or break in the school calendar (based on Gregorian calendar)
+              AND NOT EXISTS (
+                SELECT 1 FROM school_calendar sc
+                WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                  AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                  AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
+              )
+              AND (
+                $2::date < $3::date
+                OR ($2::date = $3::date AND $4::time > TIME '02:20:00')
+              )
+            THEN 'absent'
+            ELSE NULL
+          END                              AS attendance_status,
+          COALESCE(ea.is_late_arrival, false) AS is_late_arrival,
           ea.sign_in_time,
+          ea.lunch_out_time,
+          ea.lunch_in_time,
           ea.sign_out_time,
           ea.recorded_by,
-          ea.created_at       AS attendance_recorded_at,
-          CASE WHEN ea.recorded_by = 'zk-machine' THEN true ELSE false END AS is_biometric
+          ea.created_at                    AS attendance_recorded_at,
+          CASE
+            WHEN ea.recorded_by = 'zk-machine' THEN true
+            ELSE false
+          END                              AS is_biometric
        FROM users u
+       LEFT JOIN branches b ON b.id = u.branch_id
        LEFT JOIN teachers t ON t.user_id = u.id
        LEFT JOIN employee_attendance ea
-              ON ea.user_id = u.id AND ea.date = $2
+              ON ea.user_id = u.id AND ea.date = $2::date
        WHERE u.branch_id = $1
          AND u.role NOT IN ('student', 'parent', 'super-admin')
          AND u.status = 'Approved'
        ORDER BY
-         CASE COALESCE(ea.status, 'Unknown')
-           WHEN 'Absent'  THEN 1
-           WHEN 'Unknown' THEN 2
-           WHEN 'Present' THEN 3
+         -- Absent first (VP can act on them), then late, half-day, present, no-punch
+         CASE
+           WHEN COALESCE(ea.status,
+             CASE
+               WHEN ea.id IS NULL AND u.role::text IN ('teacher', 'vice-principal')
+                 AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+                 AND NOT EXISTS (
+                   SELECT 1 FROM school_calendar sc
+                   WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                     AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                     AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+                 )
+                 AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
+               THEN 'absent' ELSE 'zzz' END
+           ) = 'absent'   THEN 1
+           WHEN COALESCE(ea.status,'zzz') = 'late'     THEN 2
+           WHEN COALESCE(ea.status,'zzz') = 'half-day' THEN 3
+           WHEN COALESCE(ea.status,'zzz') = 'present'  THEN 4
+           ELSE 5
          END,
          u.name`,
-      [branchId, targetDate]
+      [branchId, targetDate, ethNow.dateStr, ethNow.time24, gregDateStr]
     );
 
     return result.rows;
@@ -1185,6 +1256,79 @@ class VicePrincipalService {
     } finally {
       client.release();
     }
+  }
+
+  async getCommunicationSummary(sectionId: string, weekEnding: string, branchId: string) {
+    // 1. Get homeroom teacher
+    const teacherResult = await pool.query(
+      `SELECT u.name as teacher_name
+       FROM classes c
+       LEFT JOIN class_teachers ct ON ct.class_id = c.id
+       LEFT JOIN teachers t ON ct.teacher_id = t.id OR (t.is_room_teacher = true AND t.assigned_room_class = c.name)
+       LEFT JOIN users u ON t.user_id = u.id
+       WHERE c.id = $1 AND c.branch_id = $2
+       ORDER BY ct.assigned_at DESC, t.updated_at DESC
+       LIMIT 1`,
+      [sectionId, branchId]
+    );
+
+    const homeroomTeacher = teacherResult.rows[0]?.teacher_name || 'Not Assigned';
+
+    // 2. Get all students in the section with their parent name
+    const studentsResult = await pool.query(
+      `SELECT 
+        s.id,
+        s.user_id,
+        u.name as student_name,
+        COALESCE(
+          (SELECT up.name 
+           FROM parent_student ps 
+           JOIN parents p ON ps.parent_id = p.id 
+           JOIN users up ON p.user_id = up.id 
+           WHERE ps.student_id = s.id 
+           LIMIT 1),
+          s.parent_name,
+          (SELECT pa.parent_name FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1),
+          'Not Assigned'
+        ) as parent_name
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       WHERE s.section_id = $1 AND s.branch_id = $2
+       ORDER BY u.name`,
+      [sectionId, branchId]
+    );
+
+    // 3. For each student, check if they have a communication log submitted for this weekEnding
+    const logsResult = await pool.query(
+      `SELECT student_id, created_at
+       FROM communication_logs
+       WHERE DATE(week_ending) = $1::date`,
+      [weekEnding]
+    );
+
+    const logsMap = new Set(logsResult.rows.map(row => row.student_id));
+    const logsDateMap = new Map(logsResult.rows.map(row => [row.student_id, row.created_at]));
+
+    const students = studentsResult.rows.map(student => {
+      const sent = logsMap.has(student.id);
+      return {
+        id: student.id,
+        name: student.student_name,
+        parentName: student.parent_name,
+        sent,
+        sentAt: sent ? logsDateMap.get(student.id) : null
+      };
+    });
+
+    const totalStudents = students.length;
+    const sentCount = students.filter(s => s.sent).length;
+
+    return {
+      homeroomTeacher,
+      totalStudents,
+      sentCount,
+      students
+    };
   }
 }
 

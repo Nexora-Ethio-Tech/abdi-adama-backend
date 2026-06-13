@@ -91,9 +91,9 @@ const profitTargetSchema = Joi.object({
   year: Joi.number().integer().min(2000).max(2100).optional(),
 });
 
-// Read-only School Admin endpoints
-router.get('/finance-settings', roleGuard([UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]), superAdminController.getFinanceSettings);
-router.get('/finance-settings/audit-log', roleGuard([UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]), superAdminController.getFinanceSettingsAuditLog);
+// Read-only School Admin endpoints (+ Auditor read-only access)
+router.get('/finance-settings', roleGuard([UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN, UserRole.AUDITOR]), superAdminController.getFinanceSettings);
+router.get('/finance-settings/audit-log', roleGuard([UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN, UserRole.AUDITOR]), superAdminController.getFinanceSettingsAuditLog);
 router.get('/branch-grade-fees', roleGuard([UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]), superAdminController.getBranchGradeFees);
 router.get('/profit-targets/branch-summary', roleGuard([UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]), superAdminController.getBranchProfitSummary);
 router.get('/profit-targets', roleGuard([UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]), superAdminController.getMonthlyProfitTargets);
@@ -125,6 +125,7 @@ router.get('/users/:id', superAdminController.getUserById);
 router.post('/users/:id', validate(schemas.updateUser), superAdminController.updateUser);
 router.post('/users/:id/status', validate(schemas.updateUserStatus), superAdminController.updateUserStatus);
 router.post('/users/:id/reset-pin', superAdminController.resetUserPIN);
+router.post('/users/:id/reset-password', superAdminController.resetUserPassword);
 router.delete('/users/:id', superAdminController.deleteUser);
 
 // Branch Management

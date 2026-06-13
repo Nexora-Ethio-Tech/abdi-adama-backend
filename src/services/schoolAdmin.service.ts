@@ -2,6 +2,59 @@ import pool from '../config/database';
 import userService from './user.service';
 import { generate4DigitPIN, hashPassword } from '../utils/password';
 import { sendAdmissionCredentialsEmail } from '../utils/emailService';
+import { gregorianToEthiopian, ethiopianToGregorianDate, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
+
+export function getEthiopianNow() {
+  const now = new Date();
+  const eatMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + (3 * 60 * 60 * 1000);
+  const eatDate = new Date(eatMs);
+  const ethParts = gregorianToEthiopian(eatDate);
+  const dateStr = `${ethParts.year}-${String(ethParts.month).padStart(2, '0')}-${String(ethParts.day).padStart(2, '0')}`;
+
+  let ethHour = eatDate.getHours() - 6;
+  if (ethHour < 0) ethHour += 24;
+  const time24 = `${ethHour.toString().padStart(2, '0')}:${eatDate.getMinutes().toString().padStart(2, '0')}:${eatDate.getSeconds().toString().padStart(2, '0')}`;
+
+  const meridiem = ethHour >= 12 ? 'PM' : 'AM';
+  let displayHour = ethHour % 12;
+  if (displayHour === 0) displayHour = 12;
+  const time12 = `${displayHour.toString().padStart(2, '0')}:${eatDate.getMinutes().toString().padStart(2, '0')} ${meridiem}`;
+
+  return { dateStr, time24, time12 };
+}
+
+export function formatEthiopianTime(date: Date): string {
+  let ethHour = date.getHours() - 6;
+  if (ethHour < 0) ethHour += 24;
+  const meridiem = ethHour >= 12 ? 'PM' : 'AM';
+  let displayHour = ethHour % 12;
+  if (displayHour === 0) displayHour = 12;
+  return `${displayHour.toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')} ${meridiem}`;
+}
+export async function syncSchoolCalendarForEvent(client: any, event: { id: string; title: string; date: any; end_date?: any; type: string; description?: string | null; branch_id: string | null }) {
+  const rawType = event.type.toLowerCase().trim();
+  let dayType = 'event_day';
+  if (rawType.includes('holiday')) dayType = 'holiday';
+  else if (rawType.includes('summer break') || rawType.includes('summer_break')) dayType = 'summer_break';
+  else if (rawType.includes('semester break') || rawType.includes('semester_break')) dayType = 'semester_break';
+  else if (rawType.includes('exam day') || rawType.includes('exam_day')) dayType = 'exam_day';
+  else if (rawType.includes('half day') || rawType.includes('half_day')) dayType = 'half_day';
+  else if (rawType === 'break') dayType = 'holiday';
+
+  // Delete existing calendar entry if it exists
+  await client.query('DELETE FROM school_calendar WHERE event_id = $1', [event.id]);
+
+  const endDate = event.end_date || event.date;
+
+  // Insert new calendar entry
+  await client.query(
+    `INSERT INTO school_calendar (title, description, start_date, end_date, day_type, branch_id, event_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [event.title, event.description || null, event.date, endDate, dayType, event.branch_id, event.id]
+  );
+}
+
+
 
 class SchoolAdminService {
   // User Management (existing methods)
@@ -43,11 +96,13 @@ class SchoolAdminService {
 
   /**
    * Returns all branch staff members with their biometric attendance status for a given date.
-   * Excludes students and parents. Used by School Admin to view ZKTeco punch data.
+   * - Teachers with no punch after 08:20 (2:20 AM Ethiopian) are dynamically shown as 'absent'.
+   * - is_late_arrival flag is returned so the UI can show "Present (Late)".
    */
   async getStaffAttendance(branchId: string, date: string) {
-    // Normalise date — if none provided, default to today (Gregorian)
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const ethNow = getEthiopianNow();
+    const targetDate = date || ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
 
     const result = await pool.query(
       `SELECT
@@ -58,33 +113,259 @@ class SchoolAdminService {
           u.role,
           u.zk_device_id,
           u.status,
+          b.name AS branch_name,
+          COALESCE(
+            t.department,
+            CASE u.role
+              WHEN 'teacher'        THEN 'Academics'
+              WHEN 'finance-clerk'  THEN 'Finance'
+              WHEN 'librarian'      THEN 'Library'
+              WHEN 'clinic-admin'   THEN 'Clinic'
+              WHEN 'driver'         THEN 'Transport'
+              WHEN 'auditor'        THEN 'Audit'
+              WHEN 'school-admin'   THEN 'Administration'
+              WHEN 'vice-principal' THEN 'Administration'
+              ELSE u.role::text
+            END
+          ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
-          ea.status           AS attendance_status,
+          CASE
+            WHEN EXTRACT(ISODOW FROM $5::date) IN (6, 7) THEN 'Weekend'
+            WHEN EXISTS (
+              SELECT 1 FROM school_calendar sc
+              WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
+            ) THEN 'Holiday'
+            ELSE 'Pending'
+          END                              AS day_off_type,
+          -- Effective status: teachers auto-absent when past 02:20 AM Ethiopian time with no punch
+          -- AND it is a teaching day (not a weekend, holiday, or school break)
+          CASE
+            WHEN ea.status IS NOT NULL THEN ea.status
+            WHEN ea.id IS NULL
+              AND u.role::text IN ('teacher', 'vice-principal')
+              -- Not a weekend (based on Gregorian calendar)
+              AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+              -- Not a holiday or break in the school calendar (based on Gregorian calendar)
+              AND NOT EXISTS (
+                SELECT 1 FROM school_calendar sc
+                WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                  AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                  AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
+              )
+              AND (
+                $2::date < $3::date
+                OR ($2::date = $3::date AND $4::time > TIME '02:20:00')
+              )
+            THEN 'absent'
+            ELSE NULL
+          END                              AS attendance_status,
+          COALESCE(ea.is_late_arrival, false) AS is_late_arrival,
           ea.sign_in_time,
+          ea.lunch_out_time,
+          ea.lunch_in_time,
           ea.sign_out_time,
           ea.recorded_by,
-          ea.created_at       AS attendance_recorded_at,
-          CASE WHEN ea.recorded_by = 'zk-machine' THEN true ELSE false END AS is_biometric
+          ea.created_at                    AS attendance_recorded_at,
+          CASE
+            WHEN ea.recorded_by = 'zk-machine'    THEN true
+            ELSE false
+          END                              AS is_biometric
        FROM users u
+       LEFT JOIN branches b ON b.id = u.branch_id
        LEFT JOIN teachers t ON t.user_id = u.id
        LEFT JOIN employee_attendance ea
-              ON ea.user_id = u.id AND ea.date = $2
+              ON ea.user_id = u.id AND ea.date = $2::date
        WHERE u.branch_id = $1
          AND u.role NOT IN ('student', 'parent', 'super-admin')
          AND u.status = 'Approved'
        ORDER BY
-         CASE COALESCE(ea.status, 'Unknown')
-           WHEN 'Absent'  THEN 1
-           WHEN 'Unknown' THEN 2
-           WHEN 'Present' THEN 3
+         -- Absent / auto-absent first (VP can act on them), then late, half-day, present, no-punch
+         CASE
+           WHEN COALESCE(ea.status,
+             CASE
+               WHEN ea.id IS NULL AND u.role::text IN ('teacher', 'vice-principal')
+                 AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+                 AND NOT EXISTS (
+                   SELECT 1 FROM school_calendar sc
+                   WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                     AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                     AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+                 )
+                 AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
+               THEN 'absent' ELSE 'zzz' END
+           ) = 'absent'   THEN 1
+           WHEN COALESCE(ea.status,'zzz') = 'late'     THEN 2
+           WHEN COALESCE(ea.status,'zzz') = 'half-day' THEN 3
+           WHEN COALESCE(ea.status,'zzz') = 'present'  THEN 4
+           ELSE 5
          END,
          u.name`,
-      [branchId, targetDate]
+      [branchId, targetDate, ethNow.dateStr, ethNow.time24, gregDateStr]
     );
 
     return result.rows;
   }
+
+  /**
+   * Manually record / update staff attendance for a given date.
+   * Auto-timestamps each punch slot to NOW() (admin-recorded time) if not explicitly provided.
+   * Computes status and is_late_arrival using the same rules as the biometric machine.
+   */
+  async recordStaffAttendance(data: {
+    adminId: string;
+    userId: string;
+    date: string;
+    status?: string;
+    sign_in_time?: string;
+    lunch_out_time?: string;
+    lunch_in_time?: string;
+    sign_out_time?: string;
+  }) {
+    const { adminId, userId, date, status, sign_in_time, lunch_out_time, lunch_in_time, sign_out_time } = data;
+
+    // Compute is_late_arrival from the Arrival time string ("HH:MM AM/PM" in Ethiopian clock)
+    // Ethiopian clock is 12h starting at 06:00 AM Gregorian (=12:00 AM Ethiopian).
+    // The late cutoff is 02:20 AM Ethiopian = 2*60+20 = 140 minutes past Ethiopian midnight.
+    let isLateArrival = false;
+    if (sign_in_time) {
+      const [timePart, meridiem] = sign_in_time.split(' ');
+      const [hStr, mStr] = timePart.split(':');
+      let h = parseInt(hStr, 10);
+      const m = parseInt(mStr, 10);
+      // Convert Ethiopian 12h to 24h (Ethiopian hours 0–23 past midnight/dawn)
+      if (meridiem === 'PM' && h !== 12) h += 12;
+      if (meridiem === 'AM' && h === 12) h = 0;
+      const totalMin = h * 60 + m;
+      isLateArrival = totalMin > 2 * 60 + 20; // 02:20 AM Ethiopian clock
+    }
+
+    // Compute effective status if not explicitly supplied
+    let computedStatus = status;
+    if (!computedStatus) {
+      if (sign_in_time && lunch_out_time && lunch_in_time && sign_out_time) {
+        computedStatus = 'present';
+      } else if (sign_in_time) {
+        computedStatus = isLateArrival ? 'late' : 'half-day';
+      } else {
+        computedStatus = 'absent';
+      }
+    }
+
+    const result = await pool.query(
+      `INSERT INTO employee_attendance
+         (user_id, date, status, recorded_by, sign_in_time, lunch_out_time, lunch_in_time, sign_out_time, is_late_arrival, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+       ON CONFLICT (user_id, date) DO UPDATE SET
+         status          = EXCLUDED.status,
+         recorded_by     = EXCLUDED.recorded_by,
+         sign_in_time    = COALESCE(EXCLUDED.sign_in_time,    employee_attendance.sign_in_time),
+         lunch_out_time  = COALESCE(EXCLUDED.lunch_out_time,  employee_attendance.lunch_out_time),
+         lunch_in_time   = COALESCE(EXCLUDED.lunch_in_time,   employee_attendance.lunch_in_time),
+         sign_out_time   = COALESCE(EXCLUDED.sign_out_time,   employee_attendance.sign_out_time),
+         is_late_arrival = EXCLUDED.is_late_arrival
+       RETURNING *`,
+      [
+        userId,
+        date,
+        computedStatus,
+        `admin-manual:${adminId}`,
+        sign_in_time || null,
+        lunch_out_time || null,
+        lunch_in_time || null,
+        sign_out_time || null,
+        isLateArrival,
+      ]
+    );
+
+    return result.rows[0];
+  }
+
+  /**
+   * Bulk upsert staff attendance records for a given date (Ethiopian calendar).
+   * Used by the School Admin's "Save Attendance Records" button so that daily
+   * attendance history is permanently stored for auditing.
+   */
+  async bulkRecordStaffAttendance(data: {
+    adminId: string;
+    date: string;
+    records: Array<{
+      userId: string;
+      status?: string;
+      sign_in_time?: string;
+      lunch_out_time?: string;
+      lunch_in_time?: string;
+      sign_out_time?: string;
+    }>;
+  }) {
+    const { adminId, date, records } = data;
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const saved = [];
+      for (const rec of records) {
+        // Compute is_late_arrival from sign_in_time if present
+        let isLateArrival = false;
+        if (rec.sign_in_time) {
+          const parts = rec.sign_in_time.split(' ');
+          if (parts.length === 2) {
+            const [timePart, meridiem] = parts;
+            const [hStr, mStr] = timePart.split(':');
+            let h = parseInt(hStr, 10);
+            const m = parseInt(mStr, 10);
+            if (meridiem === 'PM' && h !== 12) h += 12;
+            if (meridiem === 'AM' && h === 12) h = 0;
+            isLateArrival = h * 60 + m > 2 * 60 + 20;
+          }
+        }
+
+        // Determine effective status
+        let effectiveStatus = rec.status || 'absent';
+        // Normalise "present-(late)" -> stored as "present" with is_late_arrival=true
+        if (effectiveStatus === 'present-(late)') effectiveStatus = 'present';
+
+        const result = await client.query(
+          `INSERT INTO employee_attendance
+             (user_id, date, status, recorded_by, sign_in_time, lunch_out_time, lunch_in_time, sign_out_time, is_late_arrival, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+           ON CONFLICT (user_id, date) DO UPDATE SET
+             status          = EXCLUDED.status,
+             recorded_by     = EXCLUDED.recorded_by,
+             sign_in_time    = COALESCE(EXCLUDED.sign_in_time,   employee_attendance.sign_in_time),
+             lunch_out_time  = COALESCE(EXCLUDED.lunch_out_time, employee_attendance.lunch_out_time),
+             lunch_in_time   = COALESCE(EXCLUDED.lunch_in_time,  employee_attendance.lunch_in_time),
+             sign_out_time   = COALESCE(EXCLUDED.sign_out_time,  employee_attendance.sign_out_time),
+             is_late_arrival = EXCLUDED.is_late_arrival
+           RETURNING *`,
+          [
+            rec.userId,
+            date,
+            effectiveStatus,
+            `admin-bulk:${adminId}`,
+            rec.sign_in_time || null,
+            rec.lunch_out_time || null,
+            rec.lunch_in_time || null,
+            rec.sign_out_time || null,
+            isLateArrival,
+          ]
+        );
+        saved.push(result.rows[0]);
+      }
+
+      await client.query('COMMIT');
+      return { count: saved.length, records: saved };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
 
   async getUserById(userId: string, branchId: string) {
     const result = await pool.query(
@@ -443,18 +724,6 @@ class SchoolAdminService {
   }
 
   async getClasses(branchId: string) {
-    // Ensure class_teachers table exists (safe no-op if already created)
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS class_teachers (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-        branch_id UUID NOT NULL,
-        assigned_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(class_id, teacher_id)
-      )
-    `);
-
     const result = await pool.query(
       `SELECT 
         c.*,
@@ -586,18 +855,6 @@ class SchoolAdminService {
 
     // Use the actual teacher table id
     const actualTeacherId = teacherRecord.rows[0].id;
-
-    // Ensure class_teachers table exists
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS class_teachers (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-        teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-        branch_id UUID NOT NULL,
-        assigned_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(class_id, teacher_id)
-      )
-    `);
 
     // Delete any existing assignments for this class (replace its teacher)
     await pool.query(
@@ -1070,8 +1327,9 @@ class SchoolAdminService {
       query += ' AND status = $2';
       params.push(status);
     } else {
-      // default to common awaiting-payment status
-      query += " AND status IN ('awaiting-payment')";
+      // Default: show all applications that Finance needs to process
+      // This includes: pending (new submissions), exam-passed (exam complete), and awaiting-payment (passed by school admin)
+      query += " AND status IN ('pending', 'exam-passed', 'awaiting-payment')";
     }
 
     query += ' ORDER BY created_at DESC';
@@ -1189,6 +1447,75 @@ class SchoolAdminService {
          ON CONFLICT DO NOTHING`,
         [parentId, studentId]
       );
+
+      // ── Record financial transaction for registration fee ─────────────────
+      if (payment.amount && payment.amount > 0) {
+        const now = new Date();
+        const eatMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + (3 * 60 * 60 * 1000);
+        const eatDate = new Date(eatMs);
+        const ethParts = gregorianToEthiopian(eatDate);
+        const regMonth = `${ethParts.year}-${String(ethParts.month).padStart(2, '0')}`;
+        const actualGregorianDateStr = now.toISOString().slice(0, 10);
+
+        // Get Finance Officer name from users table
+        const financeUserRes = await client.query(
+          `SELECT name FROM users WHERE id = $1`,
+          [financeUserId]
+        );
+        const financeOfficerName = financeUserRes.rows.length > 0 ? financeUserRes.rows[0].name : 'Unknown Officer';
+
+        // 1. Insert into payments
+        const paymentRes = await client.query(
+          `INSERT INTO payments (student_id, payer_id, branch_id, month, date, total_amount, reference)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id`,
+          [studentId, null, app.branch_id, regMonth, actualGregorianDateStr, payment.amount, payment.reference || null]
+        );
+        const insertedPaymentId = paymentRes.rows[0].id;
+
+        // 2. Insert into payment_items
+        await client.query(
+          `INSERT INTO payment_items (payment_id, fee_type, amount)
+           VALUES ($1, $2, $3)`,
+          [insertedPaymentId, 'registration', payment.amount]
+        );
+
+        // 3. Insert into finance_transactions
+        const ethMonthNames = [
+          'Meskerem', 'Tikimt', 'Hidar', 'Tahsas', 'Tir', 'Yekatit',
+          'Megabit', 'Miazia', 'Ginbot', 'Sene', 'Hamle', 'Nehase', 'Pagume'
+        ];
+        const ethMonthName = ethMonthNames[ethParts.month - 1] || 'Meskerem';
+
+        await client.query(
+          `INSERT INTO finance_transactions (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+          [
+            studentId,
+            app.applicant_name,
+            payment.amount,
+            'Registration Fee',
+            actualGregorianDateStr,
+            financeOfficerName,
+            app.branch_id,
+            ethMonthName,
+            ethParts.year
+          ]
+        );
+
+        // 4. Initialize student_collections status as 'pending' (not 'cleared')
+        // Registration fee is separate from monthly fees and should NOT affect collection status
+        // Collection status only becomes 'cleared' when all monthly fees (tuition, bus, etc.) are paid
+        const deadlineDay = 10;
+        const dueDate = ethiopianToGregorianDate({ year: ethParts.year, month: ethParts.month, day: deadlineDay });
+        await client.query(
+          `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+           VALUES ($1, $2, $3, 'pending', NOW())
+           ON CONFLICT (student_id, month) DO NOTHING`,
+          [studentId, regMonth, dueDate.toISOString().slice(0, 10)]
+        );
+      }
+
 
       // ── Persist payment + generated account IDs ─────────────────────────────
       const updateResult = await client.query(
@@ -1683,6 +2010,7 @@ class SchoolAdminService {
         id,
         title,
         date,
+        end_date,
         type,
         description,
         branch_id,
@@ -1701,7 +2029,7 @@ class SchoolAdminService {
   // Get ALL events for branch (for calendar view, includes global events)
   async getEvents(branchId: string) {
     const result = await pool.query(
-      `SELECT id, title, date, type, description, branch_id, created_at
+      `SELECT id, title, date, end_date, type, description, branch_id, created_at
        FROM events
        WHERE branch_id = $1 OR branch_id IS NULL
        ORDER BY date ASC, created_at ASC`,
@@ -1714,80 +2042,111 @@ class SchoolAdminService {
   async createEvent(data: {
     title: string;
     date: string;
+    endDate?: string;
     type: string;
     description?: string;
     branchId: string;
   }) {
-    const result = await pool.query(
-      `INSERT INTO events (title, date, type, description, branch_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [data.title, data.date, data.type, data.description || null, data.branchId]
-    );
-
-    return result.rows[0];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `INSERT INTO events (title, date, end_date, type, description, branch_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *`,
+        [data.title, data.date, data.endDate || data.date, data.type, data.description || null, data.branchId]
+      );
+      const newEvent = result.rows[0];
+      await syncSchoolCalendarForEvent(client, newEvent);
+      await client.query('COMMIT');
+      return newEvent;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // Update Event
   async updateEvent(eventId: string, branchId: string, data: {
     title?: string;
     date?: string;
+    endDate?: string;
     type?: string;
     description?: string;
   }) {
-    // Verify event belongs to branch
-    const checkResult = await pool.query(
-      'SELECT id FROM events WHERE id = $1 AND branch_id = $2',
-      [eventId, branchId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Verify event belongs to branch
+      const checkResult = await client.query(
+        'SELECT id FROM events WHERE id = $1 AND branch_id = $2 FOR UPDATE',
+        [eventId, branchId]
+      );
 
-    if (checkResult.rows.length === 0) {
-      throw new Error('Event not found or access denied');
-    }
+      if (checkResult.rows.length === 0) {
+        throw new Error('Event not found or access denied');
+      }
 
-    const fields: string[] = [];
-    const values: any[] = [];
-    let paramCount = 0;
+      const fields: string[] = [];
+      const values: any[] = [];
+      let paramCount = 0;
 
-    if (data.title) {
+      if (data.title) {
+        paramCount++;
+        fields.push(`title = $${paramCount}`);
+        values.push(data.title);
+      }
+
+      if (data.date) {
+        paramCount++;
+        fields.push(`date = $${paramCount}`);
+        values.push(data.date);
+      }
+
+      if (data.endDate !== undefined) {
+        paramCount++;
+        fields.push(`end_date = $${paramCount}`);
+        values.push(data.endDate);
+      }
+
+      if (data.type) {
+        paramCount++;
+        fields.push(`type = $${paramCount}`);
+        values.push(data.type);
+      }
+
+      if (data.description !== undefined) {
+        paramCount++;
+        fields.push(`description = $${paramCount}`);
+        values.push(data.description);
+      }
+
+      if (fields.length === 0) {
+        throw new Error('No fields to update');
+      }
+
       paramCount++;
-      fields.push(`title = $${paramCount}`);
-      values.push(data.title);
+      values.push(eventId);
+
+      const result = await client.query(
+        `UPDATE events SET ${fields.join(', ')}
+         WHERE id = $${paramCount}
+         RETURNING *`,
+        values
+      );
+
+      const updatedEvent = result.rows[0];
+      await syncSchoolCalendarForEvent(client, updatedEvent);
+      await client.query('COMMIT');
+      return updatedEvent;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
     }
-
-    if (data.date) {
-      paramCount++;
-      fields.push(`date = $${paramCount}`);
-      values.push(data.date);
-    }
-
-    if (data.type) {
-      paramCount++;
-      fields.push(`type = $${paramCount}`);
-      values.push(data.type);
-    }
-
-    if (data.description !== undefined) {
-      paramCount++;
-      fields.push(`description = $${paramCount}`);
-      values.push(data.description);
-    }
-
-    if (fields.length === 0) {
-      throw new Error('No fields to update');
-    }
-
-    paramCount++;
-    values.push(eventId);
-
-    const result = await pool.query(
-      `UPDATE events SET ${fields.join(', ')}
-       WHERE id = $${paramCount}
-       RETURNING *`,
-      values
-    );
-
-    return result.rows[0];
   }
 
   // Delete Event
@@ -2121,18 +2480,6 @@ class SchoolAdminService {
         const htGrades = htConfig.grades || [];
         const htSections = htConfig.sections || {};
 
-        // Ensure class_teachers table exists
-        await client.query(`
-          CREATE TABLE IF NOT EXISTS class_teachers (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-            teacher_id UUID NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-            branch_id UUID NOT NULL,
-            assigned_at TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE(class_id, teacher_id)
-          )
-        `);
-
         for (const grade of htGrades) {
           const secList = htSections[grade] || [];
           for (const sec of secList) {
@@ -2162,6 +2509,74 @@ class SchoolAdminService {
     } finally {
       client.release();
     }
+  }
+
+  // Get attendance summary by grade and section for the branch
+  async getAttendanceSummary(branchId: string, date?: string, gradeLevel?: string) {
+    // Use Ethiopian date directly (YYYY-MM-DD format in Ethiopian calendar)
+    const targetDate = date || new Date().toLocaleDateString('en-CA');
+
+    let query = `
+      SELECT 
+        CASE WHEN c.id IS NOT NULL THEN c.name ELSE s.grade END AS grade,
+        COALESCE(c.section, '') AS section,
+        COUNT(DISTINCT s.id) as total_students,
+        COUNT(DISTINCT CASE WHEN sa.status = 'present' THEN sa.student_id END) as present,
+        COUNT(DISTINCT CASE WHEN sa.status = 'absent' THEN sa.student_id END) as absent,
+        COUNT(DISTINCT CASE WHEN sa.status = 'late' THEN sa.student_id END) as late,
+        COUNT(DISTINCT CASE WHEN sa.status = 'excused' THEN sa.student_id END) as excused
+      FROM students s
+      LEFT JOIN student_attendance sa ON s.id = sa.student_id AND sa.date = $2
+      LEFT JOIN classes c ON s.branch_id = c.branch_id AND (
+        s.section_id = c.id
+        OR (s.section_id IS NULL AND c.section IS NULL AND s.grade = c.name)
+      )
+      WHERE s.branch_id = $1
+    `;
+
+    const params: any[] = [branchId, targetDate];
+
+    if (gradeLevel) {
+      query += ' AND s.grade = $3';
+      params.push(gradeLevel);
+    }
+
+    query += ` GROUP BY CASE WHEN c.id IS NOT NULL THEN c.name ELSE s.grade END, c.id, COALESCE(c.section, '') 
+               ORDER BY CASE WHEN c.id IS NOT NULL THEN c.name ELSE s.grade END, COALESCE(c.section, '')`;
+
+    const result = await pool.query(query, params);
+    return {
+      date: targetDate,
+      summary: result.rows
+    };
+  }
+
+  // Get student attendance history (30-day average)
+  async getStudentAttendanceHistory(studentId: string, branchId: string, days: number = 30) {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const startDateStr = startDate.toLocaleDateString('en-CA');
+
+    const result = await pool.query(
+      `SELECT 
+        s.id,
+        s.grade,
+        COUNT(DISTINCT sa.date) as total_days,
+        COUNT(DISTINCT CASE WHEN sa.status = 'present' THEN sa.date END) as present_days,
+        COUNT(DISTINCT CASE WHEN sa.status = 'absent' THEN sa.date END) as absent_days,
+        COUNT(DISTINCT CASE WHEN sa.status = 'late' THEN sa.date END) as late_days,
+        ROUND(
+          (COUNT(DISTINCT CASE WHEN sa.status = 'present' THEN sa.date END)::numeric / 
+           NULLIF(COUNT(DISTINCT sa.date), 0)) * 100, 1
+        )::numeric as attendance_percentage
+      FROM students s
+      LEFT JOIN student_attendance sa ON s.id = sa.student_id AND sa.date >= $2
+      WHERE s.id = $1 AND s.branch_id = $3
+      GROUP BY s.id, s.grade`,
+      [studentId, startDateStr, branchId]
+    );
+
+    return result.rows[0] || null;
   }
 }
 

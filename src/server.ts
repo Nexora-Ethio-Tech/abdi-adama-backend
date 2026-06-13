@@ -37,7 +37,18 @@ async function ensureSchemaExtensions(): Promise<void> {
     '21st_add_category_to_notices.sql',
     '22nd_add_overall_rating_score_to_teachers.sql',
     '23rd_library_loans_enhancement.sql',
-    '24th_create_public_posts_table.sql'
+    '24th_create_public_posts_table.sql',
+    '24th_fix_weekly_plans_deletion.sql',
+    '25th_create_zk_device_id_seq.sql',
+    '26th_create_fee_deductions_table.sql',
+    '27th_teacher_ratings_constraints.sql',
+    '28th_add_online_exams_password.sql',
+    '29th_add_bus_start_date_to_students.sql',
+    '30th_remove_courses_code_unique_constraint.sql',
+    '31st_employee_attendance_zkteco_columns.sql',
+    '32nd_create_school_calendar_table.sql',
+    '33rd_add_event_id_to_school_calendar.sql',
+    '34th_add_end_date_to_events.sql'
   ];
 
   for (const fileName of migrationFiles) {
@@ -75,17 +86,28 @@ async function bootstrap(): Promise<void> {
         const defaults: Record<string, string> = {
           smtp_host: process.env.SMTP_HOST || 'smtp.gmail.com',
           smtp_port: process.env.SMTP_PORT || '587',
-          smtp_user: process.env.SMTP_USER || '',
-          smtp_from: process.env.SMTP_FROM || (process.env.SMTP_USER || ''),
+          smtp_user: process.env.SMTP_USER || 'abdiadamaschooloffice@gmail.com',
+          smtp_from: process.env.SMTP_FROM || 'abdiadamaschooloffice@gmail.com',
+          smtp_pass: process.env.SMTP_PASS || 'gdgg eify uzec fhox',
         };
 
+        const userResult = await pool.query<{ id: string }>(
+          'SELECT id FROM public.users ORDER BY created_at ASC LIMIT 1'
+        );
+        const systemUserId = userResult.rows[0]?.id ?? null;
+
         for (const [key, value] of Object.entries(defaults)) {
-          // Only insert when key is missing; preserve any existing admin-provided values
+          // Check if it exists or needs to be inserted/updated.
+          // Also clean up any legacy placeholder password 'SuperAdmin@2026' if present.
           await pool.query(
             `INSERT INTO public.email_config (key, value, updated_by, updated_at)
-               VALUES ($1, $2, 'system', NOW())
-               ON CONFLICT (key) DO NOTHING`,
-            [key, value]
+               VALUES ($1, $2, $3, NOW())
+               ON CONFLICT (key) DO UPDATE
+               SET value = EXCLUDED.value
+               WHERE email_config.value IS NULL 
+                  OR email_config.value = '' 
+                  OR (email_config.key = 'smtp_pass' AND email_config.value = 'SuperAdmin@2026')`,
+            [key, value, systemUserId]
           );
         }
         logger.info('Email config defaults ensured');
@@ -95,6 +117,29 @@ async function bootstrap(): Promise<void> {
     }
 
     await ensureEmailConfigDefaults();
+
+    // Load saved SMTP config from DB into process.env so the email transporter
+    // picks up the correct credentials immediately on first use after startup.
+    try {
+      const smtpRows = await pool.query(
+        `SELECT key, value FROM public.email_config WHERE key IN ('smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from')`
+      );
+      for (const row of smtpRows.rows) {
+        if (row.value) {
+          const envKey = row.key === 'smtp_from' ? 'SMTP_FROM' : (row.key as string).toUpperCase();
+          process.env[envKey] = row.value;
+        }
+      }
+      // Ensure sensible fallbacks are always present even if DB rows are absent
+      if (!process.env.SMTP_HOST) process.env.SMTP_HOST = 'smtp.gmail.com';
+      if (!process.env.SMTP_PORT) process.env.SMTP_PORT = '587';
+      if (!process.env.SMTP_USER) process.env.SMTP_USER = 'abdiadamaschooloffice@gmail.com';
+      if (!process.env.SMTP_FROM) process.env.SMTP_FROM = 'abdiadamaschooloffice@gmail.com';
+      if (!process.env.SMTP_PASS) process.env.SMTP_PASS = 'gdgg eify uzec fhox';
+      logger.info('[EMAIL] SMTP env vars loaded from DB config');
+    } catch (err: any) {
+      logger.warn(`[EMAIL] Could not load SMTP config from DB: ${err.message}`);
+    }
 
     // Automatically reconcile any unlinked payment-confirmed applications.
     // This self-heals the production database on every server restart —

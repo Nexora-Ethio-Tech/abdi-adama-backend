@@ -10,11 +10,15 @@ function getTransporter(): nodemailer.Transporter {
     _transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT) || 587,
-      secure: false,
+      secure: false, // true for port 465, false for 587
+      requireTLS: true,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
+      tls: {
+        rejectUnauthorized: false
+      }
     });
   }
   return _transporter;
@@ -31,22 +35,36 @@ export function resetTransporter(): void {
 
 // The "from" address: prefer SMTP_FROM, fall back to SMTP_USER so the env
 // variable is optional and emails never go out with "from: <undefined>".
-const getSenderAddress = () =>
-  `"Abdi Adama School IMS" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`;
+const getSenderAddress = () => {
+  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || '';
+  const displayName = fromEmail.toLowerCase().includes('abdiadamaschooloffice')
+    ? 'Abdi Adama School Office'
+    : 'Abdi Adama School IMS';
+  return `"${displayName}" <${fromEmail}>`;
+};
 
 // ─── Core send helper ─────────────────────────────────────────────────────────
 
 export async function sendEmail(
   to: string,
   subject: string,
-  htmlBody: string
+  htmlBody: string,
+  textBody?: string
 ): Promise<boolean> {
   try {
+    // Generate a clean plain-text fallback by stripping HTML tags
+    const plainTextFallback = textBody || htmlBody
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
     await getTransporter().sendMail({
       from: getSenderAddress(),
       to,
       subject,
       html: htmlBody,
+      text: plainTextFallback,
     });
     logger.info(`[EMAIL] Sent "${subject}" → ${to}`);
     return true;
@@ -66,7 +84,8 @@ export async function sendWelcomeEmail(
   name: string,
   email: string,
   password: string,
-  role: string
+  role: string,
+  digitalId?: string
 ): Promise<boolean> {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
   const subject = 'Welcome to Abdi Adama School IMS – Your Account is Ready';
@@ -78,14 +97,19 @@ export async function sendWelcomeEmail(
       </h2>
 
       <p>Dear <strong>${name}</strong>,</p>
-      <p>Your account has been created. You can now log in using the credentials below.</p>
+      <p>Your account has been created by the Super Administrator. You can now log in using the credentials below.</p>
 
       <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
         <tr style="background-color: #f8fafc;">
           <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Role</th>
           <td style="padding: 10px; border: 1px solid #e2e8f0;">${role}</td>
         </tr>
+        ${digitalId ? `
         <tr>
+          <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Digital ID</th>
+          <td style="padding: 10px; border: 1px solid #e2e8f0; font-family: monospace; font-weight: bold; color: #4f46e5;">${digitalId}</td>
+        </tr>` : ''}
+        <tr${digitalId ? '' : ' style="background-color: #f8fafc;"'}>
           <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Email</th>
           <td style="padding: 10px; border: 1px solid #e2e8f0;">${email}</td>
         </tr>
@@ -107,14 +131,14 @@ export async function sendWelcomeEmail(
 
       <h3 style="color: #4f46e5;">How to Log In</h3>
       <ol style="line-height: 1.8; color: #475569;">
-        <li>Go to the <a href="${frontendUrl}/login">School IMS login page</a>.</li>
+        <li>Go to the <a href="${frontendUrl}/login" style="color: #4f46e5;">School IMS login page</a>.</li>
         <li>Enter your email: <strong>${email}</strong></li>
         <li>Enter your temporary password shown above.</li>
         <li>You will be prompted to set a new password on first login.</li>
       </ol>
 
       <div style="margin-top: 30px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 15px;">
-        This is an automated message. If you did not expect this account or believe
+        This is an automated message from Abdi Adama School IMS. If you did not expect this account or believe
         this is an error, please contact your administrator immediately.
       </div>
     </div>

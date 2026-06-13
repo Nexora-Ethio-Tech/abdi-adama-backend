@@ -2,6 +2,7 @@ import pool from '../config/database';
 import { hashPassword, generateRandomPassword } from '../utils/password';
 import { sendWelcomeEmail } from '../utils/emailService';
 import { todayEthiopic } from '../utils/ethiopicUtils';
+import { syncSchoolCalendarForEvent } from './schoolAdmin.service';
 import { UUID } from 'crypto';
 
 // Roles that receive a welcome email on creation — must match user.service.ts
@@ -322,16 +323,41 @@ class SuperAdminService {
   }
 
   async deleteBranch(id: string) {
-    const usersCheck = await pool.query(`SELECT COUNT(*) FROM users WHERE branch_id = $1`, [id]);
-    if (parseInt(usersCheck.rows[0].count) > 0) {
-      throw new Error('Cannot delete branch with existing users');
-    }
-
-    const result = await pool.query(`DELETE FROM branches WHERE id = $1 RETURNING *`, [id]);
-    if (result.rows.length === 0) {
+    // Verify branch exists
+    const branchCheck = await pool.query(`SELECT id, name FROM branches WHERE id = $1`, [id]);
+    if (branchCheck.rows.length === 0) {
       throw new Error('Branch not found');
     }
-    return { message: 'Branch deleted successfully' };
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Delete students in this branch first (students table may not cascade from branches)
+      await client.query(`DELETE FROM students WHERE branch_id = $1`, [id]);
+
+      // Delete all users in this branch (ON DELETE CASCADE handles their related records:
+      // employee_attendance, employee_payroll_profiles, credential_logs, etc.)
+      await client.query(`DELETE FROM users WHERE branch_id = $1`, [id]);
+
+      // Delete other branch-level records that may not cascade
+      await client.query(`DELETE FROM classes WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM academic_years WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM branch_grade_fees WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM finance_transactions WHERE branch_id = $1`, [id]);
+      await client.query(`DELETE FROM events WHERE branch_id = $1`, [id]);
+
+      // Finally delete the branch itself
+      await client.query(`DELETE FROM branches WHERE id = $1`, [id]);
+
+      await client.query('COMMIT');
+      return { message: `Branch "${branchCheck.rows[0].name}" deleted successfully` };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // ─── User Management ──────────────────────────────────────────────────────
@@ -1061,10 +1087,10 @@ class SuperAdminService {
     );
 
     const settings: Record<string, string> = {
-      smtp_host: '',
-      smtp_port: '587',
-      smtp_user: '',
-      smtp_from: '',
+      smtp_host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      smtp_port: process.env.SMTP_PORT || '587',
+      smtp_user: process.env.SMTP_USER || 'abdiadamaschooloffice@gmail.com',
+      smtp_from: process.env.SMTP_FROM || 'abdiadamaschooloffice@gmail.com',
     };
     for (const row of result.rows) {
       settings[row.key] = row.value;
@@ -1190,7 +1216,7 @@ class SuperAdminService {
 
   async getEvents(branchId: string | null) {
     let query = `
-      SELECT id, title, date, type, description, branch_id, created_at
+      SELECT id, title, date, end_date, type, description, branch_id, created_at
       FROM events
     `;
     const params: any[] = [];
@@ -1203,34 +1229,59 @@ class SuperAdminService {
     return result.rows;
   }
 
-  async createEvent(data: { title: string; date: string; type: string; description?: string; branchId: string | null }) {
-    const result = await pool.query(
-      `INSERT INTO events (title, date, type, description, branch_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [data.title, data.date, data.type, data.description || null, data.branchId]
-    );
-    return result.rows[0];
+  async createEvent(data: { title: string; date: string; endDate?: string; type: string; description?: string; branchId: string | null }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `INSERT INTO events (title, date, end_date, type, description, branch_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *`,
+        [data.title, data.date, data.endDate || data.date, data.type, data.description || null, data.branchId]
+      );
+      const newEvent = result.rows[0];
+      await syncSchoolCalendarForEvent(client, newEvent);
+      await client.query('COMMIT');
+      return newEvent;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
-  async updateEvent(id: string, data: { title?: string; date?: string; type?: string; description?: string; branchId?: string | null }) {
-    const fields: string[] = [];
-    const values: any[] = [];
-    let p = 0;
-    if (data.title !== undefined) { p++; fields.push(`title = $${p}`); values.push(data.title); }
-    if (data.date !== undefined) { p++; fields.push(`date = $${p}`); values.push(data.date); }
-    if (data.type !== undefined) { p++; fields.push(`type = $${p}`); values.push(data.type); }
-    if (data.description !== undefined) { p++; fields.push(`description = $${p}`); values.push(data.description); }
-    if (data.branchId !== undefined) { p++; fields.push(`branch_id = $${p}`); values.push(data.branchId); }
-    if (fields.length === 0) throw new Error('No fields to update');
-    p++;
-    values.push(id);
-    const result = await pool.query(
-      `UPDATE events SET ${fields.join(', ')} WHERE id = $${p} RETURNING *`,
-      values
-    );
-    if (result.rows.length === 0) throw new Error('Event not found');
-    return result.rows[0];
+  async updateEvent(id: string, data: { title?: string; date?: string; endDate?: string; type?: string; description?: string; branchId?: string | null }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const fields: string[] = [];
+      const values: any[] = [];
+      let p = 0;
+      if (data.title !== undefined) { p++; fields.push(`title = $${p}`); values.push(data.title); }
+      if (data.date !== undefined) { p++; fields.push(`date = $${p}`); values.push(data.date); }
+      if (data.endDate !== undefined) { p++; fields.push(`end_date = $${p}`); values.push(data.endDate); }
+      if (data.type !== undefined) { p++; fields.push(`type = $${p}`); values.push(data.type); }
+      if (data.description !== undefined) { p++; fields.push(`description = $${p}`); values.push(data.description); }
+      if (data.branchId !== undefined) { p++; fields.push(`branch_id = $${p}`); values.push(data.branchId); }
+      if (fields.length === 0) throw new Error('No fields to update');
+      p++;
+      values.push(id);
+      const result = await client.query(
+        `UPDATE events SET ${fields.join(', ')} WHERE id = $${p} RETURNING *`,
+        values
+      );
+      if (result.rows.length === 0) throw new Error('Event not found');
+      const updatedEvent = result.rows[0];
+      await syncSchoolCalendarForEvent(client, updatedEvent);
+      await client.query('COMMIT');
+      return updatedEvent;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async deleteEvent(id: string) {

@@ -30,7 +30,8 @@ const recordPaymentSchema = Joi.object({
 const assignTransportSchema = Joi.object({
   studentId: Joi.string().uuid().required(),
   driverId: Joi.string().uuid().required(),
-  transportFee: Joi.number().positive().required()
+  transportFee: Joi.number().positive().required(),
+  busStartDay: Joi.number().integer().min(1).max(30).optional() // Optional: day of month when bus use starts
 });
 
 const stopTransportSchema = Joi.object({
@@ -53,6 +54,11 @@ const updateFeeStatusSchema = Joi.object({
   requestedAidAmount: Joi.number().min(0).optional()
 });
 
+const sendSmsSchema = Joi.object({
+  studentId: Joi.string().uuid().required(),
+  message: Joi.string().min(1).max(160).required()
+});
+
 // Role Guard segments
 const readOnlyInventory = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]);
 const readWriteFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]);
@@ -65,28 +71,51 @@ router.get('/payments/:studentId', clerkOnly, financeClerkController.getPaymentH
 router.get('/students/:id/outstanding', clerkOnly, financeClerkController.getStudentOutstanding);
 router.get('/students/fees', clerkOnly, financeClerkController.getStudentsWithFees);
 router.post('/students/:id/fee-status', clerkOnly, validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
-router.patch('/students/:id/fee-status', clerkOnly, validate(updateFeeStatusSchema), financeClerkController.updateFeeStatus);
+router.post('/students/sms/send', clerkOnly, validate(sendSmsSchema), financeClerkController.sendSms);
 router.get('/transport/students', clerkOnly, financeClerkController.getTransportStudents);
 router.get('/transport/routes', clerkOnly, financeClerkController.getTransportRoutes);
 router.get('/transport/drivers', clerkOnly, financeClerkController.getTransportDrivers);
 router.get('/transport/policies', clerkOnly, financeClerkController.getTransportPolicies);
 router.get('/registration-fee', clerkOnly, financeClerkController.getGlobalRegistrationFee);
+router.get('/registration-fee-transactions', clerkOnly, async (req: AuthRequest, res: Response) => {
+  try {
+    const branchId = req.user!.branch_id;
+    const result = await pool.query(
+      `SELECT
+         ft.id,
+         ft.student_id,
+         ft.student_name,
+         ft.amount,
+         ft.type,
+         ft.date,
+         ft.verified_by,
+         ft.ethiopic_month,
+         ft.ethiopic_year,
+         ft.created_at
+       FROM finance_transactions ft
+       WHERE ft.branch_id = $1
+         AND (ft.type = 'Registration Fee' OR ft.type ILIKE '%registration%')
+       ORDER BY ft.created_at DESC`,
+      [branchId]
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { message: 'Failed to fetch registration fee transactions' } });
+  }
+});
 router.post('/transport/assign', clerkOnly, validate(assignTransportSchema), financeClerkController.assignTransportStudent);
 router.post('/transport/stop', clerkOnly, validate(stopTransportSchema), financeClerkController.stopTransportStudent);
 router.get('/dashboard', clerkOnly, financeClerkController.getDashboard);
 router.get('/assets', readOnlyInventory, assetController.getAssets);
 router.post('/assets', clerkOnly, assetController.createAsset);
 router.post('/assets/:id', clerkOnly, assetController.updateAsset);
-router.patch('/assets/:id', clerkOnly, assetController.updateAsset);
 router.delete('/assets/:id', clerkOnly, assetController.deleteAsset);
 router.get('/overdue-payments', clerkOnly, financeClerkController.getOverduePayments);
 router.get('/reports/daily', clerkOnly, financeClerkController.getDailyReport);
 router.get('/applications', clerkOnly, financeClerkController.getPendingApplications);
 router.post('/applications/:id/approve', clerkOnly, validate(approveApplicationSchema), financeClerkController.approveApplication);
-router.patch('/applications/:id/approve', clerkOnly, validate(approveApplicationSchema), financeClerkController.approveApplication);
 // Reject / Return application to school admin with reason
 router.post('/applications/:id/remove', clerkOnly, financeClerkController.rejectApplication);
-router.patch('/applications/:id/remove', clerkOnly, financeClerkController.rejectApplication);
 // Legacy: allow delete route (will now mark as returned instead of deleting)
 router.delete('/applications/:id', clerkOnly, financeClerkController.rejectApplication);
 

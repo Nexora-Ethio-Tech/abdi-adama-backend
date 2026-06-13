@@ -163,6 +163,22 @@ class SuperAdminController {
     }
   }
 
+  async resetUserPassword(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      const result = await userService.resetUserPassword(id);
+
+      res.json({
+        success: true,
+        data: result,
+        message: `Password reset successfully. Temporary password: ${result.temporaryPassword}`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getAllUsers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { role, branchId, status } = req.query;
@@ -666,9 +682,9 @@ class SuperAdminController {
 
   async createEvent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { title, date, type, description, branchId } = req.body;
+      const { title, date, endDate, type, description, branchId } = req.body;
       const event = await superAdminService.createEvent({
-        title, date, type, description,
+        title, date, endDate, type, description,
         branchId: branchId || null,
       });
       res.status(201).json({ success: true, data: event, message: 'Event created successfully' });
@@ -680,9 +696,9 @@ class SuperAdminController {
   async updateEvent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params;
-      const { title, date, type, description, branchId } = req.body;
+      const { title, date, endDate, type, description, branchId } = req.body;
       const event = await superAdminService.updateEvent(id, {
-        title, date, type, description,
+        title, date, endDate, type, description,
         branchId: branchId !== undefined ? (branchId || null) : undefined,
       });
       res.json({ success: true, data: event, message: 'Event updated successfully' });

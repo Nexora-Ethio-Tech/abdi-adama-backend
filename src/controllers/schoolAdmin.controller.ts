@@ -20,9 +20,9 @@ class SchoolAdminController {
       if (typeof open !== 'boolean') {
         throw new Error('open must be a boolean');
       }
-      
+
       const settings = await superAdminService.updateSystemSettings({ registration_open: open ? 'true' : 'false' }, adminId);
-      
+
       res.json({
         success: true,
         data: settings,
@@ -1035,11 +1035,12 @@ class SchoolAdminController {
   async createEvent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const { title, date, type, description } = req.body;
+      const { title, date, endDate, type, description } = req.body;
 
       const event = await schoolAdminService.createEvent({
         title,
         date,
+        endDate,
         type,
         description,
         branchId: branchId!
@@ -1446,6 +1447,113 @@ class SchoolAdminController {
       broadcast('SCHOOL_NOTICE_DELETED', { id }, branchId || undefined);
 
       res.json({ success: true, message: 'Notice deleted successfully.' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get attendance summary by grade
+  async getAttendanceSummary(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { date, grade } = req.query;
+
+      const result = await schoolAdminService.getAttendanceSummary(
+        branchId!,
+        date as string | undefined,
+        grade as string | undefined
+      );
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get student attendance history (for 30-day average)
+  async getStudentAttendanceHistory(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { studentId } = req.params;
+      const { days } = req.query;
+
+      if (!studentId || typeof studentId !== 'string') {
+        res.status(400).json({ success: false, message: 'Student ID is required' });
+        return;
+      }
+
+      const result = await schoolAdminService.getStudentAttendanceHistory(
+        studentId,
+        branchId!,
+        days ? parseInt(days as string) : 30
+      );
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Manually record staff attendance (power-outage / machine-down fallback)
+  async recordStaffAttendance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const adminId = req.user!.id;
+      const {
+        userId,
+        date,
+        status,
+        sign_in_time,
+        lunch_out_time,
+        lunch_in_time,
+        sign_out_time,
+      } = req.body;
+
+      if (!userId || !date) {
+        res.status(400).json({ success: false, message: 'userId and date are required.' });
+        return;
+      }
+
+      const record = await schoolAdminService.recordStaffAttendance({
+        adminId,
+        userId,
+        date,
+        status,
+        sign_in_time,
+        lunch_out_time,
+        lunch_in_time,
+        sign_out_time,
+      });
+
+      res.json({ success: true, data: record });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Bulk record staff attendance for a full day (School Admin "Save Attendance Records" action)
+  async bulkRecordStaffAttendance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const adminId = req.user!.id;
+      const { date, records } = req.body;
+
+      if (!date || !Array.isArray(records) || records.length === 0) {
+        res.status(400).json({ success: false, message: 'date and records[] are required.' });
+        return;
+      }
+
+      const result = await schoolAdminService.bulkRecordStaffAttendance({ adminId, date, records });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `Saved ${result.count} attendance records for ${date}.`,
+      });
     } catch (error) {
       next(error);
     }
