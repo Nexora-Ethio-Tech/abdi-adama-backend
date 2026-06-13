@@ -1188,7 +1188,7 @@ class SuperAdminService {
 
   async getEvents(branchId: string | null) {
     let query = `
-      SELECT id, title, date, type, description, branch_id, created_at
+      SELECT id, title, date, end_date, type, description, branch_id, created_at
       FROM events
     `;
     const params: any[] = [];

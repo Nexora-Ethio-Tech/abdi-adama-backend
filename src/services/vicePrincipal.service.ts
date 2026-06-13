@@ -240,7 +240,7 @@ class VicePrincipalService {
               SELECT 1 FROM school_calendar sc
               WHERE $5::date BETWEEN sc.start_date AND sc.end_date
                 AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
-                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
             ) THEN 'Holiday'
             ELSE 'Pending'
           END                              AS day_off_type,
@@ -257,7 +257,7 @@ class VicePrincipalService {
                 SELECT 1 FROM school_calendar sc
                 WHERE $5::date BETWEEN sc.start_date AND sc.end_date
                   AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
-                  AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+                  AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
               )
               AND (
                 $2::date < $3::date

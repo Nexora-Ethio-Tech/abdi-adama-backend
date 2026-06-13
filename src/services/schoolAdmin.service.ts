@@ -136,7 +136,7 @@ class SchoolAdminService {
               SELECT 1 FROM school_calendar sc
               WHERE $5::date BETWEEN sc.start_date AND sc.end_date
                 AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
-                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
             ) THEN 'Holiday'
             ELSE 'Pending'
           END                              AS day_off_type,
@@ -153,7 +153,7 @@ class SchoolAdminService {
                 SELECT 1 FROM school_calendar sc
                 WHERE $5::date BETWEEN sc.start_date AND sc.end_date
                   AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
-                  AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+                  AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
               )
               AND (
                 $2::date < $3::date
@@ -2010,6 +2010,7 @@ class SchoolAdminService {
         id,
         title,
         date,
+        end_date,
         type,
         description,
         branch_id,
@@ -2028,7 +2029,7 @@ class SchoolAdminService {
   // Get ALL events for branch (for calendar view, includes global events)
   async getEvents(branchId: string) {
     const result = await pool.query(
-      `SELECT id, title, date, type, description, branch_id, created_at
+      `SELECT id, title, date, end_date, type, description, branch_id, created_at
        FROM events
        WHERE branch_id = $1 OR branch_id IS NULL
        ORDER BY date ASC, created_at ASC`,
