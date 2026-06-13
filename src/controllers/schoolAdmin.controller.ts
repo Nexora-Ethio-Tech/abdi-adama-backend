@@ -37,7 +37,36 @@ class SchoolAdminController {
   async registerUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const userData = { ...req.body, branchId };
+      const { role } = req.body;
+      const staffRoles = ['teacher', 'finance-clerk', 'driver', 'librarian', 'clinic-admin'];
+
+      if (staffRoles.includes(role)) {
+        if (!req.file) {
+          res.status(400).json({ success: false, message: 'Document upload is mandatory for staff registration' });
+          return;
+        }
+        // Validate file size (max 2MB)
+        const fileSizeValidation = validateFileSize(req.file.size);
+        if (!fileSizeValidation.isValid) {
+          res.status(400).json({
+            success: false,
+            message: 'File upload failed',
+            errors: {
+              document: fileSizeValidation.error,
+            },
+          });
+          return;
+        }
+      }
+
+      const userData = {
+        ...req.body,
+        branchId,
+        documentData: req.file ? req.file.buffer : null,
+        documentFileName: req.file ? req.file.originalname : null,
+        documentFileSize: req.file ? req.file.size : null,
+        documentMimeType: req.file ? req.file.mimetype : null,
+      };
 
       const result = await schoolAdminService.registerUser(userData);
 
@@ -47,6 +76,87 @@ class SchoolAdminController {
         message: 'User registered successfully'
       });
     } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get User Document
+  async getUserDocument(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { id } = req.params;
+
+      const result = await pool.query(
+        `SELECT document_data, document_file_name, document_mime_type 
+         FROM users 
+         WHERE id = $1 AND branch_id = $2`,
+        [id, branchId]
+      );
+
+      if (result.rows.length === 0 || !result.rows[0].document_data) {
+        res.status(404).json({ success: false, message: 'Document not found' });
+        return;
+      }
+
+      const doc = result.rows[0];
+
+      res.setHeader('Content-Type', doc.document_mime_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${doc.document_file_name}"`);
+      res.send(doc.document_data);
+    } catch (error) {
+      logger.error('Error fetching user document:', error instanceof Error ? error.message : error);
+      next(error);
+    }
+  }
+
+  // Replace/Re-upload User Document
+  async replaceUserDocument(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { id } = req.params;
+
+      if (!req.file) {
+        res.status(400).json({ success: false, message: 'No file uploaded' });
+        return;
+      }
+
+      // Validate file size (max 2MB)
+      const fileSizeValidation = validateFileSize(req.file.size);
+      if (!fileSizeValidation.isValid) {
+        res.status(400).json({
+          success: false,
+          message: 'File upload failed',
+          errors: {
+            document: fileSizeValidation.error,
+          },
+        });
+        return;
+      }
+
+      const result = await pool.query(
+        `UPDATE users 
+         SET document_data = $1, 
+             document_file_name = $2, 
+             document_file_size = $3, 
+             document_mime_type = $4,
+             updated_at = NOW()
+         WHERE id = $5 AND branch_id = $6
+         RETURNING id, document_file_name, document_file_size, document_mime_type`,
+        [req.file.buffer, req.file.originalname, req.file.size, req.file.mimetype, id, branchId]
+      );
+
+      if (result.rows.length === 0) {
+        res.status(404).json({ success: false, message: 'User not found' });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: 'Document replaced successfully',
+        data: result.rows[0],
+      });
+    } catch (error) {
+      logger.error('Error replacing user document:', error instanceof Error ? error.message : error);
       next(error);
     }
   }

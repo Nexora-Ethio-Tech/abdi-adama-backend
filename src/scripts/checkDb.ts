@@ -2,24 +2,13 @@ import pool from '../config/database';
 
 async function main() {
   try {
-    const tableCheck = await pool.query(`
+    const tables = await pool.query(`
       SELECT table_name 
       FROM information_schema.tables 
-      WHERE table_schema = 'public' AND table_name = 'pending_applications'
+      WHERE table_schema = 'public'
+      ORDER BY table_name
     `);
-    console.log('Table exists:', tableCheck.rows);
-
-    if (tableCheck.rows.length > 0) {
-      const columns = await pool.query(`
-        SELECT column_name, data_type 
-        FROM information_schema.columns 
-        WHERE table_name = 'pending_applications'
-      `);
-      console.log('Columns:', columns.rows);
-
-      const count = await pool.query(`SELECT COUNT(*) FROM pending_applications WHERE transcript_file_name IS NOT NULL`);
-      console.log('Applications with transcripts:', count.rows[0].count);
-    }
+    console.log('Tables:', tables.rows.map(r => r.table_name));
   } catch (err) {
     console.error('Error:', err);
   } finally {

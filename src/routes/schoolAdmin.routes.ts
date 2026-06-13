@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import schoolAdminController from '../controllers/schoolAdmin.controller';
 import { authenticate, requireBranchId } from '../middleware/auth';
 import { roleGuard } from '../middleware/roleGuard';
@@ -103,9 +103,30 @@ router.post('/applications/:id/status', roleGuard([UserRole.SCHOOL_ADMIN, UserRo
 router.use(roleGuard([UserRole.SCHOOL_ADMIN]));
 
 // User Management (existing)
-router.post('/register-user', validate(schemas.createUser), schoolAdminController.registerUser);
+router.post('/register-user',
+  uploadTranscript.single('document'),
+  handleUploadError,
+  (req: Request, res: Response, next: NextFunction) => {
+    if (typeof req.body.staffProfile === 'string') {
+      try {
+        req.body.staffProfile = JSON.parse(req.body.staffProfile);
+      } catch (e) {
+        // ignore JSON parsing errors and let validation handle it
+      }
+    }
+    next();
+  },
+  validate(schemas.createUser),
+  schoolAdminController.registerUser
+);
 router.get('/users', schoolAdminController.getBranchUsers);
 router.get('/users/:id', schoolAdminController.getUserById);
+router.get('/users/:id/document', schoolAdminController.getUserDocument);
+router.post('/users/:id/document/replace',
+  uploadTranscript.single('document'),
+  handleUploadError,
+  schoolAdminController.replaceUserDocument
+);
 router.post('/users/:id', validate(schemas.updateUser), schoolAdminController.updateUser);
 router.post('/users/:id/status', validate(schemas.updateUserStatus), schoolAdminController.updateUserStatus);
 router.post('/users/:id/reset-pin', schoolAdminController.resetUserPIN);

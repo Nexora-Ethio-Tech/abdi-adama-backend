@@ -38,6 +38,10 @@ export interface User {
   branch_name?: string;
   profile_image?: string | null;
   zk_device_id?: string | null;
+  document_file_name?: string | null;
+  document_file_size?: number | null;
+  document_mime_type?: string | null;
+  document_data?: Buffer | null;
 }
 
 export interface JWTPayload {
@@ -61,6 +65,10 @@ export interface CreateUserDTO {
   grade?: string;
   staffProfile?: Record<string, any>;
   profileImage?: string | null;
+  documentData?: Buffer | null;
+  documentFileName?: string | null;
+  documentFileSize?: number | null;
+  documentMimeType?: string | null;
 }
 
 export interface LoginDTO {

@@ -104,10 +104,21 @@ class UserService {
         }
 
         const userResult = await client.query<User>(
-          `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active, staff_profile, profile_image, zk_device_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, staff_profile, profile_image, zk_device_id, created_at`,
-          [digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true, staffProfile ? JSON.stringify(staffProfile) : null, profileImage || null, zkDeviceId]
+          `INSERT INTO users (
+            digital_id, username, name, email, password_hash, role, branch_id, status, is_active, staff_profile, profile_image, zk_device_id,
+            document_data, document_file_name, document_file_size, document_mime_type
+          )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+           RETURNING id, digital_id, username, name, email, role, branch_id, status, is_active, staff_profile, profile_image, zk_device_id, created_at,
+                     document_file_name, document_file_size, document_mime_type`,
+          [
+            digitalId, userUsername, name, email, passwordHash, role, branchId, initialStatus, true, 
+            staffProfile ? JSON.stringify(staffProfile) : null, profileImage || null, zkDeviceId,
+            userData.documentData || null,
+            userData.documentFileName || null,
+            userData.documentFileSize || null,
+            userData.documentMimeType || null
+          ]
         );
 
         const user = userResult.rows[0];

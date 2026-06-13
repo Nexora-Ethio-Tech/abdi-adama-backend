@@ -67,7 +67,7 @@ class SchoolAdminService {
     let query = `
       SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role, 
             u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.updated_at,
-             u.zk_device_id, b.name as branch_name
+             u.zk_device_id, u.document_file_name, u.document_file_size, u.document_mime_type, b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
       WHERE u.branch_id = $1
@@ -371,7 +371,7 @@ class SchoolAdminService {
     const result = await pool.query(
       `SELECT u.id, u.digital_id, u.username, u.name, u.email, u.role,
               u.branch_id, u.status, u.is_active, u.staff_profile, u.created_at, u.updated_at,
-              u.zk_device_id, b.name as branch_name
+              u.zk_device_id, u.document_file_name, u.document_file_size, u.document_mime_type, b.name as branch_name
        FROM users u
        LEFT JOIN branches b ON u.branch_id = b.id
        WHERE u.id = $1 AND u.branch_id = $2`,
@@ -1764,7 +1764,8 @@ class SchoolAdminService {
     const result = await pool.query(
       `SELECT 
         t.*,
-        u.name, u.email, u.digital_id, u.status, u.staff_profile, u.zk_device_id
+        u.name, u.email, u.digital_id, u.status, u.staff_profile, u.zk_device_id,
+        u.document_file_name, u.document_file_size, u.document_mime_type
       FROM teachers t
       JOIN users u ON t.user_id = u.id
       WHERE t.branch_id = $1
