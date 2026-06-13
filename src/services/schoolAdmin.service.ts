@@ -31,7 +31,7 @@ export function formatEthiopianTime(date: Date): string {
   if (displayHour === 0) displayHour = 12;
   return `${displayHour.toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')} ${meridiem}`;
 }
-export async function syncSchoolCalendarForEvent(client: any, event: { id: string; title: string; date: any; type: string; description?: string | null; branch_id: string | null }) {
+export async function syncSchoolCalendarForEvent(client: any, event: { id: string; title: string; date: any; end_date?: any; type: string; description?: string | null; branch_id: string | null }) {
   const rawType = event.type.toLowerCase().trim();
   let dayType = 'event_day';
   if (rawType.includes('holiday')) dayType = 'holiday';
@@ -44,11 +44,13 @@ export async function syncSchoolCalendarForEvent(client: any, event: { id: strin
   // Delete existing calendar entry if it exists
   await client.query('DELETE FROM school_calendar WHERE event_id = $1', [event.id]);
 
+  const endDate = event.end_date || event.date;
+
   // Insert new calendar entry
   await client.query(
     `INSERT INTO school_calendar (title, description, start_date, end_date, day_type, branch_id, event_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [event.title, event.description || null, event.date, event.date, dayType, event.branch_id, event.id]
+    [event.title, event.description || null, event.date, endDate, dayType, event.branch_id, event.id]
   );
 }
 
@@ -2039,6 +2041,7 @@ class SchoolAdminService {
   async createEvent(data: {
     title: string;
     date: string;
+    endDate?: string;
     type: string;
     description?: string;
     branchId: string;
@@ -2047,10 +2050,10 @@ class SchoolAdminService {
     try {
       await client.query('BEGIN');
       const result = await client.query(
-        `INSERT INTO events (title, date, type, description, branch_id)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO events (title, date, end_date, type, description, branch_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [data.title, data.date, data.type, data.description || null, data.branchId]
+        [data.title, data.date, data.endDate || data.date, data.type, data.description || null, data.branchId]
       );
       const newEvent = result.rows[0];
       await syncSchoolCalendarForEvent(client, newEvent);
@@ -2068,6 +2071,7 @@ class SchoolAdminService {
   async updateEvent(eventId: string, branchId: string, data: {
     title?: string;
     date?: string;
+    endDate?: string;
     type?: string;
     description?: string;
   }) {
@@ -2098,6 +2102,12 @@ class SchoolAdminService {
         paramCount++;
         fields.push(`date = $${paramCount}`);
         values.push(data.date);
+      }
+
+      if (data.endDate !== undefined) {
+        paramCount++;
+        fields.push(`end_date = $${paramCount}`);
+        values.push(data.endDate);
       }
 
       if (data.type) {

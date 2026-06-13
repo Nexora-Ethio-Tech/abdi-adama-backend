@@ -59,6 +59,7 @@ const financialPolicySchema = Joi.object({
 const createEventSchema = Joi.object({
   title: Joi.string().min(3).max(200).required(),
   date: Joi.date().iso().required(),
+  endDate: Joi.date().iso().allow('', null),
   type: Joi.string().min(2).max(50).required(),
   description: Joi.string().max(1000).allow('', null),
   branchId: Joi.string().uuid().allow('', null)
@@ -67,6 +68,7 @@ const createEventSchema = Joi.object({
 const updateEventSchema = Joi.object({
   title: Joi.string().min(3).max(200),
   date: Joi.date().iso(),
+  endDate: Joi.date().iso().allow('', null),
   type: Joi.string().min(2).max(50),
   description: Joi.string().max(1000).allow('', null),
   branchId: Joi.string().uuid().allow('', null)

@@ -1201,15 +1201,15 @@ class SuperAdminService {
     return result.rows;
   }
 
-  async createEvent(data: { title: string; date: string; type: string; description?: string; branchId: string | null }) {
+  async createEvent(data: { title: string; date: string; endDate?: string; type: string; description?: string; branchId: string | null }) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const result = await client.query(
-        `INSERT INTO events (title, date, type, description, branch_id)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO events (title, date, end_date, type, description, branch_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [data.title, data.date, data.type, data.description || null, data.branchId]
+        [data.title, data.date, data.endDate || data.date, data.type, data.description || null, data.branchId]
       );
       const newEvent = result.rows[0];
       await syncSchoolCalendarForEvent(client, newEvent);
@@ -1223,7 +1223,7 @@ class SuperAdminService {
     }
   }
 
-  async updateEvent(id: string, data: { title?: string; date?: string; type?: string; description?: string; branchId?: string | null }) {
+  async updateEvent(id: string, data: { title?: string; date?: string; endDate?: string; type?: string; description?: string; branchId?: string | null }) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1232,6 +1232,7 @@ class SuperAdminService {
       let p = 0;
       if (data.title !== undefined) { p++; fields.push(`title = $${p}`); values.push(data.title); }
       if (data.date !== undefined) { p++; fields.push(`date = $${p}`); values.push(data.date); }
+      if (data.endDate !== undefined) { p++; fields.push(`end_date = $${p}`); values.push(data.endDate); }
       if (data.type !== undefined) { p++; fields.push(`type = $${p}`); values.push(data.type); }
       if (data.description !== undefined) { p++; fields.push(`description = $${p}`); values.push(data.description); }
       if (data.branchId !== undefined) { p++; fields.push(`branch_id = $${p}`); values.push(data.branchId); }

@@ -1035,11 +1035,12 @@ class SchoolAdminController {
   async createEvent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const { title, date, type, description } = req.body;
+      const { title, date, endDate, type, description } = req.body;
 
       const event = await schoolAdminService.createEvent({
         title,
         date,
+        endDate,
         type,
         description,
         branchId: branchId!
