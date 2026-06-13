@@ -232,6 +232,89 @@ class SchoolAdminService {
     return result.rows[0];
   }
 
+  /**
+   * Bulk upsert staff attendance records for a given date (Ethiopian calendar).
+   * Used by the School Admin's "Save Attendance Records" button so that daily
+   * attendance history is permanently stored for auditing.
+   */
+  async bulkRecordStaffAttendance(data: {
+    adminId: string;
+    date: string;
+    records: Array<{
+      userId: string;
+      status?: string;
+      sign_in_time?: string;
+      lunch_out_time?: string;
+      lunch_in_time?: string;
+      sign_out_time?: string;
+    }>;
+  }) {
+    const { adminId, date, records } = data;
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const saved = [];
+      for (const rec of records) {
+        // Compute is_late_arrival from sign_in_time if present
+        let isLateArrival = false;
+        if (rec.sign_in_time) {
+          const parts = rec.sign_in_time.split(' ');
+          if (parts.length === 2) {
+            const [timePart, meridiem] = parts;
+            const [hStr, mStr] = timePart.split(':');
+            let h = parseInt(hStr, 10);
+            const m = parseInt(mStr, 10);
+            if (meridiem === 'PM' && h !== 12) h += 12;
+            if (meridiem === 'AM' && h === 12) h = 0;
+            isLateArrival = h * 60 + m > 2 * 60 + 20;
+          }
+        }
+
+        // Determine effective status
+        let effectiveStatus = rec.status || 'absent';
+        // Normalise "present-(late)" -> stored as "present" with is_late_arrival=true
+        if (effectiveStatus === 'present-(late)') effectiveStatus = 'present';
+
+        const result = await client.query(
+          `INSERT INTO employee_attendance
+             (user_id, date, status, recorded_by, sign_in_time, lunch_out_time, lunch_in_time, sign_out_time, is_late_arrival, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+           ON CONFLICT (user_id, date) DO UPDATE SET
+             status          = EXCLUDED.status,
+             recorded_by     = EXCLUDED.recorded_by,
+             sign_in_time    = COALESCE(EXCLUDED.sign_in_time,   employee_attendance.sign_in_time),
+             lunch_out_time  = COALESCE(EXCLUDED.lunch_out_time, employee_attendance.lunch_out_time),
+             lunch_in_time   = COALESCE(EXCLUDED.lunch_in_time,  employee_attendance.lunch_in_time),
+             sign_out_time   = COALESCE(EXCLUDED.sign_out_time,  employee_attendance.sign_out_time),
+             is_late_arrival = EXCLUDED.is_late_arrival
+           RETURNING *`,
+          [
+            rec.userId,
+            date,
+            effectiveStatus,
+            `admin-bulk:${adminId}`,
+            rec.sign_in_time || null,
+            rec.lunch_out_time || null,
+            rec.lunch_in_time || null,
+            rec.sign_out_time || null,
+            isLateArrival,
+          ]
+        );
+        saved.push(result.rows[0]);
+      }
+
+      await client.query('COMMIT');
+      return { count: saved.length, records: saved };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
 
   async getUserById(userId: string, branchId: string) {
     const result = await pool.query(

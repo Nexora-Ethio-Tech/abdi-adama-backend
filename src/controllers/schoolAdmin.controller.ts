@@ -1534,6 +1534,29 @@ class SchoolAdminController {
       next(error);
     }
   }
+
+  // Bulk record staff attendance for a full day (School Admin "Save Attendance Records" action)
+  async bulkRecordStaffAttendance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const adminId = req.user!.id;
+      const { date, records } = req.body;
+
+      if (!date || !Array.isArray(records) || records.length === 0) {
+        res.status(400).json({ success: false, message: 'date and records[] are required.' });
+        return;
+      }
+
+      const result = await schoolAdminService.bulkRecordStaffAttendance({ adminId, date, records });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `Saved ${result.count} attendance records for ${date}.`,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new SchoolAdminController();

@@ -30,7 +30,8 @@ const recordPaymentSchema = Joi.object({
 const assignTransportSchema = Joi.object({
   studentId: Joi.string().uuid().required(),
   driverId: Joi.string().uuid().required(),
-  transportFee: Joi.number().positive().required()
+  transportFee: Joi.number().positive().required(),
+  busStartDay: Joi.number().integer().min(1).max(30).optional() // Optional: day of month when bus use starts
 });
 
 const stopTransportSchema = Joi.object({

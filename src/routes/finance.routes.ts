@@ -41,28 +41,37 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
     );
     const monthlyRevenue = Number(monthlyRevRes.rows[0]?.total || 0);
 
-    // 3. Pending fees: sum of outstanding fees for all students in the current Ethiopian month (YYYY-MM format)
+    // 3. Pending fees: calculate outstanding amount for each active non-scholarship student
+    // Try to include fee_deductions if table exists, otherwise use basic calculation
     const currentMonthStr = `${ethToday.year}-${String(ethToday.month).padStart(2, '0')}`;
-    const pendingFeesRes = await pool.query(
-      `SELECT COALESCE(SUM(
-         GREATEST(0, COALESCE(s.monthly_fee, 0) - COALESCE(
-           (SELECT approved_amount FROM fee_deductions WHERE student_id = s.id AND month = $1 AND status = 'approved'),
-           0
-         )) + 
-         COALESCE(s.bus_fee, 0) + 
-         COALESCE(s.penalty_fee, 0) - 
-         COALESCE((
-           SELECT SUM(pi.amount)
-           FROM payments p
-           JOIN payment_items pi ON pi.payment_id = p.id
-           WHERE p.student_id = s.id
-             AND p.month = $1
-         ), 0)
-        ), 0) AS total
-       FROM students s
-       WHERE s.is_scholarship = false AND s.status = 'active'`,
-      [currentMonthStr]
-    );
+    let pendingFeesRes;
+    try {
+      // Try advanced query with fee_deductions
+      pendingFeesRes = await pool.query(
+        `SELECT COALESCE(SUM(
+           GREATEST(0, COALESCE(s.monthly_fee, 0) - COALESCE(
+             (SELECT approved_amount FROM fee_deductions WHERE student_id = s.id AND month = $1 AND status = 'approved'),
+             0
+           )) + 
+           COALESCE(s.bus_fee, 0) + 
+           COALESCE(s.penalty_fee, 0)
+          ), 0) AS total
+         FROM students s
+         WHERE s.is_scholarship = false AND s.status = 'active'`,
+        [currentMonthStr]
+      );
+    } catch (err) {
+      // Fallback: basic calculation without fee_deductions
+      pendingFeesRes = await pool.query(
+        `SELECT COALESCE(SUM(
+           COALESCE(s.monthly_fee, 0) + 
+           COALESCE(s.bus_fee, 0) + 
+           COALESCE(s.penalty_fee, 0)
+          ), 0) AS total
+         FROM students s
+         WHERE s.is_scholarship = false AND s.status = 'active'`
+      );
+    }
     const pendingFees = Math.max(0, Number(pendingFeesRes.rows[0]?.total || 0));
 
     // 4. Monthly fees: sum of monthly tuition fees for all active, non-scholarship students
@@ -126,8 +135,25 @@ router.post('/transactions', async (req: AuthRequest, res, next) => {
   try {
     const { student_name, amount, type, date, verified_by, branch_id, student_id } = req.body;
     
-    // Resolve ethiopic month and year from the date
-    const txDate = date ? new Date(date) : new Date();
+    // Use the date as-is if already a plain YYYY-MM-DD string (preserves local date from client).
+    // For ISO datetime strings, extract just the date portion in local time to avoid UTC shift.
+    let txDateStr: string;
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      // Already a plain local date — use directly
+      txDateStr = date;
+    } else if (date) {
+      // ISO or other format — extract local date via parsing
+      const parsed = new Date(date);
+      txDateStr = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+    } else {
+      // No date provided — use today's local server date
+      const now = new Date();
+      txDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    }
+
+    // Resolve ethiopic month and year from the local date
+    const [txYear, txMonth, txDay] = txDateStr.split('-').map(Number);
+    const txDate = new Date(txYear, txMonth - 1, txDay);
     const ethParts = gregorianToEthiopian(txDate);
     const ethiopicMonth = ETHIOPIAN_MONTH_NAMES[ethParts.month - 1] || 'Meskerem';
     const ethiopicYear = ethParts.year;
@@ -143,7 +169,7 @@ router.post('/transactions', async (req: AuthRequest, res, next) => {
         student_name,
         amount,
         type,
-        txDate.toISOString().split('T')[0],
+        txDateStr,
         verified_by || req.user!.name,
         branch_id || req.user!.branch_id,
         ethiopicMonth,

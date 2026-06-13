@@ -128,6 +128,7 @@ router.patch('/classes/:id/assign-teacher', validate(assignTeacherSchema), schoo
 // Course Management
 router.post('/courses', validate(createCourseSchema), schoolAdminController.createCourse);
 router.get('/courses', schoolAdminController.getCourses);
+router.get('/courses-with-grade', schoolAdminController.getCoursesWithGrade);
 
 // Schedule Management
 router.post('/schedules', validate(createScheduleSchema), schoolAdminController.createSchedule);
@@ -159,6 +160,7 @@ router.get('/dashboard/at-risk-students', schoolAdminController.getAtRiskStudent
 router.get('/attendance-summary', schoolAdminController.getAttendanceSummary);
 router.get('/students/:studentId/attendance-history', schoolAdminController.getStudentAttendanceHistory);
 router.get('/staff-attendance', schoolAdminController.getStaffAttendance);
+router.post('/staff-attendance/bulk', schoolAdminController.bulkRecordStaffAttendance);
 router.post('/staff-attendance', schoolAdminController.recordStaffAttendance);
 
 // Events Calendar

@@ -490,7 +490,7 @@ export const getDriverUpdates = async (req: AuthRequest, res: Response) => {
     }
 
     // Get driver updates for students assigned to routes that parent's children use.
-    // logistics_notices stores the posting user in sender_id, not driver_id.
+    // logistics_notices stores the posting user in driver_id.
     const result = await pool.query(
       `SELECT DISTINCT
          ln.id,
@@ -502,8 +502,8 @@ export const getDriverUpdates = async (req: AuthRequest, res: Response) => {
          u.name AS driver_contact_name,
          u.email AS driver_email
        FROM logistics_notices ln
-       LEFT JOIN users u ON ln.sender_id = u.id
-       WHERE ln.sender_id IN (
+       LEFT JOIN users u ON ln.driver_id = u.id
+       WHERE ln.driver_id IN (
          SELECT DISTINCT r.driver_id
          FROM routes r
          JOIN student_routes sr ON r.id = sr.route_id
