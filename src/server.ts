@@ -39,7 +39,10 @@ async function ensureSchemaExtensions(): Promise<void> {
     '23rd_library_loans_enhancement.sql',
     '24th_fix_weekly_plans_deletion.sql',
     '25th_create_zk_device_id_seq.sql',
-    '26th_create_fee_deductions_table.sql'
+    '26th_create_fee_deductions_table.sql',
+    '27th_teacher_ratings_constraints.sql',
+    '28th_add_online_exams_password.sql',
+    '29th_add_bus_start_date_to_students.sql'
   ];
 
   for (const fileName of migrationFiles) {
@@ -82,18 +85,23 @@ async function bootstrap(): Promise<void> {
           smtp_pass: process.env.SMTP_PASS || 'gdgg eify uzec fhox',
         };
 
+        const userResult = await pool.query<{ id: string }>(
+          'SELECT id FROM public.users ORDER BY created_at ASC LIMIT 1'
+        );
+        const systemUserId = userResult.rows[0]?.id ?? null;
+
         for (const [key, value] of Object.entries(defaults)) {
           // Check if it exists or needs to be inserted/updated.
           // Also clean up any legacy placeholder password 'SuperAdmin@2026' if present.
           await pool.query(
             `INSERT INTO public.email_config (key, value, updated_by, updated_at)
-               VALUES ($1, $2, 'system', NOW())
+               VALUES ($1, $2, $3, NOW())
                ON CONFLICT (key) DO UPDATE
                SET value = EXCLUDED.value
                WHERE email_config.value IS NULL 
                   OR email_config.value = '' 
                   OR (email_config.key = 'smtp_pass' AND email_config.value = 'SuperAdmin@2026')`,
-            [key, value]
+            [key, value, systemUserId]
           );
         }
         logger.info('Email config defaults ensured');

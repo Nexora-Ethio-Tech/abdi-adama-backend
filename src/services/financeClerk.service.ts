@@ -1149,12 +1149,6 @@ class FinanceClerkService {
     try {
       await client.query('BEGIN');
 
-      // Ensure bus_start_date column exists
-      await client.query(
-        `ALTER TABLE students
-         ADD COLUMN IF NOT EXISTS bus_start_date DATE DEFAULT NULL`
-      );
-
       const studentResult = await client.query(
         `SELECT s.id, s.grade, u.name
          FROM students s
@@ -1284,12 +1278,6 @@ class FinanceClerkService {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-
-      // Ensure bus_start_date column exists
-      await client.query(
-        `ALTER TABLE students
-         ADD COLUMN IF NOT EXISTS bus_start_date DATE DEFAULT NULL`
-      );
 
       const studentResult = await client.query(
         `SELECT s.id, s.bus_fee, s.bus_start_date, u.name
