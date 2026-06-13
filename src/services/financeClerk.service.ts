@@ -951,6 +951,7 @@ class FinanceClerkService {
         s.grade,
         s.bus_fee,
         s.is_bus_user,
+        s.bus_start_date,
         u.name,
         u.email,
         u.digital_id,
@@ -1142,10 +1143,17 @@ class FinanceClerkService {
     driverId: string;
     transportFee: number; // Ignored; fetched from policy
     verifiedBy: string;
+    busStartDay?: number; // Optional: day of month when student starts using bus (1-30). Defaults to today's day.
   }) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      // Ensure bus_start_date column exists
+      await client.query(
+        `ALTER TABLE students
+         ADD COLUMN IF NOT EXISTS bus_start_date DATE DEFAULT NULL`
+      );
 
       const studentResult = await client.query(
         `SELECT s.id, s.grade, u.name
@@ -1225,13 +1233,25 @@ class FinanceClerkService {
         [data.studentId, routeResult.rows[0].id]
       );
 
+      // Calculate bus_start_date based on provided day or today's Gregorian date
+      let busStartDate = new Date().toISOString().slice(0, 10); // Default: today's Gregorian date
+      if (data.busStartDay !== undefined && data.busStartDay >= 1 && data.busStartDay <= 30) {
+        // If a specific day is provided, calculate the Gregorian date for that day in current month
+        const today = new Date();
+        const currentMonth = today.getMonth();
+        const currentYear = today.getFullYear();
+        const startDateObj = new Date(currentYear, currentMonth, data.busStartDay);
+        busStartDate = startDateObj.toISOString().slice(0, 10);
+      }
+
       await client.query(
         `UPDATE students
          SET bus_fee = $1,
              is_bus_user = TRUE,
+             bus_start_date = $2,
              updated_at = NOW()
-         WHERE id = $2`,
-        [policyFee, data.studentId]
+         WHERE id = $3`,
+        [policyFee, busStartDate, data.studentId]
       );
 
       await this.syncStudentCollectionsAcrossAllMonths(client, data.studentId, data.branchId);
@@ -1265,8 +1285,14 @@ class FinanceClerkService {
     try {
       await client.query('BEGIN');
 
+      // Ensure bus_start_date column exists
+      await client.query(
+        `ALTER TABLE students
+         ADD COLUMN IF NOT EXISTS bus_start_date DATE DEFAULT NULL`
+      );
+
       const studentResult = await client.query(
-        `SELECT s.id, s.bus_fee, u.name
+        `SELECT s.id, s.bus_fee, s.bus_start_date, u.name
          FROM students s
          JOIN users u ON s.user_id = u.id
          WHERE s.id = $1 AND s.branch_id = $2
@@ -1284,8 +1310,20 @@ class FinanceClerkService {
         throw new Error('This student does not have an active transport fee');
       }
 
+      // Calculate actual days used based on start_date and stop_date using Ethiopian calendar
+      let actualDaysUsed = Number(data.daysUsed);
+      if (student.bus_start_date) {
+        const startEth = gregorianToEthiopian(new Date(student.bus_start_date));
+        const stopEth = gregorianToEthiopian(new Date());
+        
+        if (startEth.year === stopEth.year && startEth.month === stopEth.month) {
+          actualDaysUsed = stopEth.day - startEth.day + 1;
+        } else {
+          actualDaysUsed = stopEth.day;
+        }
+      }
 
-      const clampedDaysUsed = Math.min(30, Math.max(0, Number(data.daysUsed)));
+      const clampedDaysUsed = Math.min(30, Math.max(0, actualDaysUsed));
       // Charge the student for the days used this month (prorated)
       const amountDue = Number(((clampedDaysUsed * transportFee) / 30).toFixed(2));
 
@@ -1294,6 +1332,7 @@ class FinanceClerkService {
         `UPDATE students
          SET bus_fee = 0,
              is_bus_user = FALSE,
+             bus_start_date = NULL,
              updated_at = NOW()
          WHERE id = $1`,
         [data.studentId]
