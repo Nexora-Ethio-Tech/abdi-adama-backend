@@ -37,7 +37,6 @@ async function ensureSchemaExtensions(): Promise<void> {
     '21st_add_category_to_notices.sql',
     '22nd_add_overall_rating_score_to_teachers.sql',
     '23rd_library_loans_enhancement.sql',
-    '24th_create_public_posts_table.sql',
     '24th_fix_weekly_plans_deletion.sql',
     '25th_create_zk_device_id_seq.sql',
     '26th_create_fee_deductions_table.sql',
@@ -48,7 +47,8 @@ async function ensureSchemaExtensions(): Promise<void> {
     '31st_employee_attendance_zkteco_columns.sql',
     '32nd_create_school_calendar_table.sql',
     '33rd_add_event_id_to_school_calendar.sql',
-    '34th_add_end_date_to_events.sql'
+    '34th_add_end_date_to_events.sql',
+    '35th_create_public_posts_table.sql'
   ];
 
   for (const fileName of migrationFiles) {
