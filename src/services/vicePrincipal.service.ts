@@ -363,7 +363,7 @@ class VicePrincipalService {
 
   // Attendance Summary
   async getAttendanceSummary(branchId: string, date?: string, gradeLevel?: string) {
-    const targetDate = date || new Date().toLocaleDateString('en-CA');
+    const targetDate = date || getEthiopianNow().dateStr;
 
     let query = `
       SELECT 
@@ -451,7 +451,7 @@ class VicePrincipalService {
     );
 
     // Today's attendance rate
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = getEthiopianNow().dateStr;
     const attendanceResult = await pool.query(
       `SELECT 
         COUNT(DISTINCT s.id) as total_students,
@@ -761,8 +761,7 @@ class VicePrincipalService {
 
   // Get today's absent students with parent contact info
   async getTodayAbsentStudents(branchId: string, date?: string) {
-    // Use passed date or fall back to CURRENT_DATE (respects DB server timezone, avoids UTC drift)
-    const dateParam = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : getEthiopianNow().dateStr;
 
     const result = await pool.query(
       `SELECT 
@@ -774,22 +773,20 @@ class VicePrincipalService {
         COALESCE(s.parent_phone, pa.parent_phone) as parent_phone,
         COALESCE(s.parent_name,  pa.parent_name)  as parent_name,
         t.id as teacher_id,
-        tu.name as room_teacher
+        tu.name as room_teacher,
+        sa.status
       FROM students s
       JOIN users u ON s.user_id = u.id
+      JOIN student_attendance sa ON s.id = sa.student_id AND sa.date = $2
       LEFT JOIN classes c ON s.section_id = c.id
       -- Fall back to the admission application for parent contact info when not set on the student record
       LEFT JOIN pending_applications pa ON pa.student_user_id = s.user_id
       LEFT JOIN teachers t ON t.branch_id = s.branch_id AND (t.assigned_room_class = c.name OR t.assigned_room_class = s.grade)
       LEFT JOIN users tu ON t.user_id = tu.id
       WHERE s.branch_id = $1 
-        AND s.id IN (
-          SELECT DISTINCT student_id 
-          FROM student_attendance sa
-          WHERE sa.date = COALESCE($2::date, CURRENT_DATE) AND sa.status = 'absent'
-        )
+        AND sa.status IN ('absent', 'excused')
       ORDER BY s.grade, COALESCE(c.name, s.grade), u.name`,
-      [branchId, dateParam]
+      [branchId, targetDate]
     );
 
     return result.rows.map(row => ({
@@ -800,7 +797,8 @@ class VicePrincipalService {
       parentName: row.parent_name || 'Not Assigned',
       parentPhone: row.parent_phone || 'N/A',
       studentId: row.user_id,
-      roomTeacher: row.room_teacher || 'Not Assigned'
+      roomTeacher: row.room_teacher || 'Not Assigned',
+      status: row.status
     }));
   }
 

@@ -1999,6 +1999,12 @@ class SchoolAdminService {
 
   // Get At-Risk Students (High/Medium risk levels)
   async getAtRiskStudents(branchId: string) {
+    const now = new Date();
+    const eatMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + (3 * 60 * 60 * 1000);
+    const eat30DaysAgo = new Date(eatMs - 30 * 24 * 60 * 60 * 1000);
+    const eth30DaysAgoParts = gregorianToEthiopian(eat30DaysAgo);
+    const eth30DaysAgoStr = `${eth30DaysAgoParts.year}-${String(eth30DaysAgoParts.month).padStart(2, '0')}-${String(eth30DaysAgoParts.day).padStart(2, '0')}`;
+
     const result = await pool.query(
       `SELECT 
         s.id as student_id,
@@ -2020,7 +2026,7 @@ class SchoolAdminService {
            FROM student_attendance sa 
            WHERE sa.student_id = s.id 
              AND sa.status = 'absent'
-             AND sa.date >= CURRENT_DATE - INTERVAL '30 days'),
+             AND sa.date >= $2),
           0
         ) as absence_count,
         -- Average grade across all courses
@@ -2045,7 +2051,7 @@ class SchoolAdminService {
           ELSE 3 
         END,
         u.name`,
-      [branchId]
+      [branchId, eth30DaysAgoStr]
     );
 
     // Calculate summary counts
@@ -2571,7 +2577,7 @@ class SchoolAdminService {
   // Get attendance summary by grade and section for the branch
   async getAttendanceSummary(branchId: string, date?: string, gradeLevel?: string) {
     // Use Ethiopian date directly (YYYY-MM-DD format in Ethiopian calendar)
-    const targetDate = date || new Date().toLocaleDateString('en-CA');
+    const targetDate = date || getEthiopianNow().dateStr;
 
     let query = `
       SELECT 
