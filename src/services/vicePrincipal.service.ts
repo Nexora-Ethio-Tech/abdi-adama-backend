@@ -768,32 +768,42 @@ class VicePrincipalService {
         s.id,
         s.user_id,
         u.name as student_name,
-        s.grade,
-        COALESCE(c.name, s.grade) as section_name,
-        COALESCE(s.parent_phone, pa.parent_phone) as parent_phone,
-        COALESCE(s.parent_name,  pa.parent_name)  as parent_name,
-        t.id as teacher_id,
-        tu.name as room_teacher,
+        COALESCE(c.name, CASE WHEN s.grade ~ '^[0-9]+$' THEN 'Grade ' || s.grade ELSE s.grade END) as grade_name,
+        COALESCE(c.section, 'General') as section_name,
+        COALESCE(s.parent_phone, (SELECT pa.parent_phone FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_phone,
+        COALESCE(s.parent_name, (SELECT pa.parent_name FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_name,
+        (
+          SELECT tu.name
+          FROM teachers t
+          JOIN users tu ON t.user_id = tu.id
+          WHERE t.branch_id = s.branch_id 
+            AND t.is_room_teacher = true 
+            AND (
+              t.assigned_room_class = (c.name || c.section) 
+              OR t.assigned_room_section_id = c.id
+              OR t.assigned_room_class = c.name
+            )
+          LIMIT 1
+        ) as room_teacher,
         sa.status
       FROM students s
       JOIN users u ON s.user_id = u.id
       JOIN student_attendance sa ON s.id = sa.student_id AND sa.date = $2
       LEFT JOIN classes c ON s.section_id = c.id
-      -- Fall back to the admission application for parent contact info when not set on the student record
-      LEFT JOIN pending_applications pa ON pa.student_user_id = s.user_id
-      LEFT JOIN teachers t ON t.branch_id = s.branch_id AND (t.assigned_room_class = c.name OR t.assigned_room_class = s.grade)
-      LEFT JOIN users tu ON t.user_id = tu.id
       WHERE s.branch_id = $1 
         AND sa.status IN ('absent', 'excused')
-      ORDER BY s.grade, COALESCE(c.name, s.grade), u.name`,
+      ORDER BY 
+        COALESCE(c.name, s.grade), 
+        COALESCE(c.section, ''), 
+        u.name`,
       [branchId, targetDate]
     );
 
     return result.rows.map(row => ({
       id: row.id,
       name: row.student_name,
-      grade: row.grade,
-      section: row.section_name || 'General',
+      grade: row.grade_name,
+      section: row.section_name,
       parentName: row.parent_name || 'Not Assigned',
       parentPhone: row.parent_phone || 'N/A',
       studentId: row.user_id,
