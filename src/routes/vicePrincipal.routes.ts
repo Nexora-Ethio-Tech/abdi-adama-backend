@@ -76,4 +76,11 @@ router.get('/staff-absent-count', vicePrincipalController.getStaffAbsentCount);
 router.get('/attendance/absences-today', vicePrincipalController.getTodayAbsentStudents);
 router.post('/attendance/send-absence-notification', validate(sendAbsenceNotificationSchema), vicePrincipalController.sendAbsenceNotification);
 
+// Teacher Attendance Oversight & Proxy Management
+router.get('/teachers/attendance-oversight', vicePrincipalController.getTeacherAttendanceOversight);
+router.post('/teachers/attendance', vicePrincipalController.recordTeacherAttendance);
+router.get('/teachers/proxy-candidates', vicePrincipalController.getProxyCandidates);
+router.post('/teachers/proxy-assignments', vicePrincipalController.saveProxyAssignment);
+router.delete('/teachers/proxy-assignments/:id', vicePrincipalController.deleteProxyAssignment);
+
 export default router;

@@ -97,6 +97,12 @@ router.post('/applications/:id/transcript/replace',
 router.post('/applications/:id/status', roleGuard([UserRole.SCHOOL_ADMIN, UserRole.FINANCE_CLERK]), schoolAdminController.updateApplicationStatus);
 
 // ============================================================
+// SHARED READ-ONLY CALENDAR/EVENTS ROUTES (AUTHENTICATED)
+// ============================================================
+router.get('/dashboard/upcoming-events', schoolAdminController.getUpcomingEvents);
+router.get('/events', schoolAdminController.getEvents);
+
+// ============================================================
 // SCHOOL ADMIN ONLY ROUTES
 // ============================================================
 
@@ -199,8 +205,6 @@ router.post('/staff-attendance/bulk', schoolAdminController.bulkRecordStaffAtten
 router.post('/staff-attendance', schoolAdminController.recordStaffAttendance);
 
 // Events Calendar
-router.get('/dashboard/upcoming-events', schoolAdminController.getUpcomingEvents);
-router.get('/events', schoolAdminController.getEvents);
 router.post('/events', validate(createEventSchema), schoolAdminController.createEvent);
 router.post('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
 router.delete('/events/:id', schoolAdminController.deleteEvent);

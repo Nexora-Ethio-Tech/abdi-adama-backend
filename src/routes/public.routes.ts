@@ -12,4 +12,14 @@ router.get('/system-settings', async (_req: Request, res: Response, next: NextFu
   }
 });
 
+router.get('/events', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { branchId } = req.query;
+    const events = await superAdminService.getEvents(branchId ? String(branchId) : null);
+    res.json({ success: true, data: events });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

@@ -487,11 +487,14 @@ class VicePrincipalService {
   }
 
   // Get student transcript
-  async getStudentTranscript(studentId: string, branchId: string) {
+  async getStudentTranscript(studentId: string, branchId: string, academicYear?: string, semester?: number) {
+    const activeYear = academicYear || this.getActiveAcademicYear();
+    const activeSem = semester !== undefined ? semester : this.getActiveSemester();
+
     // Resolve the student using either the internal UUID or the visible school identifier.
     const studentResult = await pool.query(
       `SELECT 
-        s.id, s.grade, s.status,
+        s.id, s.grade, s.status, s.section_id,
         u.name, u.email, u.digital_id
       FROM students s
       JOIN users u ON s.user_id = u.id
@@ -511,7 +514,7 @@ class VicePrincipalService {
 
     const student = studentResult.rows[0];
 
-    // Get all grades grouped by course
+    // Get grades grouped by course for the specified academic year and semester
     const gradesResult = await pool.query(
       `SELECT 
         g.id, g.type, g.score, g.total, g.weight, g.created_at,
@@ -523,8 +526,11 @@ class VicePrincipalService {
       LEFT JOIN teachers t ON c.teacher_id = t.id
       LEFT JOIN users u ON t.user_id = u.id
       WHERE g.student_id = $1
+        AND g.academic_year = $2
+        AND g.semester = $3
+        AND COALESCE(g.is_finalized, false) = true
       ORDER BY c.name, g.created_at DESC`,
-      [student.id]
+      [student.id, activeYear, activeSem]
     );
 
     // Group grades by course and calculate averages
@@ -590,33 +596,107 @@ class VicePrincipalService {
         ? parseFloat((courses.reduce((sum, c) => sum + c.average, 0) / courses.length).toFixed(2))
         : 0;
 
-    // Calculate student's rank in their grade
+    // Calculate student's rank in their section for the specified academic year and semester
     let studentRank = 0;
-    if (student.grade) {
-      const rankResult = await pool.query(
-        `SELECT COUNT(DISTINCT s.id) + 1 as rank
-         FROM students s
-         WHERE s.branch_id = $1
-           AND s.grade = $2
-           AND s.status = 'active'
-         LIMIT 1`,
-        [branchId, student.grade]
-      );
-      studentRank = rankResult.rows.length > 0 ? rankResult.rows[0].rank : 0;
+    let sectionId = null;
+
+    // 1. Try to find the section the student was in during that academic year
+    const sectionCheck = await pool.query(
+      `SELECT DISTINCT c.class_id
+       FROM grades g
+       JOIN courses c ON g.course_id = c.id
+       WHERE g.student_id = $1 AND g.academic_year = $2
+       LIMIT 1`,
+      [student.id, activeYear]
+    );
+
+    if (sectionCheck.rows.length > 0) {
+      sectionId = sectionCheck.rows[0].class_id;
+    } else {
+      sectionId = student.section_id;
     }
 
-    // Get current academic year and semester
-    const currentECYear = getCurrentECYear();
-    const currentSemester = getCurrentSemester();
-    const academicYearDisplay = `${currentECYear} E.C.`;
-    const semesterDisplay = formatSemester(currentSemester);
+    let className = student.grade;
+    let sectionName = '';
+
+    if (sectionId) {
+      const classCheck = await pool.query(
+        `SELECT name, section, grade FROM classes WHERE id = $1`,
+        [sectionId]
+      );
+      if (classCheck.rows.length > 0) {
+        const cls = classCheck.rows[0];
+        className = cls.grade || cls.name || student.grade;
+        sectionName = cls.section ? `Section ${cls.section}` : '';
+      }
+
+      // Get all students who were in this section in this year
+      const sectionStudents = await pool.query(
+        `SELECT DISTINCT s.id
+         FROM students s
+         LEFT JOIN classes cl ON s.section_id = cl.id
+         WHERE s.branch_id = $2
+           AND (
+             s.section_id = $1
+             OR
+             s.id IN (
+               SELECT DISTINCT g.student_id 
+               FROM grades g
+               JOIN courses co ON g.course_id = co.id
+               WHERE co.class_id = $1 AND g.academic_year = $3
+             )
+           )`,
+        [sectionId, branchId, activeYear]
+      );
+
+      const studentAverages: Array<{ studentId: string; average: number }> = [];
+
+      for (const sRow of sectionStudents.rows) {
+        const courseAgg = await pool.query(
+          `SELECT c.id as course_id,
+                  COALESCE(SUM(NULLIF(COALESCE(g.score::text, ''), '')::numeric), 0) AS score,
+                  COALESCE(SUM(NULLIF(COALESCE(g.total::text, ''), '')::numeric), 0) AS total
+           FROM grades g
+           JOIN courses c ON g.course_id = c.id
+           WHERE g.student_id = $1
+             AND COALESCE(g.is_finalized, false) = true
+             AND c.class_id = $2
+             AND g.academic_year = $3
+             AND g.semester = $4
+           GROUP BY c.id`,
+          [sRow.id, sectionId, activeYear, activeSem]
+        );
+
+        let sumPercent = 0;
+        let subjectCount = 0;
+
+        for (const r of courseAgg.rows) {
+          const sVal = parseFloat(r.score) || 0;
+          const tVal = parseFloat(r.total) || 0;
+          const pct = tVal > 0 ? (sVal / tVal) * 100 : 0;
+          sumPercent += pct;
+          subjectCount++;
+        }
+
+        const averagePct = subjectCount > 0 ? sumPercent / subjectCount : 0;
+        studentAverages.push({ studentId: sRow.id, average: averagePct });
+      }
+
+      studentAverages.sort((a, b) => b.average - a.average);
+
+      const index = studentAverages.findIndex(sa => sa.studentId === student.id);
+      if (index !== -1) {
+        studentRank = index + 1;
+      }
+    }
 
     return {
       studentId: student.id,
       studentName: student.name,
-      className: student.grade,
-      academicYear: academicYearDisplay,
-      semester: semesterDisplay,
+      className: className,
+      section: sectionName,
+      academicYear: `${activeYear}`,
+      semester: activeSem === 1 ? 'First Semester' : 'Second Semester',
       overallAverage: overallAverage,
       overallRank: studentRank,
       courses: courses.map(course => ({
@@ -768,32 +848,42 @@ class VicePrincipalService {
         s.id,
         s.user_id,
         u.name as student_name,
-        s.grade,
-        COALESCE(c.name, s.grade) as section_name,
-        COALESCE(s.parent_phone, pa.parent_phone) as parent_phone,
-        COALESCE(s.parent_name,  pa.parent_name)  as parent_name,
-        t.id as teacher_id,
-        tu.name as room_teacher,
+        COALESCE(c.name, CASE WHEN s.grade ~ '^[0-9]+$' THEN 'Grade ' || s.grade ELSE s.grade END) as grade_name,
+        COALESCE(c.section, 'General') as section_name,
+        COALESCE(s.parent_phone, (SELECT pa.parent_phone FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_phone,
+        COALESCE(s.parent_name, (SELECT pa.parent_name FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_name,
+        (
+          SELECT tu.name
+          FROM teachers t
+          JOIN users tu ON t.user_id = tu.id
+          WHERE t.branch_id = s.branch_id 
+            AND t.is_room_teacher = true 
+            AND (
+              t.assigned_room_class = (c.name || c.section) 
+              OR t.assigned_room_section_id = c.id
+              OR t.assigned_room_class = c.name
+            )
+          LIMIT 1
+        ) as room_teacher,
         sa.status
       FROM students s
       JOIN users u ON s.user_id = u.id
       JOIN student_attendance sa ON s.id = sa.student_id AND sa.date = $2
       LEFT JOIN classes c ON s.section_id = c.id
-      -- Fall back to the admission application for parent contact info when not set on the student record
-      LEFT JOIN pending_applications pa ON pa.student_user_id = s.user_id
-      LEFT JOIN teachers t ON t.branch_id = s.branch_id AND (t.assigned_room_class = c.name OR t.assigned_room_class = s.grade)
-      LEFT JOIN users tu ON t.user_id = tu.id
       WHERE s.branch_id = $1 
         AND sa.status IN ('absent', 'excused')
-      ORDER BY s.grade, COALESCE(c.name, s.grade), u.name`,
+      ORDER BY 
+        COALESCE(c.name, s.grade), 
+        COALESCE(c.section, ''), 
+        u.name`,
       [branchId, targetDate]
     );
 
     return result.rows.map(row => ({
       id: row.id,
       name: row.student_name,
-      grade: row.grade,
-      section: row.section_name || 'General',
+      grade: row.grade_name,
+      section: row.section_name,
       parentName: row.parent_name || 'Not Assigned',
       parentPhone: row.parent_phone || 'N/A',
       studentId: row.user_id,
@@ -868,22 +958,51 @@ class VicePrincipalService {
     }));
   }
 
-  async getStudentsBySection(sectionId: string, branchId: string) {
-    const result = await pool.query(
-      `SELECT 
-        s.id,
-        s.user_id,
-        u.name as name,
-        s.grade,
-        COALESCE(c.name, s.grade) as section,
-        s.created_at as enrollment_date
-      FROM students s
-      JOIN users u ON s.user_id = u.id
-      JOIN classes c ON s.section_id = c.id
-      WHERE c.id = $1 AND s.branch_id = $2
-      ORDER BY u.name`,
-      [sectionId, branchId]
-    );
+  async getStudentsBySection(sectionId: string, branchId: string, academicYear?: string) {
+    let result;
+    if (academicYear) {
+      result = await pool.query(
+        `SELECT DISTINCT
+          s.id,
+          s.user_id,
+          u.name as name,
+          s.grade,
+          COALESCE(c.name, s.grade) as section,
+          s.created_at as enrollment_date
+        FROM students s
+        JOIN users u ON s.user_id = u.id
+        LEFT JOIN classes c ON s.section_id = c.id
+        WHERE s.branch_id = $2
+          AND (
+            s.section_id = $1
+            OR
+            s.id IN (
+              SELECT DISTINCT g.student_id 
+              FROM grades g
+              JOIN courses co ON g.course_id = co.id
+              WHERE co.class_id = $1 AND g.academic_year = $3
+            )
+          )
+        ORDER BY u.name`,
+        [sectionId, branchId, academicYear]
+      );
+    } else {
+      result = await pool.query(
+        `SELECT 
+          s.id,
+          s.user_id,
+          u.name as name,
+          s.grade,
+          COALESCE(c.name, s.grade) as section,
+          s.created_at as enrollment_date
+        FROM students s
+        JOIN users u ON s.user_id = u.id
+        JOIN classes c ON s.section_id = c.id
+        WHERE c.id = $1 AND s.branch_id = $2
+        ORDER BY u.name`,
+        [sectionId, branchId]
+      );
+    }
 
     return result.rows;
   }
@@ -931,17 +1050,8 @@ class VicePrincipalService {
     const activeYear = academicYear || this.getActiveAcademicYear();
     const activeSem = semester !== undefined ? semester : this.getActiveSemester();
 
-    // Get students in the section
-    const studentsResult = await pool.query(
-      `SELECT s.id, s.user_id, u.name
-       FROM students s
-       JOIN users u ON s.user_id = u.id
-       JOIN classes c ON s.section_id = c.id
-       WHERE c.id = $1
-         AND c.branch_id = $2
-       ORDER BY u.name`,
-      [sectionId, branchId]
-    );
+    // Get students in the section for the specified academic year
+    const students = await this.getStudentsBySection(sectionId, branchId, activeYear);
 
     // Get courses for the section
     const coursesResult = await pool.query(
@@ -968,7 +1078,7 @@ class VicePrincipalService {
       FROM grades g
       JOIN students s ON g.student_id = s.id
       JOIN courses c ON g.course_id = c.id
-      JOIN classes cl ON s.section_id = cl.id AND c.class_id = cl.id
+      JOIN classes cl ON c.class_id = cl.id
       WHERE cl.id = $1
         AND cl.branch_id = $2
         AND g.academic_year = $3
@@ -985,7 +1095,7 @@ class VicePrincipalService {
         FROM grades g
         JOIN students s ON g.student_id = s.id
         JOIN courses c ON g.course_id = c.id
-        JOIN classes cl ON s.section_id = cl.id AND c.class_id = cl.id
+        JOIN classes cl ON c.class_id = cl.id
         WHERE cl.id = $1
           AND cl.branch_id = $2
           AND g.academic_year = $3
@@ -1009,7 +1119,7 @@ class VicePrincipalService {
           FROM grades g
           JOIN students s ON g.student_id = s.id
           JOIN courses c ON g.course_id = c.id
-          JOIN classes cl ON s.section_id = cl.id AND c.class_id = cl.id
+          JOIN classes cl ON c.class_id = cl.id
           WHERE cl.id = $1
             AND cl.branch_id = $2
             AND g.academic_year = $3
@@ -1023,7 +1133,7 @@ class VicePrincipalService {
 
     // Structure the data
     const gradesMap: Record<string, Record<string, any>> = {};
-    for (const student of studentsResult.rows) {
+    for (const student of students) {
       gradesMap[student.id] = {
         id: student.id,
         name: student.name,
@@ -1041,7 +1151,7 @@ class VicePrincipalService {
     }
 
     return {
-      students: studentsResult.rows,
+      students: students,
       courses: coursesResult.rows,
       grades: Object.values(gradesMap),
       queriedSemester: activeSem,
@@ -1054,19 +1164,12 @@ class VicePrincipalService {
     const activeYear = academicYear || this.getActiveAcademicYear();
     const activeSem = semester !== undefined ? semester : this.getActiveSemester();
 
-    // Get all students in the section and branch
-    const studentsResult = await pool.query(
-      `SELECT s.id
-       FROM students s
-       JOIN classes c ON s.section_id = c.id
-       WHERE c.id = $1
-         AND c.branch_id = $2`,
-      [sectionId, branchId]
-    );
+    // Get all students in the section and branch for the specified academic year
+    const students = await this.getStudentsBySection(sectionId, branchId, activeYear);
 
     // Calculate totals, averages, and ranks for each student
     const results: any[] = [];
-    for (const student of studentsResult.rows) {
+    for (const student of students) {
       const gradesResult = await pool.query(
         `SELECT score, total
          FROM grades g
@@ -1330,6 +1433,321 @@ class VicePrincipalService {
       sentCount,
       students
     };
+  }
+
+  async getTeacherAttendanceOversight(branchId: string, date?: string) {
+    const ethNow = getEthiopianNow();
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
+    if (!gregDateStr) {
+      throw new Error('Invalid Ethiopian date format');
+    }
+
+    // Check weekend or calendar
+    const calendarCheck = await pool.query(
+      `SELECT 
+        CASE 
+          WHEN EXTRACT(ISODOW FROM $1::date) IN (6, 7) THEN 'Weekend'
+          ELSE NULL
+        END as weekend_type,
+        (
+          SELECT json_build_object('day_type', sc.day_type, 'title', sc.title, 'description', sc.description)
+          FROM school_calendar sc
+          WHERE $1::date BETWEEN sc.start_date AND sc.end_date
+            AND (sc.branch_id = $2 OR sc.branch_id IS NULL)
+            AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+          LIMIT 1
+        ) as calendar_event`,
+      [gregDateStr, branchId]
+    );
+
+    const row = calendarCheck.rows[0];
+    if (row && (row.weekend_type || row.calendar_event)) {
+      return {
+        isWorkingDay: false,
+        reason: row.weekend_type || row.calendar_event.day_type,
+        title: row.weekend_type ? 'Weekend' : row.calendar_event.title,
+        teachers: [],
+        proxies: [],
+        schedules: []
+      };
+    }
+
+    // Working day! Get teachers and their attendance status
+    const teachersResult = await pool.query(
+      `SELECT 
+        t.id AS teacher_id,
+        u.id AS user_id,
+        u.name,
+        u.email,
+        t.department,
+        t.subjects,
+        COALESCE(ea.status, 'present') AS attendance_status,
+        ea.id AS attendance_id
+      FROM public.users u
+      JOIN public.teachers t ON t.user_id = u.id
+      LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $1::date
+      WHERE u.branch_id = $2 AND u.role = 'teacher' AND u.status = 'Approved'
+      ORDER BY u.name ASC`,
+      [gregDateStr, branchId]
+    );
+
+    // Fetch proxy assignments for today
+    const proxiesResult = await pool.query(
+      `SELECT 
+        pa.id,
+        pa.absent_teacher_id,
+        pa.proxy_teacher_id,
+        pa.period_number,
+        pa.class_name,
+        pa.section,
+        pa.subject,
+        u_proxy.name as proxy_teacher_name
+      FROM public.teacher_proxy_assignments pa
+      JOIN public.teachers t_proxy ON pa.proxy_teacher_id = t_proxy.id
+      JOIN public.users u_proxy ON t_proxy.user_id = u_proxy.id
+      WHERE pa.date = $1::date AND pa.branch_id = $2`,
+      [gregDateStr, branchId]
+    );
+
+    // Fetch schedules for the weekday of gregDateStr
+    const dayOfWeekName = new Date(gregDateStr as string).toLocaleDateString('en-US', { weekday: 'long' });
+    
+    const schedulesResult = await pool.query(
+      `SELECT 
+        s.id,
+        s.teacher_id,
+        s.class_name,
+        s.section,
+        s.subject,
+        s.period_number,
+        s.time_slot
+      FROM public.schedules s
+      JOIN public.teachers t ON s.teacher_id = t.id
+      JOIN public.users u ON t.user_id = u.id
+      WHERE u.branch_id = $1 AND s.day = $2
+      ORDER BY s.period_number ASC`,
+      [branchId, dayOfWeekName]
+    );
+
+    return {
+      isWorkingDay: true,
+      teachers: teachersResult.rows,
+      proxies: proxiesResult.rows,
+      schedules: schedulesResult.rows,
+      dayOfWeek: dayOfWeekName
+    };
+  }
+
+  async recordTeacherAttendance(branchId: string, userId: string, date: string, status: string, recordedBy: string) {
+    const ethNow = getEthiopianNow();
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
+    if (!gregDateStr) {
+      throw new Error('Invalid Ethiopian date format');
+    }
+
+    // Reconcile user belongs to branch
+    const userResult = await pool.query('SELECT id, role FROM public.users WHERE id = $1 AND branch_id = $2', [userId, branchId]);
+    if (userResult.rows.length === 0) {
+      throw new Error('Teacher not found in this branch');
+    }
+
+    const result = await pool.query(
+      `INSERT INTO public.employee_attendance (user_id, date, status, recorded_by)
+       VALUES ($1, $2::date, $3, $4)
+       ON CONFLICT (user_id, date) 
+       DO UPDATE SET 
+         status = EXCLUDED.status,
+         recorded_by = EXCLUDED.recorded_by,
+         created_at = NOW()
+       RETURNING *`,
+      [userId, gregDateStr, status, recordedBy]
+    );
+
+    // If marked present, delete any proxy schedules for this teacher as absent_teacher
+    if (status === 'present') {
+      const teacherRes = await pool.query('SELECT id FROM public.teachers WHERE user_id = $1', [userId]);
+      if (teacherRes.rows.length > 0) {
+        await pool.query(
+          `DELETE FROM public.teacher_proxy_assignments 
+           WHERE absent_teacher_id = $1 AND date = $2::date`,
+          [teacherRes.rows[0].id, gregDateStr]
+        );
+      }
+    }
+
+    return result.rows[0];
+  }
+
+  async getProxyCandidates(
+    branchId: string,
+    date: string,
+    className: string,
+    section: string,
+    periodNumber: number,
+    absentTeacherId: string
+  ) {
+    const ethNow = getEthiopianNow();
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
+    if (!gregDateStr) {
+      throw new Error('Invalid Ethiopian date format');
+    }
+    const dayOfWeekName = new Date(gregDateStr as string).toLocaleDateString('en-US', { weekday: 'long' });
+
+    // Parse class name and section dynamically from combined string
+    let parsedClass = className;
+    let parsedSection = section || '';
+    const sectionIndex = className.indexOf('Section');
+    if (sectionIndex > 0) {
+      parsedClass = className.substring(0, sectionIndex).trim();
+      parsedSection = className.substring(sectionIndex).trim();
+    } else {
+      const match = className.match(/^(\d+)([A-Z])$/i);
+      if (match) {
+        parsedClass = match[1];
+        parsedSection = match[2];
+      }
+    }
+
+    const result = await pool.query(
+      `WITH present_teachers AS (
+          SELECT 
+            t.id AS teacher_id,
+            u.id AS user_id,
+            u.name,
+            t.department,
+            EXISTS (
+              SELECT 1 FROM public.class_teachers ct
+              JOIN public.classes c ON ct.class_id = c.id
+              WHERE ct.teacher_id = t.id 
+                AND (
+                  (c.name = $3 AND c.section = $4) OR
+                  (c.name || c.section = $8)
+                )
+              
+              UNION
+              
+              SELECT 1 FROM public.classes c
+              WHERE c.teacher_id = t.id 
+                AND (
+                  (c.name = $3 AND c.section = $4) OR
+                  (c.name || c.section = $8)
+                )
+              
+              UNION
+              
+              SELECT 1 FROM public.courses co
+              JOIN public.classes c ON co.class_id = c.id
+              WHERE co.teacher_id = t.id 
+                AND (
+                  (c.name = $3 AND c.section = $4) OR
+                  (c.name || c.section = $8)
+                )
+              
+              UNION
+              
+              SELECT 1 FROM public.schedules s
+              WHERE s.teacher_id = t.id 
+                AND (
+                  (s.class_name = $3 AND s.section = $4) OR
+                  (s.class_name = $8)
+                )
+            ) AS teaches_section
+          FROM public.teachers t
+          JOIN public.users u ON t.user_id = u.id
+          LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $1::date
+          WHERE u.branch_id = $2
+            AND u.role = 'teacher'
+            AND u.status = 'Approved'
+            AND t.id <> $6::uuid
+            AND COALESCE(ea.status, 'present') NOT IN ('absent', 'excused', 'leave')
+      ),
+      free_teachers AS (
+          SELECT pt.*
+          FROM present_teachers pt
+          WHERE NOT EXISTS (
+              SELECT 1 FROM public.schedules s
+              WHERE s.teacher_id = pt.teacher_id
+                AND s.day = $5
+                AND s.period_number = $7
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM public.teacher_proxy_assignments pa
+              WHERE pa.proxy_teacher_id = pt.teacher_id
+                AND pa.date = $1::date
+                AND pa.period_number = $7
+          )
+      )
+      SELECT * 
+      FROM free_teachers
+      ORDER BY teaches_section DESC, name ASC`,
+      [gregDateStr, branchId, parsedClass, parsedSection, dayOfWeekName, absentTeacherId, periodNumber, className]
+    );
+
+    return result.rows;
+  }
+
+  async saveProxyAssignment(
+    branchId: string,
+    absentTeacherId: string,
+    proxyTeacherId: string,
+    date: string,
+    periodNumber: number,
+    className: string,
+    section: string,
+    subject: string
+  ) {
+    const ethNow = getEthiopianNow();
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
+    if (!gregDateStr) {
+      throw new Error('Invalid Ethiopian date format');
+    }
+
+    // Parse class name and section dynamically from combined string if needed
+    let parsedClass = className;
+    let parsedSection = section || '';
+    const sectionIndex = className.indexOf('Section');
+    if (sectionIndex > 0) {
+      parsedClass = className.substring(0, sectionIndex).trim();
+      parsedSection = className.substring(sectionIndex).trim();
+    } else {
+      const match = className.match(/^(\d+)([A-Z])$/i);
+      if (match) {
+        parsedClass = match[1];
+        parsedSection = match[2];
+      }
+    }
+
+    const result = await pool.query(
+      `INSERT INTO public.teacher_proxy_assignments 
+         (branch_id, absent_teacher_id, proxy_teacher_id, date, period_number, class_name, section, subject)
+       VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8)
+       ON CONFLICT (proxy_teacher_id, date, period_number) 
+       DO UPDATE SET 
+         absent_teacher_id = EXCLUDED.absent_teacher_id,
+         class_name = EXCLUDED.class_name,
+         section = EXCLUDED.section,
+         subject = EXCLUDED.subject
+       RETURNING *`,
+      [branchId, absentTeacherId, proxyTeacherId, gregDateStr, periodNumber, parsedClass, parsedSection, subject]
+    );
+    return result.rows[0];
+  }
+
+  async deleteProxyAssignment(assignmentId: string, branchId: string) {
+    const result = await pool.query(
+      `DELETE FROM public.teacher_proxy_assignments 
+       WHERE id = $1 AND branch_id = $2 
+       RETURNING *`,
+      [assignmentId, branchId]
+    );
+    if (result.rows.length === 0) {
+      throw new Error('Proxy assignment not found');
+    }
+    return result.rows[0];
   }
 }
 

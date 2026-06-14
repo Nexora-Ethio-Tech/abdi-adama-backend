@@ -219,8 +219,10 @@ class VicePrincipalController {
     try {
       const { studentId } = req.params;
       const branchId = req.user!.branch_id;
+      const academicYear = req.query.academicYear as string;
+      const semester = req.query.semester ? parseInt(req.query.semester as string, 10) : undefined;
 
-      const transcript = await vicePrincipalService.getStudentTranscript(studentId, branchId!);
+      const transcript = await vicePrincipalService.getStudentTranscript(studentId, branchId!, academicYear, semester);
 
       res.json({
         success: true,
@@ -430,7 +432,8 @@ class VicePrincipalController {
     try {
       const { sectionId } = req.params;
       const branchId = req.user!.branch_id;
-      const students = await vicePrincipalService.getStudentsBySection(sectionId, branchId!);
+      const academicYear = req.query.academicYear as string;
+      const students = await vicePrincipalService.getStudentsBySection(sectionId, branchId!, academicYear);
       res.json({ success: true, data: students });
     } catch (error) {
       next(error);
@@ -546,6 +549,128 @@ class VicePrincipalController {
       const branchId = req.user!.branch_id;
       const result = await vicePrincipalService.resetLeaderboard(branchId!);
       res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getTeacherAttendanceOversight(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { date } = req.query;
+
+      const data = await vicePrincipalService.getTeacherAttendanceOversight(branchId!, date as string);
+      res.json({
+        success: true,
+        data
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async recordTeacherAttendance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { userId, date, status } = req.body;
+
+      if (!userId || !status) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'userId and status are required' }
+        });
+        return;
+      }
+
+      const recordedBy = req.user!.name || 'vice-principal';
+      const record = await vicePrincipalService.recordTeacherAttendance(branchId!, userId, date as string, status, recordedBy);
+
+      res.json({
+        success: true,
+        data: record,
+        message: 'Teacher attendance recorded successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getProxyCandidates(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { date, className, section, periodNumber, absentTeacherId } = req.query;
+
+      if (!className || !section || !periodNumber || !absentTeacherId) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'className, section, periodNumber, and absentTeacherId are required' }
+        });
+        return;
+      }
+
+      const candidates = await vicePrincipalService.getProxyCandidates(
+        branchId!,
+        date as string,
+        className as string,
+        section as string,
+        parseInt(periodNumber as string, 10),
+        absentTeacherId as string
+      );
+
+      res.json({
+        success: true,
+        data: candidates
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async saveProxyAssignment(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { absentTeacherId, proxyTeacherId, date, periodNumber, className, section, subject } = req.body;
+
+      if (!absentTeacherId || !proxyTeacherId || !periodNumber || !className || !section || !subject) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'Missing required fields for proxy assignment' }
+        });
+        return;
+      }
+
+      const assignment = await vicePrincipalService.saveProxyAssignment(
+        branchId!,
+        absentTeacherId,
+        proxyTeacherId,
+        date as string,
+        parseInt(periodNumber, 10),
+        className,
+        section,
+        subject
+      );
+
+      res.json({
+        success: true,
+        data: assignment,
+        message: 'Proxy teacher assigned successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deleteProxyAssignment(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { id } = req.params;
+
+      await vicePrincipalService.deleteProxyAssignment(id, branchId!);
+
+      res.json({
+        success: true,
+        message: 'Proxy assignment removed successfully'
+      });
     } catch (error) {
       next(error);
     }
