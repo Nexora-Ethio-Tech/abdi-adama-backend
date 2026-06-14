@@ -5,6 +5,27 @@ import { generateCredentials } from '../utils/credentialGenerator';
 import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
 import { getCachedFinanceSetting } from '../cache/financeSettingsCache';
 
+/**
+ * Rate-limiter for syncCollectionStatusesForMonth.
+ * Prevents the same branch+month from being synced more than once every 60 seconds.
+ * This is critical because getStudentsWithFees and getOverduePayments both call
+ * syncCollectionStatusesForMonth before returning data — without this guard,
+ * every page load / tab switch triggers a full re-sync of ALL students.
+ */
+const syncLastRun = new Map<string, number>();
+const SYNC_COOLDOWN_MS = 60_000; // 60 seconds
+
+function shouldRunSync(month: string, branchId?: string): boolean {
+  const key = `${branchId || 'all'}:${month}`;
+  const lastRun = syncLastRun.get(key);
+  const now = Date.now();
+  if (lastRun && now - lastRun < SYNC_COOLDOWN_MS) {
+    return false; // Synced recently, skip
+  }
+  syncLastRun.set(key, now);
+  return true;
+}
+
 class FinanceClerkService {
   // Get available aid allocations for a student (active allocations with remaining balance)
   private async getAvailableAid(client: any, studentId: string) {
@@ -853,7 +874,10 @@ class FinanceClerkService {
     const ethNow = gregorianToEthiopian(new Date());
     const month = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
     try {
-      await this.syncCollectionStatusesForMonth(month, branchId || undefined);
+      // Rate-limit: skip sync if already synced within last 60s for this branch+month
+      if (shouldRunSync(month, branchId || undefined)) {
+        await this.syncCollectionStatusesForMonth(month, branchId || undefined);
+      }
     } catch (e) {
       console.error('Failed to sync collection statuses:', e);
     }
@@ -1481,76 +1505,73 @@ class FinanceClerkService {
 
   // Get dashboard statistics
   async getDashboardStats(branchId: string) {
-    // Today's collection
-    const todayResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total
-       FROM finance_transactions
-       WHERE branch_id = $1 AND date = CURRENT_DATE`,
-      [branchId]
-    );
-
-    // This month's revenue (Ethiopic)
     const ethToday = todayEthiopic();
-    const monthResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total
-       FROM finance_transactions
-       WHERE branch_id = $1 
-       AND LOWER(ethiopic_month) = $2
-       AND ethiopic_year = $3`,
-      [branchId, ethToday.month.toLowerCase(), ethToday.year]
-    );
 
-    // Pending fee reductions
-    const pendingResult = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM students
-       WHERE branch_id = $1 AND fee_approval_status = 'pending'`,
-      [branchId]
-    );
-
-    // Registrations (awaiting-payment applications)
-    const registrationsResult = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM pending_applications
-       WHERE branch_id = $1 AND status = 'awaiting-payment'`,
-      [branchId]
-    );
-
-    // Overdue students
-    const overdueResult = await pool.query(
-      `SELECT COUNT(DISTINCT student_id) as count
-       FROM student_collections sc
-       JOIN students s ON s.id = sc.student_id
-       WHERE s.branch_id = $1 AND sc.status = 'overdue'`,
-      [branchId]
-    );
-
-    // Transport assigned students
-    const transportResult = await pool.query(
-      `SELECT COUNT(DISTINCT s.id) as count
-       FROM students s
-       JOIN student_routes sr ON sr.student_id = s.id
-       WHERE s.branch_id = $1 AND s.is_bus_user = true`,
-      [branchId]
-    );
-
-    // Staff in payroll (all branch staff in users table that are active)
-    const staffResult = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM users u
-       WHERE u.branch_id = $1 AND u.status = 'Approved'
-       AND u.role IN ('teacher', 'driver', 'librarian', 'clinic-admin', 'finance-clerk', 'school-admin')`,
-      [branchId]
-    );
-
-    // Recent transactions
-    const recentResult = await pool.query(
-      `SELECT * FROM finance_transactions
-       WHERE branch_id = $1
-       ORDER BY created_at DESC
-       LIMIT 10`,
-      [branchId]
-    );
+    // Fire all 7 independent queries in parallel (was sequential — 7 round-trips → 1)
+    const [todayResult, monthResult, pendingResult, registrationsResult, overdueResult, transportResult, staffResult, recentResult] = await Promise.all([
+      // Today's collection
+      pool.query(
+        `SELECT COALESCE(SUM(amount), 0) as total
+         FROM finance_transactions
+         WHERE branch_id = $1 AND date = CURRENT_DATE`,
+        [branchId]
+      ),
+      // This month's revenue (Ethiopic)
+      pool.query(
+        `SELECT COALESCE(SUM(amount), 0) as total
+         FROM finance_transactions
+         WHERE branch_id = $1 
+         AND LOWER(ethiopic_month) = $2
+         AND ethiopic_year = $3`,
+        [branchId, ethToday.month.toLowerCase(), ethToday.year]
+      ),
+      // Pending fee reductions
+      pool.query(
+        `SELECT COUNT(*) as count
+         FROM students
+         WHERE branch_id = $1 AND fee_approval_status = 'pending'`,
+        [branchId]
+      ),
+      // Registrations (awaiting-payment applications)
+      pool.query(
+        `SELECT COUNT(*) as count
+         FROM pending_applications
+         WHERE branch_id = $1 AND status = 'awaiting-payment'`,
+        [branchId]
+      ),
+      // Overdue students
+      pool.query(
+        `SELECT COUNT(DISTINCT student_id) as count
+         FROM student_collections sc
+         JOIN students s ON s.id = sc.student_id
+         WHERE s.branch_id = $1 AND sc.status = 'overdue'`,
+        [branchId]
+      ),
+      // Transport assigned students
+      pool.query(
+        `SELECT COUNT(DISTINCT s.id) as count
+         FROM students s
+         JOIN student_routes sr ON sr.student_id = s.id
+         WHERE s.branch_id = $1 AND s.is_bus_user = true`,
+        [branchId]
+      ),
+      // Staff in payroll
+      pool.query(
+        `SELECT COUNT(*) as count
+         FROM users u
+         WHERE u.branch_id = $1 AND u.status = 'Approved'
+         AND u.role IN ('teacher', 'driver', 'librarian', 'clinic-admin', 'finance-clerk', 'school-admin')`,
+        [branchId]
+      ),
+      // Recent transactions
+      pool.query(
+        `SELECT * FROM finance_transactions
+         WHERE branch_id = $1
+         ORDER BY created_at DESC
+         LIMIT 10`,
+        [branchId]
+      ),
+    ]);
 
     return {
       todayCollection: parseFloat(todayResult.rows[0].total),
@@ -1568,8 +1589,10 @@ class FinanceClerkService {
   async getOverduePayments(branchId: string) {
     const ethNow = gregorianToEthiopian(new Date());
     const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
-    // Sync the current month so newly overdue students are flagged
-    await this.syncCollectionStatusesForMonth(currentMonth, branchId);
+    // Rate-limit: skip sync if already synced within last 60s for this branch+month
+    if (shouldRunSync(currentMonth, branchId)) {
+      await this.syncCollectionStatusesForMonth(currentMonth, branchId);
+    }
 
     // 1. Fetch all overdue records for this branch
     const overdueRecs = await pool.query(
@@ -1618,8 +1641,53 @@ class FinanceClerkService {
     try {
       const results: any[] = [];
 
+      // ── Bulk pre-fetch: 3 queries instead of ~3,200 ──────────────────────────
+      // Collect all unique (student_id, month) pairs from overdue records
+      const overdueStudentIds = studentIds;
+      const allOverdueMonths = [...new Set(overdueRecs.rows.map((r: any) => r.month as string))];
+
+      // 1. Bulk fetch ALL fee deductions for overdue students/months
+      const bulkDedRes = await client.query(
+        `SELECT student_id, month, COALESCE(SUM(approved_amount), 0) AS total
+         FROM fee_deductions
+         WHERE student_id = ANY($1) AND month = ANY($2) AND status = 'approved'
+         GROUP BY student_id, month`,
+        [overdueStudentIds, allOverdueMonths]
+      );
+      const dedMap = new Map<string, number>();
+      for (const row of bulkDedRes.rows) {
+        dedMap.set(`${row.student_id}:${row.month}`, Number(row.total));
+      }
+
+      // 2. Bulk fetch ALL payment item sums grouped by student, month, fee_type
+      const bulkPaidRes = await client.query(
+        `SELECT p.student_id, p.month, pi.fee_type, COALESCE(SUM(pi.amount), 0) AS total
+         FROM payments p
+         JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = ANY($1) AND p.month = ANY($2)
+         GROUP BY p.student_id, p.month, pi.fee_type`,
+        [overdueStudentIds, allOverdueMonths]
+      );
+      const paidMap = new Map<string, number>();
+      for (const row of bulkPaidRes.rows) {
+        paidMap.set(`${row.student_id}:${row.month}:${row.fee_type}`, Number(row.total));
+      }
+
+      // 3. Bulk fetch ALL aid usages for overdue students/months
+      const bulkAidRes = await client.query(
+        `SELECT student_id, month, COALESCE(SUM(amount), 0) AS total
+         FROM student_aid_usages
+         WHERE student_id = ANY($1) AND month = ANY($2)
+         GROUP BY student_id, month`,
+        [overdueStudentIds, allOverdueMonths]
+      );
+      const aidMap = new Map<string, number>();
+      for (const row of bulkAidRes.rows) {
+        aidMap.set(`${row.student_id}:${row.month}`, Number(row.total));
+      }
+
+      // ── Per-student computation using pre-fetched data ──────────────────────
       for (const student of studentsRes.rows) {
-        // All overdue months for this student (sorted ascending = oldest first)
         const overdue_months: string[] = overdueRecs.rows
           .filter((r: any) => r.student_id === student.id)
           .map((r: any) => r.month as string);
@@ -1633,73 +1701,41 @@ class FinanceClerkService {
         let registration_unpaid = 0;
 
         for (const m of overdue_months) {
-          // Fetch approved fee deduction from fee_deductions table for this student and month
-          const dedRes = await client.query(
-            `SELECT COALESCE(approved_amount, 0) as approved_amount
-             FROM fee_deductions
-             WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
-            [student.id, m]
-          );
-          const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+          // Fee deduction (from bulk map)
+          const approvedDeduction = dedMap.get(`${student.id}:${m}`) || 0;
           const effectiveMFee = Math.max(0, mFee - approvedDeduction);
 
-          // Monthly (cash + aid)
-          const mPaidRes = await client.query(
-            `SELECT COALESCE(
-               (SELECT SUM(pi.amount) FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
-                WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'monthly'), 0
-             ) + COALESCE(
-               (SELECT SUM(amount) FROM student_aid_usages WHERE student_id = $1 AND month = $2), 0
-             ) AS paid`,
-            [student.id, m]
-          );
-          monthly_unpaid += Math.max(0, effectiveMFee - Number(mPaidRes.rows[0].paid || 0));
+          // Monthly paid (from bulk map) + aid (from bulk map)
+          const monthlyPaid = (paidMap.get(`${student.id}:${m}:monthly`) || 0) + (aidMap.get(`${student.id}:${m}`) || 0);
+          monthly_unpaid += Math.max(0, effectiveMFee - monthlyPaid);
 
-          // Bus
+          // Bus paid (from bulk map)
           if (bFee > 0) {
-            const bPaidRes = await client.query(
-              `SELECT COALESCE(SUM(pi.amount),0) AS paid FROM payments p
-               JOIN payment_items pi ON pi.payment_id = p.id
-               WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'bus'`,
-              [student.id, m]
-            );
-            bus_unpaid += Math.max(0, bFee - Number(bPaidRes.rows[0].paid || 0));
+            const busPaid = paidMap.get(`${student.id}:${m}:bus`) || 0;
+            bus_unpaid += Math.max(0, bFee - busPaid);
           }
 
-          // Penalty
+          // Penalty — still per-student (has complex business logic with date checks)
           const penaltyDue = await this.getPenaltyDueForMonth(client, student, m);
-          const pPaidRes = await client.query(
-            `SELECT COALESCE(SUM(pi.amount),0) AS paid FROM payments p
-             JOIN payment_items pi ON pi.payment_id = p.id
-             WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'penalty'`,
-            [student.id, m]
-          );
-          penalty_unpaid += Math.max(0, penaltyDue - Number(pPaidRes.rows[0].paid || 0));
+          const penaltyPaid = paidMap.get(`${student.id}:${m}:penalty`) || 0;
+          penalty_unpaid += Math.max(0, penaltyDue - penaltyPaid);
 
-          // Registration (only due in enrollment month)
+          // Registration — still per-student (has enrollment date logic)
           const regDue = await this.getRegistrationDueForMonth(client, student.id, student.branch_id, m);
           if (regDue > 0) {
-            const rPaidRes = await client.query(
-              `SELECT COALESCE(SUM(pi.amount),0) AS paid FROM payments p
-               JOIN payment_items pi ON pi.payment_id = p.id
-               WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'registration'`,
-              [student.id, m]
-            );
-            registration_unpaid += Math.max(0, regDue - Number(rPaidRes.rows[0].paid || 0));
+            const regPaid = paidMap.get(`${student.id}:${m}:registration`) || 0;
+            registration_unpaid += Math.max(0, regDue - regPaid);
           }
         }
 
-        // Only include if there is still an actual unpaid balance.
-        // This guards against stale 'overdue' records in student_collections that
-        // haven't been re-synced yet after the student paid.
         const total_unpaid = monthly_unpaid + bus_unpaid + penalty_unpaid + registration_unpaid;
         if (total_unpaid <= 0) {
           // Auto-clear the stale overdue records in the DB so future queries are fast
-          for (const m of overdue_months) {
+          if (overdue_months.length > 0) {
             await client.query(
               `UPDATE student_collections SET status = 'cleared', updated_at = NOW()
-               WHERE student_id = $1 AND month = $2 AND status = 'overdue'`,
-              [student.id, m]
+               WHERE student_id = $1 AND month = ANY($2) AND status = 'overdue'`,
+              [student.id, overdue_months]
             );
           }
           continue;
@@ -1708,7 +1744,7 @@ class FinanceClerkService {
         results.push({
           ...student,
           collection_status: 'overdue',
-          overdue_months,           // e.g. ["2018-01","2018-02"] oldest first
+          overdue_months,
           monthly_unpaid,
           bus_unpaid,
           penalty_unpaid,
@@ -1773,101 +1809,216 @@ class FinanceClerkService {
       const monthNum = parseInt(monthNumStr, 10);
       const isSummerMonth = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
+      // ── Bulk pre-fetch: replaces ~28K queries with ~5 ────────────────────────
+      const allStudentIds = studentsRes.rows.map((s: any) => s.id);
+
+      // 1. Bulk fetch latest fee_deduction month per student (for rollover reset)
+      const bulkLatestDedRes = await client.query(
+        `SELECT DISTINCT ON (student_id) student_id, month
+         FROM fee_deductions
+         WHERE student_id = ANY($1)
+         ORDER BY student_id, month DESC`,
+        [allStudentIds]
+      );
+      const latestDedMap = new Map<string, string>();
+      for (const row of bulkLatestDedRes.rows) {
+        latestDedMap.set(row.student_id, row.month);
+      }
+
+      // 2. Bulk fetch ALL student_collections for this month (skip already cleared)
+      const bulkCollRes = await client.query(
+        `SELECT student_id, status FROM student_collections
+         WHERE student_id = ANY($1) AND month = $2`,
+        [allStudentIds, month]
+      );
+      const collStatusMap = new Map<string, string>();
+      for (const row of bulkCollRes.rows) {
+        collStatusMap.set(row.student_id, row.status);
+      }
+
+      // 3. Bulk fetch ALL payment sums + deductions + aid for this month in one CTE
+      const bulkPaymentRes = await client.query(
+        `WITH paid AS (
+           SELECT p.student_id, pi.fee_type, COALESCE(SUM(pi.amount), 0) AS total
+           FROM payments p
+           JOIN payment_items pi ON pi.payment_id = p.id
+           WHERE p.student_id = ANY($1) AND p.month = $2
+           GROUP BY p.student_id, pi.fee_type
+         ),
+         deductions AS (
+           SELECT student_id, COALESCE(SUM(approved_amount), 0) AS total
+           FROM fee_deductions
+           WHERE student_id = ANY($1) AND month = $2 AND status = 'approved'
+           GROUP BY student_id
+         ),
+         aid AS (
+           SELECT student_id, COALESCE(SUM(amount), 0) AS total
+           FROM student_aid_usages
+           WHERE student_id = ANY($1) AND month = $2
+           GROUP BY student_id
+         )
+         SELECT
+           s.id AS student_id,
+           COALESCE((SELECT total FROM paid WHERE paid.student_id = s.id AND fee_type = 'monthly'), 0) AS monthly_paid,
+           COALESCE((SELECT total FROM paid WHERE paid.student_id = s.id AND fee_type = 'bus'), 0) AS bus_paid,
+           COALESCE((SELECT total FROM paid WHERE paid.student_id = s.id AND fee_type = 'penalty'), 0) AS penalty_paid,
+           COALESCE((SELECT total FROM deductions WHERE deductions.student_id = s.id), 0) AS approved_deduction,
+           COALESCE((SELECT total FROM aid WHERE aid.student_id = s.id), 0) AS aid_paid
+         FROM unnest($1::uuid[]) AS s(id)`,
+        [allStudentIds, month]
+      );
+      const payDataMap = new Map<string, any>();
+      for (const row of bulkPaymentRes.rows) {
+        payDataMap.set(row.student_id, row);
+      }
+
+      // 4. Bulk fetch ALL overdue records for re-evaluation
+      const bulkOverdueRes = await client.query(
+        `SELECT student_id, month FROM student_collections
+         WHERE student_id = ANY($1) AND status = 'overdue' AND month <> $2`,
+        [allStudentIds, month]
+      );
+      const overdueByStudent = new Map<string, string[]>();
+      for (const row of bulkOverdueRes.rows) {
+        const arr = overdueByStudent.get(row.student_id) || [];
+        arr.push(row.month);
+        overdueByStudent.set(row.student_id, arr);
+      }
+
+      // ── Batch rollover reset: students with stale fee_approval_status ──────
+      const rolloverIds: string[] = [];
       for (const student of studentsRes.rows) {
-        // Rollover reset logic: if the student has fee reduction status (pending/approved/rejected)
-        // but it is for a past month, reset s.fee_status, s.fee_approval_status, and s.requested_aid_amount.
-        const latestDedRes = await client.query(
-          `SELECT month FROM fee_deductions WHERE student_id = $1 ORDER BY month DESC LIMIT 1`,
-          [student.id]
-        );
-        const latestDedMonth = latestDedRes.rows[0]?.month;
+        const latestDedMonth = latestDedMap.get(student.id);
         if (latestDedMonth && latestDedMonth !== month && student.fee_approval_status !== 'none') {
-          await client.query(
-            `UPDATE students
-             SET fee_status = 'standard',
-                 fee_approval_status = 'none',
-                 requested_aid_amount = 0,
-                 updated_at = NOW()
-             WHERE id = $1`,
-            [student.id]
-          );
+          rolloverIds.push(student.id);
           student.fee_status = 'standard';
           student.fee_approval_status = 'none';
           student.requested_aid_amount = 0;
         }
-
-        // Skip already cleared months
-        const existingRes = await client.query(
-          `SELECT status FROM student_collections WHERE student_id = $1 AND month = $2`,
-          [student.id, month]
+      }
+      if (rolloverIds.length > 0) {
+        await client.query(
+          `UPDATE students
+           SET fee_status = 'standard',
+               fee_approval_status = 'none',
+               requested_aid_amount = 0,
+               updated_at = NOW()
+           WHERE id = ANY($1)`,
+          [rolloverIds]
         );
-        if (existingRes.rows.length > 0 && existingRes.rows[0].status === 'cleared') {
+      }
+
+      // ── Per-student status computation using pre-fetched data ──────────────
+      // Collect UPSERT rows for batch insert
+      const upsertRows: { studentId: string; status: string }[] = [];
+      const summerClearStudentIds: string[] = [];
+
+      for (const student of studentsRes.rows) {
+        // Skip already cleared months
+        if (collStatusMap.get(student.id) === 'cleared') {
           continue;
         }
 
-        const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, student.branch_id, month);
+        // Compute outstanding using pre-fetched payment data
+        const pd = payDataMap.get(student.id) || {
+          monthly_paid: 0, bus_paid: 0, penalty_paid: 0, approved_deduction: 0, aid_paid: 0
+        };
+
+        const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
+
+        const standardFee = isSummerMonth ? 0 : Number(student.monthly_fee || 0);
+        const monthlyDue = Math.max(0, standardFee - Number(pd.approved_deduction));
+        const monthlyPaid = Number(pd.monthly_paid) + Number(pd.aid_paid);
+
+        const busDue = (isSummerMonth || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+        const busPaid = Number(pd.bus_paid);
+
+        const penaltyDueVal = isSummerMonth ? 0 : penaltyDue;
+        const penaltyPaid = Number(pd.penalty_paid);
+
+        const outstandingTotal = Math.max(0, monthlyDue - monthlyPaid)
+                               + Math.max(0, busDue - busPaid)
+                               + Math.max(0, penaltyDueVal - penaltyPaid);
+
         let status = 'in_collections';
         if (outstandingTotal <= 0) {
           status = 'cleared';
         } else if (now > dueDate) {
-          // Summer months (Hamle/Nehase/Pagume) never go overdue — they hold
-          // in_collections until the one-time registration fee is paid.
           status = isSummerMonth ? 'in_collections' : 'overdue';
         }
 
-        await client.query(
-          `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
-           VALUES ($1, $2, $3, $4, NOW())
-           ON CONFLICT (student_id, month)
-           DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
-          [student.id, month, dueDate.toISOString().slice(0, 10), status]
-        );
+        upsertRows.push({ studentId: student.id, status });
 
-        // If a summer month just resolved to cleared, cascade-clear the other two
-        // so the one-time registration fee shows as settled across all three months.
         if (isSummerMonth && status === 'cleared') {
-          const [yearStr] = month.split('-');
-          const year = parseInt(yearStr, 10);
-          const otherSummerMonths = ['11', '12', '13']
-            .map(m => `${year}-${m}`)
-            .filter(m => m !== month);
-          for (const sm of otherSummerMonths) {
-            const smDueDate = this.getPaymentDueDateForMonth(sm, deadlineDay);
+          summerClearStudentIds.push(student.id);
+        }
+
+        // Re-evaluate previously overdue months (only for students that have them)
+        const overdueMonths = overdueByStudent.get(student.id);
+        if (overdueMonths && overdueMonths.length > 0) {
+          for (const om of overdueMonths) {
+            const omOutstanding = await this.computeMonthlyFeesOutstanding(client, student, student.branch_id, om);
+            const [, omNumStr] = om.split('-');
+            const omNum = parseInt(omNumStr, 10);
+            const omDueDate = this.getPaymentDueDateForMonth(om, deadlineDay);
+            let omStatus = 'in_collections';
+            if (omOutstanding <= 0) {
+              omStatus = 'cleared';
+            } else if (now > omDueDate) {
+              omStatus = (omNum === 11 || omNum === 12 || omNum === 13) ? 'in_collections' : 'overdue';
+            }
             await client.query(
-              `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
-               VALUES ($1, $2, $3, 'cleared', NOW())
-               ON CONFLICT (student_id, month)
-               DO UPDATE SET status = 'cleared', due_date = EXCLUDED.due_date, updated_at = NOW()`,
-              [student.id, sm, smDueDate.toISOString().slice(0, 10)]
+              `UPDATE student_collections SET status = $1, updated_at = NOW()
+               WHERE student_id = $2 AND month = $3`,
+              [omStatus, student.id, om]
             );
           }
         }
+      }
 
-        // ── Re-evaluate ALL previously overdue months for this student ────────
-        // When a student pays their current balance and becomes cleared, any stale
-        // 'overdue' records from prior months should also be re-evaluated so the
-        // student is fully removed from the Overdue tab.
-        const existingOverdueRes = await client.query(
-          `SELECT month FROM student_collections
-           WHERE student_id = $1 AND status = 'overdue' AND month <> $2`,
-          [student.id, month]
+      // ── Batch UPSERT all collection statuses ──────────────────────────────
+      const dueDateStr = dueDate.toISOString().slice(0, 10);
+      if (upsertRows.length > 0) {
+        // Build a VALUES list for batch upsert
+        const valuesParams: any[] = [];
+        const valuesClauses: string[] = [];
+        for (let i = 0; i < upsertRows.length; i++) {
+          const base = i * 4;
+          valuesClauses.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
+          valuesParams.push(upsertRows[i].studentId, month, dueDateStr, upsertRows[i].status);
+        }
+        await client.query(
+          `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+           VALUES ${valuesClauses.join(', ')}
+           ON CONFLICT (student_id, month)
+           DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
+          valuesParams
         );
-        for (const row of existingOverdueRes.rows) {
-          const om: string = row.month;
-          const omOutstanding = await this.computeMonthlyFeesOutstanding(client, student, student.branch_id, om);
-          const [, omNumStr] = om.split('-');
-          const omNum = parseInt(omNumStr, 10);
-          const omDueDate = this.getPaymentDueDateForMonth(om, deadlineDay);
-          let omStatus = 'in_collections';
-          if (omOutstanding <= 0) {
-            omStatus = 'cleared';
-          } else if (now > omDueDate) {
-            omStatus = (omNum === 11 || omNum === 12 || omNum === 13) ? 'in_collections' : 'overdue';
+      }
+
+      // ── Batch cascade-clear summer months for cleared students ─────────────
+      if (isSummerMonth && summerClearStudentIds.length > 0) {
+        const [yearStr] = month.split('-');
+        const year = parseInt(yearStr, 10);
+        const otherSummerMonths = ['11', '12', '13']
+          .map(m => `${year}-${m}`)
+          .filter(m => m !== month);
+        for (const sm of otherSummerMonths) {
+          const smDueDate = this.getPaymentDueDateForMonth(sm, deadlineDay);
+          // Batch upsert for all cleared summer students
+          const smParams: any[] = [];
+          const smClauses: string[] = [];
+          for (let i = 0; i < summerClearStudentIds.length; i++) {
+            const base = i * 4;
+            smClauses.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
+            smParams.push(summerClearStudentIds[i], sm, smDueDate.toISOString().slice(0, 10), 'cleared');
           }
           await client.query(
-            `UPDATE student_collections SET status = $1, updated_at = NOW()
-             WHERE student_id = $2 AND month = $3`,
-            [omStatus, student.id, om]
+            `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+             VALUES ${smClauses.join(', ')}
+             ON CONFLICT (student_id, month)
+             DO UPDATE SET status = 'cleared', due_date = EXCLUDED.due_date, updated_at = NOW()`,
+            smParams
           );
         }
       }
