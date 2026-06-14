@@ -1331,6 +1331,321 @@ class VicePrincipalService {
       students
     };
   }
+
+  async getTeacherAttendanceOversight(branchId: string, date?: string) {
+    const ethNow = getEthiopianNow();
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
+    if (!gregDateStr) {
+      throw new Error('Invalid Ethiopian date format');
+    }
+
+    // Check weekend or calendar
+    const calendarCheck = await pool.query(
+      `SELECT 
+        CASE 
+          WHEN EXTRACT(ISODOW FROM $1::date) IN (6, 7) THEN 'Weekend'
+          ELSE NULL
+        END as weekend_type,
+        (
+          SELECT json_build_object('day_type', sc.day_type, 'title', sc.title, 'description', sc.description)
+          FROM school_calendar sc
+          WHERE $1::date BETWEEN sc.start_date AND sc.end_date
+            AND (sc.branch_id = $2 OR sc.branch_id IS NULL)
+            AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
+          LIMIT 1
+        ) as calendar_event`,
+      [gregDateStr, branchId]
+    );
+
+    const row = calendarCheck.rows[0];
+    if (row && (row.weekend_type || row.calendar_event)) {
+      return {
+        isWorkingDay: false,
+        reason: row.weekend_type || row.calendar_event.day_type,
+        title: row.weekend_type ? 'Weekend' : row.calendar_event.title,
+        teachers: [],
+        proxies: [],
+        schedules: []
+      };
+    }
+
+    // Working day! Get teachers and their attendance status
+    const teachersResult = await pool.query(
+      `SELECT 
+        t.id AS teacher_id,
+        u.id AS user_id,
+        u.name,
+        u.email,
+        t.department,
+        t.subjects,
+        COALESCE(ea.status, 'present') AS attendance_status,
+        ea.id AS attendance_id
+      FROM public.users u
+      JOIN public.teachers t ON t.user_id = u.id
+      LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $1::date
+      WHERE u.branch_id = $2 AND u.role = 'teacher' AND u.status = 'Approved'
+      ORDER BY u.name ASC`,
+      [gregDateStr, branchId]
+    );
+
+    // Fetch proxy assignments for today
+    const proxiesResult = await pool.query(
+      `SELECT 
+        pa.id,
+        pa.absent_teacher_id,
+        pa.proxy_teacher_id,
+        pa.period_number,
+        pa.class_name,
+        pa.section,
+        pa.subject,
+        u_proxy.name as proxy_teacher_name
+      FROM public.teacher_proxy_assignments pa
+      JOIN public.teachers t_proxy ON pa.proxy_teacher_id = t_proxy.id
+      JOIN public.users u_proxy ON t_proxy.user_id = u_proxy.id
+      WHERE pa.date = $1::date AND pa.branch_id = $2`,
+      [gregDateStr, branchId]
+    );
+
+    // Fetch schedules for the weekday of gregDateStr
+    const dayOfWeekName = new Date(gregDateStr as string).toLocaleDateString('en-US', { weekday: 'long' });
+    
+    const schedulesResult = await pool.query(
+      `SELECT 
+        s.id,
+        s.teacher_id,
+        s.class_name,
+        s.section,
+        s.subject,
+        s.period_number,
+        s.time_slot
+      FROM public.schedules s
+      JOIN public.teachers t ON s.teacher_id = t.id
+      JOIN public.users u ON t.user_id = u.id
+      WHERE u.branch_id = $1 AND s.day = $2
+      ORDER BY s.period_number ASC`,
+      [branchId, dayOfWeekName]
+    );
+
+    return {
+      isWorkingDay: true,
+      teachers: teachersResult.rows,
+      proxies: proxiesResult.rows,
+      schedules: schedulesResult.rows,
+      dayOfWeek: dayOfWeekName
+    };
+  }
+
+  async recordTeacherAttendance(branchId: string, userId: string, date: string, status: string, recordedBy: string) {
+    const ethNow = getEthiopianNow();
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
+    if (!gregDateStr) {
+      throw new Error('Invalid Ethiopian date format');
+    }
+
+    // Reconcile user belongs to branch
+    const userResult = await pool.query('SELECT id, role FROM public.users WHERE id = $1 AND branch_id = $2', [userId, branchId]);
+    if (userResult.rows.length === 0) {
+      throw new Error('Teacher not found in this branch');
+    }
+
+    const result = await pool.query(
+      `INSERT INTO public.employee_attendance (user_id, date, status, recorded_by)
+       VALUES ($1, $2::date, $3, $4)
+       ON CONFLICT (user_id, date) 
+       DO UPDATE SET 
+         status = EXCLUDED.status,
+         recorded_by = EXCLUDED.recorded_by,
+         created_at = NOW()
+       RETURNING *`,
+      [userId, gregDateStr, status, recordedBy]
+    );
+
+    // If marked present, delete any proxy schedules for this teacher as absent_teacher
+    if (status === 'present') {
+      const teacherRes = await pool.query('SELECT id FROM public.teachers WHERE user_id = $1', [userId]);
+      if (teacherRes.rows.length > 0) {
+        await pool.query(
+          `DELETE FROM public.teacher_proxy_assignments 
+           WHERE absent_teacher_id = $1 AND date = $2::date`,
+          [teacherRes.rows[0].id, gregDateStr]
+        );
+      }
+    }
+
+    return result.rows[0];
+  }
+
+  async getProxyCandidates(
+    branchId: string,
+    date: string,
+    className: string,
+    section: string,
+    periodNumber: number,
+    absentTeacherId: string
+  ) {
+    const ethNow = getEthiopianNow();
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
+    if (!gregDateStr) {
+      throw new Error('Invalid Ethiopian date format');
+    }
+    const dayOfWeekName = new Date(gregDateStr as string).toLocaleDateString('en-US', { weekday: 'long' });
+
+    // Parse class name and section dynamically from combined string
+    let parsedClass = className;
+    let parsedSection = section || '';
+    const sectionIndex = className.indexOf('Section');
+    if (sectionIndex > 0) {
+      parsedClass = className.substring(0, sectionIndex).trim();
+      parsedSection = className.substring(sectionIndex).trim();
+    } else {
+      const match = className.match(/^(\d+)([A-Z])$/i);
+      if (match) {
+        parsedClass = match[1];
+        parsedSection = match[2];
+      }
+    }
+
+    const result = await pool.query(
+      `WITH present_teachers AS (
+          SELECT 
+            t.id AS teacher_id,
+            u.id AS user_id,
+            u.name,
+            t.department,
+            EXISTS (
+              SELECT 1 FROM public.class_teachers ct
+              JOIN public.classes c ON ct.class_id = c.id
+              WHERE ct.teacher_id = t.id 
+                AND (
+                  (c.name = $3 AND c.section = $4) OR
+                  (c.name || c.section = $8)
+                )
+              
+              UNION
+              
+              SELECT 1 FROM public.classes c
+              WHERE c.teacher_id = t.id 
+                AND (
+                  (c.name = $3 AND c.section = $4) OR
+                  (c.name || c.section = $8)
+                )
+              
+              UNION
+              
+              SELECT 1 FROM public.courses co
+              JOIN public.classes c ON co.class_id = c.id
+              WHERE co.teacher_id = t.id 
+                AND (
+                  (c.name = $3 AND c.section = $4) OR
+                  (c.name || c.section = $8)
+                )
+              
+              UNION
+              
+              SELECT 1 FROM public.schedules s
+              WHERE s.teacher_id = t.id 
+                AND (
+                  (s.class_name = $3 AND s.section = $4) OR
+                  (s.class_name = $8)
+                )
+            ) AS teaches_section
+          FROM public.teachers t
+          JOIN public.users u ON t.user_id = u.id
+          LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $1::date
+          WHERE u.branch_id = $2
+            AND u.role = 'teacher'
+            AND u.status = 'Approved'
+            AND t.id <> $6::uuid
+            AND COALESCE(ea.status, 'present') NOT IN ('absent', 'excused', 'leave')
+      ),
+      free_teachers AS (
+          SELECT pt.*
+          FROM present_teachers pt
+          WHERE NOT EXISTS (
+              SELECT 1 FROM public.schedules s
+              WHERE s.teacher_id = pt.teacher_id
+                AND s.day = $5
+                AND s.period_number = $7
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM public.teacher_proxy_assignments pa
+              WHERE pa.proxy_teacher_id = pt.teacher_id
+                AND pa.date = $1::date
+                AND pa.period_number = $7
+          )
+      )
+      SELECT * 
+      FROM free_teachers
+      ORDER BY teaches_section DESC, name ASC`,
+      [gregDateStr, branchId, parsedClass, parsedSection, dayOfWeekName, absentTeacherId, periodNumber, className]
+    );
+
+    return result.rows;
+  }
+
+  async saveProxyAssignment(
+    branchId: string,
+    absentTeacherId: string,
+    proxyTeacherId: string,
+    date: string,
+    periodNumber: number,
+    className: string,
+    section: string,
+    subject: string
+  ) {
+    const ethNow = getEthiopianNow();
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ethNow.dateStr;
+    const gregDateStr = ethiopianToGregorianIso(targetDate);
+    if (!gregDateStr) {
+      throw new Error('Invalid Ethiopian date format');
+    }
+
+    // Parse class name and section dynamically from combined string if needed
+    let parsedClass = className;
+    let parsedSection = section || '';
+    const sectionIndex = className.indexOf('Section');
+    if (sectionIndex > 0) {
+      parsedClass = className.substring(0, sectionIndex).trim();
+      parsedSection = className.substring(sectionIndex).trim();
+    } else {
+      const match = className.match(/^(\d+)([A-Z])$/i);
+      if (match) {
+        parsedClass = match[1];
+        parsedSection = match[2];
+      }
+    }
+
+    const result = await pool.query(
+      `INSERT INTO public.teacher_proxy_assignments 
+         (branch_id, absent_teacher_id, proxy_teacher_id, date, period_number, class_name, section, subject)
+       VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8)
+       ON CONFLICT (proxy_teacher_id, date, period_number) 
+       DO UPDATE SET 
+         absent_teacher_id = EXCLUDED.absent_teacher_id,
+         class_name = EXCLUDED.class_name,
+         section = EXCLUDED.section,
+         subject = EXCLUDED.subject
+       RETURNING *`,
+      [branchId, absentTeacherId, proxyTeacherId, gregDateStr, periodNumber, parsedClass, parsedSection, subject]
+    );
+    return result.rows[0];
+  }
+
+  async deleteProxyAssignment(assignmentId: string, branchId: string) {
+    const result = await pool.query(
+      `DELETE FROM public.teacher_proxy_assignments 
+       WHERE id = $1 AND branch_id = $2 
+       RETURNING *`,
+      [assignmentId, branchId]
+    );
+    if (result.rows.length === 0) {
+      throw new Error('Proxy assignment not found');
+    }
+    return result.rows[0];
+  }
 }
 
 export default new VicePrincipalService();
