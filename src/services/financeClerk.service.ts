@@ -640,6 +640,34 @@ class FinanceClerkService {
         [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
       );
 
+      // ── One-time fee deduction expiry ─────────────────────────────────────
+      // If a monthly payment was made and there is an approved fee deduction for
+      // this student+month, mark it as 'used' so it cannot be applied again in
+      // any future month. Also reset the student's approval workflow to 'none'
+      // so they must submit a new request for subsequent months.
+      const paidMonthly = toInsertItems.some(it => it.feeType === 'monthly');
+      if (paidMonthly) {
+        const dedUsedRes = await client.query(
+          `UPDATE fee_deductions
+           SET status = 'used', updated_at = NOW()
+           WHERE student_id = $1 AND month = $2 AND status = 'approved'
+           RETURNING id`,
+          [data.studentId, data.month]
+        );
+        if (dedUsedRes.rowCount && dedUsedRes.rowCount > 0) {
+          // Reset student workflow — they must re-apply for the next month
+          await client.query(
+            `UPDATE students
+             SET fee_approval_status = 'none'::fee_approval_status,
+                 fee_status = 'standard',
+                 requested_aid_amount = 0,
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [data.studentId]
+          );
+        }
+      }
+
       // ── Summer / carry-over cross-month settlement ────────────────────────────
       // Registration fee is a ONE-TIME annual charge. If paid in any summer month
       // (Hamle 11, Nehase 12, Pagume 13) OR as a carry-over in a later month,
@@ -847,6 +875,8 @@ class FinanceClerkService {
         totalDue,
         totalPaid,
         totalRemaining: Math.max(0, totalDue - totalPaid),
+        // Fee deduction (one-time per month approval)
+        approvedDeduction,
         // Aid summary
         approvedAidTotal,
         aidUsed,
