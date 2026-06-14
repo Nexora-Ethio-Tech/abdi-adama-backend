@@ -15,11 +15,11 @@ router.use(roleGuard([UserRole.TEACHER]));
 
 // Validation schemas
 const markAttendanceSchema = Joi.object({
-  date: Joi.date().iso().required(),
+  date: Joi.string().regex(/^\d{4}-\d{2}-\d{2}$/).required(),
   attendanceRecords: Joi.array().items(
     Joi.object({
       studentId: Joi.string().uuid().required(),
-      status: Joi.string().valid('present', 'absent', 'late', 'excused').required()
+      status: Joi.string().valid('present', 'absent', 'excused').required()
     })
   ).min(1).required()
 });

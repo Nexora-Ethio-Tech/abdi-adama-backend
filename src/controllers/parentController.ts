@@ -294,8 +294,8 @@ export const getChildAttendance = async (req: AuthRequest, res: Response) => {
 
     if (month && year) {
       dateFilter = `
-        AND EXTRACT(MONTH FROM sa.date) = $2
-        AND EXTRACT(YEAR FROM sa.date) = $3
+        AND SPLIT_PART(sa.date, '-', 2)::int = $2
+        AND SPLIT_PART(sa.date, '-', 1)::int = $3
       `;
       params.push(parseInt(month as string), parseInt(year as string));
     }
