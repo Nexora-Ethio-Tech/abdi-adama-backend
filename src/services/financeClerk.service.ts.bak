@@ -3,7 +3,6 @@ import schoolAdminService from './schoolAdmin.service';
 import { gregorianToEthiopic, todayEthiopic } from '../utils/ethiopicUtils';
 import { generateCredentials } from '../utils/credentialGenerator';
 import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
-import { getCachedFinanceSetting } from '../cache/financeSettingsCache';
 
 class FinanceClerkService {
   // Get available aid allocations for a student (active allocations with remaining balance)
@@ -91,8 +90,9 @@ class FinanceClerkService {
   }
 
   private async getFinanceSettingNumber(key: string, defaultValue = 0): Promise<number> {
-    // Uses in-memory cache — refreshes every 60s instead of querying per call
-    return getCachedFinanceSetting(key, defaultValue);
+    const result = await pool.query(`SELECT value FROM finance_settings WHERE key = $1 LIMIT 1`, [key]);
+    const value = Number(result.rows[0]?.value);
+    return Number.isFinite(value) && value > 0 ? value : defaultValue;
   }
 
   /**
@@ -291,48 +291,42 @@ class FinanceClerkService {
   }
 
   private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string, now = new Date()) {
+    const feeTypes = ['monthly', 'bus', 'penalty', 'registration'];
+    let outstandingTotal = 0;
+
     const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
     const [_, monthNum] = month.split('-').map(Number);
     const isSummer = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
-    // Single CTE query: fetch paid amounts for ALL fee types + aid in one round-trip
-    const batchRes = await client.query(
-      `WITH paid AS (
-         SELECT pi.fee_type, COALESCE(SUM(pi.amount), 0) AS total
-         FROM payments p
-         JOIN payment_items pi ON pi.payment_id = p.id
-         WHERE p.student_id = $1 AND p.month = $2
-         GROUP BY pi.fee_type
-       ),
-       aid AS (
-         SELECT COALESCE(SUM(amount), 0) AS total
-         FROM student_aid_usages
-         WHERE student_id = $1 AND month = $2
-       )
-       SELECT
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'monthly'), 0) AS monthly_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'bus'), 0) AS bus_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'penalty'), 0) AS penalty_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'registration'), 0) AS registration_paid,
-         COALESCE((SELECT total FROM aid), 0) AS aid_paid`,
-      [student.id, month]
-    );
+    for (const ft of feeTypes) {
+      let due = 0;
+      if (ft === 'monthly') due = isSummer ? 0 : Number(student.monthly_fee || 0);
+      else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+      else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
+      else if (ft === 'registration') due = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
 
-    const row = batchRes.rows[0];
-    const monthlyDue = isSummer ? 0 : Number(student.monthly_fee || 0);
-    const busDue = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
-    const penaltyDueVal = isSummer ? 0 : penaltyDue;
-    const registrationDue = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
+      const paidRes = await client.query(
+        `SELECT COALESCE(SUM(pi.amount),0) as paid
+         FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
+        [student.id, month, ft]
+      );
 
-    const monthlyPaid = Number(row.monthly_paid) + Number(row.aid_paid);
-    const busPaid = Number(row.bus_paid);
-    const penaltyPaid = Number(row.penalty_paid);
-    const registrationPaid = Number(row.registration_paid);
+      let paid = Number(paidRes.rows[0].paid || 0);
+      if (ft === 'monthly') {
+        const aidPaidRes = await client.query(
+          `SELECT COALESCE(SUM(amount),0) as paid
+           FROM student_aid_usages
+           WHERE student_id = $1 AND month = $2`,
+          [student.id, month]
+        );
+        paid += Number(aidPaidRes.rows[0].paid || 0);
+      }
 
-    return Math.max(0, monthlyDue - monthlyPaid)
-         + Math.max(0, busDue - busPaid)
-         + Math.max(0, penaltyDueVal - penaltyPaid)
-         + Math.max(0, registrationDue - registrationPaid);
+      outstandingTotal += Math.max(0, due - paid);
+    }
+
+    return outstandingTotal;
   }
 
   /**
@@ -343,54 +337,52 @@ class FinanceClerkService {
   private async computeMonthlyFeesOutstanding(
     client: any, student: any, branchId: string, month: string, now = new Date()
   ) {
+    // Only include recurring monthly fees, NOT registration (one-time fee)
+    const feeTypes = ['monthly', 'bus', 'penalty'];
+    let outstandingTotal = 0;
+
     const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
     const [_, monthNum] = month.split('-').map(Number);
     const isSummer = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
-    // Single CTE query: fetch paid amounts, fee deductions, and aid in one round-trip
-    const batchRes = await client.query(
-      `WITH paid AS (
-         SELECT pi.fee_type, COALESCE(SUM(pi.amount), 0) AS total
-         FROM payments p
-         JOIN payment_items pi ON pi.payment_id = p.id
-         WHERE p.student_id = $1 AND p.month = $2
-         GROUP BY pi.fee_type
-       ),
-       deductions AS (
-         SELECT COALESCE(SUM(approved_amount), 0) AS total
-         FROM fee_deductions
-         WHERE student_id = $1 AND month = $2 AND status = 'approved'
-       ),
-       aid AS (
-         SELECT COALESCE(SUM(amount), 0) AS total
-         FROM student_aid_usages
-         WHERE student_id = $1 AND month = $2
-       )
-       SELECT
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'monthly'), 0) AS monthly_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'bus'), 0) AS bus_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'penalty'), 0) AS penalty_paid,
-         COALESCE((SELECT total FROM deductions), 0) AS approved_deduction,
-         COALESCE((SELECT total FROM aid), 0) AS aid_paid`,
-      [student.id, month]
-    );
+    for (const ft of feeTypes) {
+      let due = 0;
+      if (ft === 'monthly') {
+        const standardFee = isSummer ? 0 : Number(student.monthly_fee || 0);
+        const dedRes = await client.query(
+          `SELECT COALESCE(approved_amount, 0) as approved_amount
+           FROM fee_deductions
+           WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+          [student.id, month]
+        );
+        const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+        due = Math.max(0, standardFee - approvedDeduction);
+      }
+      else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+      else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
 
-    const row = batchRes.rows[0];
+      const paidRes = await client.query(
+        `SELECT COALESCE(SUM(pi.amount),0) as paid
+         FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
+        [student.id, month, ft]
+      );
 
-    // Monthly fee after deduction
-    const standardFee = isSummer ? 0 : Number(student.monthly_fee || 0);
-    const monthlyDue = Math.max(0, standardFee - Number(row.approved_deduction));
-    const monthlyPaid = Number(row.monthly_paid) + Number(row.aid_paid);
+      let paid = Number(paidRes.rows[0].paid || 0);
+      if (ft === 'monthly') {
+        const aidPaidRes = await client.query(
+          `SELECT COALESCE(SUM(amount),0) as paid
+           FROM student_aid_usages
+           WHERE student_id = $1 AND month = $2`,
+          [student.id, month]
+        );
+        paid += Number(aidPaidRes.rows[0].paid || 0);
+      }
 
-    const busDue = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
-    const busPaid = Number(row.bus_paid);
+      outstandingTotal += Math.max(0, due - paid);
+    }
 
-    const penaltyDueVal = isSummer ? 0 : penaltyDue;
-    const penaltyPaid = Number(row.penalty_paid);
-
-    return Math.max(0, monthlyDue - monthlyPaid)
-         + Math.max(0, busDue - busPaid)
-         + Math.max(0, penaltyDueVal - penaltyPaid);
+    return outstandingTotal;
   }
 
   // Record an itemized payment and update collections status

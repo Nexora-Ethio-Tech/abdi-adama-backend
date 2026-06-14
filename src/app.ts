@@ -96,13 +96,12 @@ const loginLimiter = rateLimit({
 app.use('/api/', limiter);
 app.use('/api/auth/login', loginLimiter);
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Body parsers already registered at lines 32-33 with 10mb limit
 
 app.use((req: Request, _res: Response, next: NextFunction) => {
-  logger.info(`${req.method} ${req.path}`, {
+  // Use debug level to avoid I/O overhead on every request in production
+  logger.debug(`${req.method} ${req.path}`, {
     ip: req.ip,
-    userAgent: req.get('user-agent')
   });
   next();
 });
