@@ -2,7 +2,7 @@ import pool from '../config/database';
 import schoolAdminService from './schoolAdmin.service';
 import { gregorianToEthiopic, todayEthiopic } from '../utils/ethiopicUtils';
 import { generateCredentials } from '../utils/credentialGenerator';
-import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
+import { gregorianToEthiopian, ethiopianToGregorianDate, nowInEAT, getTodayEATDateString } from '../shared/ethiopianCalendar';
 import { getCachedFinanceSetting } from '../cache/financeSettingsCache';
 
 class FinanceClerkService {
@@ -102,11 +102,11 @@ class FinanceClerkService {
    * Years >= 2015 are assumed already Gregorian (safe cut-off for this system).
    */
   private ethiopianDateStringToGregorian(dateStr: string): string {
-    if (!dateStr) return new Date().toISOString().slice(0, 10);
+    if (!dateStr) return getTodayEATDateString();
     // Strip any " EC" suffix if present
     const cleaned = dateStr.replace(/\s*EC\s*$/i, '').trim();
     const parts = cleaned.split('-').map(Number);
-    if (parts.length !== 3 || parts.some(isNaN)) return new Date().toISOString().slice(0, 10);
+    if (parts.length !== 3 || parts.some(isNaN)) return getTodayEATDateString();
     const [y, m, d] = parts;
     // Ethiopian years for this school system are in the 2000–2030 range.
     // Gregorian years for dates relevant to this system start at 2020+.
@@ -114,9 +114,12 @@ class FinanceClerkService {
     if (y < 2015) {
       try {
         const gregDate = ethiopianToGregorianDate({ year: y, month: m, day: d });
-        return gregDate.toISOString().slice(0, 10);
+        const gy = gregDate.getFullYear();
+        const gm = String(gregDate.getMonth() + 1).padStart(2, '0');
+        const gd = String(gregDate.getDate()).padStart(2, '0');
+        return `${gy}-${gm}-${gd}`;
       } catch {
-        return new Date().toISOString().slice(0, 10);
+        return getTodayEATDateString();
       }
     }
     // Already Gregorian
@@ -182,7 +185,7 @@ class FinanceClerkService {
     );
     const months = Array.from(monthsStatusMap.keys());
 
-    const ethNow = gregorianToEthiopian(new Date());
+    const ethNow = gregorianToEthiopian(nowInEAT());
     const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
     if (!months.includes(currentMonth)) {
       months.push(currentMonth);
@@ -210,7 +213,7 @@ class FinanceClerkService {
     }
 
     const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
-    const now = new Date();
+    const now = nowInEAT();
 
     for (const month of months) {
       if (monthsStatusMap.get(month) === 'cleared') {
@@ -237,7 +240,7 @@ class FinanceClerkService {
     }
   }
 
-  async getPenaltyDueForMonth(client: any, student: any, month: string, now = new Date()) {
+  async getPenaltyDueForMonth(client: any, student: any, month: string, now = nowInEAT()) {
     const [_, monthNum] = month.split('-').map(Number);
     if (monthNum === 11 || monthNum === 12 || monthNum === 13) return 0; // No penalty for summer months
 
@@ -290,7 +293,7 @@ class FinanceClerkService {
     return defaultPenalty;
   }
 
-  private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string, now = new Date()) {
+  private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string, now = nowInEAT()) {
     const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
     const [_, monthNum] = month.split('-').map(Number);
     const isSummer = monthNum === 11 || monthNum === 12 || monthNum === 13;
@@ -341,7 +344,7 @@ class FinanceClerkService {
    * This method is used to determine if a month's collection_status should be 'cleared'
    */
   private async computeMonthlyFeesOutstanding(
-    client: any, student: any, branchId: string, month: string, now = new Date()
+    client: any, student: any, branchId: string, month: string, now = nowInEAT()
   ) {
     const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
     const [_, monthNum] = month.split('-').map(Number);
@@ -447,7 +450,12 @@ class FinanceClerkService {
 
       // Enforce constraint: Penalty fees must be paid in full before paying other fees
       // Use the payment's own date as "now" so the penalty is anchored to when they actually paid
-      const paymentNow = data.date ? new Date(data.date) : new Date();
+      let paymentNow = nowInEAT();
+      if (data.date) {
+        const gregStr = this.ethiopianDateStringToGregorian(data.date);
+        const [py, pm, pd] = gregStr.split('-').map(Number);
+        paymentNow = new Date(py, pm - 1, pd);
+      }
       const penaltyDue = await this.getPenaltyDueForMonth(client, student, data.month, paymentNow);
       const penaltyPaidRes = await client.query(
         `SELECT COALESCE(SUM(pi.amount), 0) AS paid
@@ -592,7 +600,8 @@ class FinanceClerkService {
       // Also record a finance_transactions summary (backwards compatibility) - amount is cash collected
       // Use the same converted Gregorian date as the payment for consistency
       const actualGregorianDateStr = paymentDateGregorian;
-      const ethDate = gregorianToEthiopic(new Date(actualGregorianDateStr));
+      const [py, pm, pd] = actualGregorianDateStr.split('-').map(Number);
+      const ethDate = gregorianToEthiopic(new Date(py, pm - 1, pd));
 
       for (const it of itemsToPersist) {
         if (it.cashAmount && it.cashAmount > 0) {
@@ -616,8 +625,10 @@ class FinanceClerkService {
       const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, data.month);
       const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
       const dueDate = this.getPaymentDueDateForMonth(data.month, deadlineDay);
-      const now = new Date();
+      const now = nowInEAT();
+
       let status = 'in_collections';
+
       const [_, outMonthNum] = data.month.split('-').map(Number);
       if (outstandingTotal <= 0) status = 'cleared';
       else if (now > dueDate) status = (outMonthNum === 11 || outMonthNum === 12 || outMonthNum === 13) ? 'in_collections' : 'overdue';
@@ -709,7 +720,7 @@ class FinanceClerkService {
 
   // Get outstanding amounts per fee type for a student for a given month
   async getStudentOutstanding(studentId: string, month?: string) {
-    const ethNow = gregorianToEthiopian(new Date());
+    const ethNow = gregorianToEthiopian(nowInEAT());
     const targetMonth = month || `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
 
     // Fetch student fees - bus fee is 0 if student doesn't use transport
@@ -850,7 +861,7 @@ class FinanceClerkService {
 
   // Get students with fee information
   async getStudentsWithFees(branchId?: string | null, search?: string, feeStatus?: string, grade?: string) {
-    const ethNow = gregorianToEthiopian(new Date());
+    const ethNow = gregorianToEthiopian(nowInEAT());
     const month = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
     try {
       await this.syncCollectionStatusesForMonth(month, branchId || undefined);
@@ -932,7 +943,7 @@ class FinanceClerkService {
     const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
     const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
     const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
-    const isPastDeadline = new Date() > dueDate;
+    const isPastDeadline = nowInEAT() > dueDate;
 
     return result.rows.map((student: any) => {
       // Students without a collection record are still within their billing period → Pending
@@ -1236,14 +1247,17 @@ class FinanceClerkService {
       );
 
       // Calculate bus_start_date based on provided day or today's Gregorian date
-      let busStartDate = new Date().toISOString().slice(0, 10); // Default: today's Gregorian date
+      let busStartDate = getTodayEATDateString(); // Default: today's Gregorian date
       if (data.busStartDay !== undefined && data.busStartDay >= 1 && data.busStartDay <= 30) {
         // If a specific day is provided, calculate the Gregorian date for that day in current month
-        const today = new Date();
-        const currentMonth = today.getMonth();
-        const currentYear = today.getFullYear();
+        const today = nowInEAT();
+        const currentMonth = today.getUTCMonth();
+        const currentYear = today.getUTCFullYear();
         const startDateObj = new Date(currentYear, currentMonth, data.busStartDay);
-        busStartDate = startDateObj.toISOString().slice(0, 10);
+        const sy = startDateObj.getFullYear();
+        const sm = String(startDateObj.getMonth() + 1).padStart(2, '0');
+        const sd = String(startDateObj.getDate()).padStart(2, '0');
+        busStartDate = `${sy}-${sm}-${sd}`;
       }
 
       await client.query(
@@ -1309,8 +1323,8 @@ class FinanceClerkService {
       // Calculate actual days used based on start_date and stop_date using Ethiopian calendar
       let actualDaysUsed = Number(data.daysUsed);
       if (student.bus_start_date) {
-        const startEth = gregorianToEthiopian(new Date(student.bus_start_date));
-        const stopEth = gregorianToEthiopian(new Date());
+        const startEth = gregorianToEthiopian(student.bus_start_date);
+        const stopEth = gregorianToEthiopian(nowInEAT());
         
         if (startEth.year === stopEth.year && startEth.month === stopEth.month) {
           actualDaysUsed = stopEth.day - startEth.day + 1;
@@ -1338,12 +1352,14 @@ class FinanceClerkService {
       await client.query(
         `INSERT INTO finance_transactions
           (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
-         VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6, $7, $8)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        // EAT-correct today date passed as explicit parameter
         [
           data.studentId,
           student.name,
           amountDue,
           'Transport Stop Charge',
+          getTodayEATDateString(),
           data.verifiedBy,
           data.branchId,
           ethToday.month,
@@ -1445,7 +1461,7 @@ class FinanceClerkService {
       const student = result.rows[0];
 
       if (data.feeStatus === 'reduced') {
-        const ethNow = gregorianToEthiopian(new Date());
+        const ethNow = gregorianToEthiopian(nowInEAT());
         const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
         await client.query(
           `INSERT INTO fee_deductions (student_id, month, requested_amount, approved_amount, status, approved_by, updated_at)
@@ -1459,7 +1475,7 @@ class FinanceClerkService {
           [studentId, currentMonth, data.requestedAidAmount || 0]
         );
       } else if (data.feeStatus === 'standard') {
-        const ethNow = gregorianToEthiopian(new Date());
+        const ethNow = gregorianToEthiopian(nowInEAT());
         const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
         await client.query(
           `DELETE FROM fee_deductions WHERE student_id = $1 AND month = $2`,
@@ -1482,11 +1498,12 @@ class FinanceClerkService {
   // Get dashboard statistics
   async getDashboardStats(branchId: string) {
     // Today's collection
+    const eatTodayDate = getTodayEATDateString();
     const todayResult = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) as total
        FROM finance_transactions
-       WHERE branch_id = $1 AND date = CURRENT_DATE`,
-      [branchId]
+       WHERE branch_id = $1 AND date = $2`,
+      [branchId, eatTodayDate]
     );
 
     // This month's revenue (Ethiopic)
@@ -1566,7 +1583,7 @@ class FinanceClerkService {
 
   // Get overdue payments - returns all students with ANY overdue month, with itemised unpaid amounts
   async getOverduePayments(branchId: string) {
-    const ethNow = gregorianToEthiopian(new Date());
+    const ethNow = gregorianToEthiopian(nowInEAT());
     const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
     // Sync the current month so newly overdue students are flagged
     await this.syncCollectionStatusesForMonth(currentMonth, branchId);
@@ -1768,7 +1785,7 @@ class FinanceClerkService {
 
       const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
       const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
-      const now = new Date();
+      const now = nowInEAT();
       const [, monthNumStr] = month.split('-');
       const monthNum = parseInt(monthNumStr, 10);
       const isSummerMonth = monthNum === 11 || monthNum === 12 || monthNum === 13;
@@ -1883,7 +1900,7 @@ class FinanceClerkService {
 
   // Get daily collection report
   async getDailyReport(branchId: string, date?: string) {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date || getTodayEATDateString();
 
     const result = await pool.query(
       `SELECT 
@@ -1946,8 +1963,9 @@ class FinanceClerkService {
       try {
         await client.query('BEGIN');
 
-        const paymentDateGregorian = new Date().toISOString().slice(0, 10);
-        const ethDate = gregorianToEthiopic(new Date());
+        const paymentDateGregorian = getTodayEATDateString();
+        const eatNow = nowInEAT();
+        const ethDate = gregorianToEthiopic(new Date(eatNow.getUTCFullYear(), eatNow.getUTCMonth(), eatNow.getUTCDate()));
         const currentMonth = `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
 
         // Insert into payments

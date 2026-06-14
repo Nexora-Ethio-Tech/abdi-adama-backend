@@ -27,6 +27,8 @@ export interface EthiopicDate {
 
 /**
  * Convert a JavaScript Date (Gregorian) to its Ethiopic month name and year.
+ * The Date object's LOCAL time components are used (getMonth, getDate, getFullYear).
+ * When you need the current Ethiopic date, pass nowInEAT() from ethiopianCalendar.
  */
 export function gregorianToEthiopic(date: Date): EthiopicDate {
   const m = date.getMonth() + 1; // 1–12
@@ -64,8 +66,17 @@ export function gregorianToEthiopic(date: Date): EthiopicDate {
 }
 
 /**
- * Returns EthiopicDate for today.
+ * Returns EthiopicDate for today, using East Africa Time (UTC+3).
+ * Importing nowInEAT locally to avoid circular deps between shared/ and utils/.
  */
 export function todayEthiopic(): EthiopicDate {
-  return gregorianToEthiopic(new Date());
+  const EAT_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const eatDate = new Date(Date.now() + EAT_OFFSET_MS);
+  // eatDate's UTC parts now reflect EAT local time
+  const proxy = new Date(
+    eatDate.getUTCFullYear(),
+    eatDate.getUTCMonth(),
+    eatDate.getUTCDate()
+  );
+  return gregorianToEthiopic(proxy);
 }

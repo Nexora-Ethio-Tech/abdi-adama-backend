@@ -6,6 +6,31 @@ export type EthiopianDateParts = {
 
 const ETHIOPIAN_EPOCH = 1723856;
 
+/**
+ * East Africa Time is UTC+3 with no DST.
+ * Returns a new Date object whose local-time components (getFullYear, getMonth, getDate)
+ * reflect the current moment in Addis Ababa, regardless of the server's OS timezone.
+ *
+ * Use this instead of `new Date()` whenever you need "today" in EAT.
+ */
+export const nowInEAT = (): Date => {
+  const EAT_OFFSET_MS = 3 * 60 * 60 * 1000; // UTC+3
+  const utcMs = Date.now();
+  return new Date(utcMs + EAT_OFFSET_MS);
+};
+
+/**
+ * Returns today's date in EAT as a YYYY-MM-DD string.
+ * Safe to use for database writes that expect a plain date (no time shift).
+ */
+export const getTodayEATDateString = (): string => {
+  const eat = nowInEAT();
+  const y = eat.getUTCFullYear();
+  const m = String(eat.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(eat.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 const toJdnFromGregorian = (year: number, month: number, day: number) => {
   const a = Math.floor((14 - month) / 12);
   const y = year + 4800 - a;
@@ -34,8 +59,41 @@ const jdnToEthiopian = (jdn: number): EthiopianDateParts => {
 const ethiopianToJdn = ({ year, month, day }: EthiopianDateParts) =>
   1724220 + 365 * (year - 1) + Math.floor(year / 4) + 30 * (month - 1) + day;
 
-export const gregorianToEthiopian = (date: Date): EthiopianDateParts => {
-  const jdn = toJdnFromGregorian(date.getFullYear(), date.getMonth() + 1, date.getDate());
+/**
+ * Convert a Gregorian Date or date string to Ethiopian calendar parts.
+ * - If given a Date object, uses its LOCAL time components.
+ * - If given a string:
+ *   - Plain YYYY-MM-DD → parsed as local midnight (no UTC shift).
+ *   - ISO datetime (contains 'T') → the UTC timestamp is shifted to EAT (+3h)
+ *     before extraction, so stored UTC timestamps display the correct EAT day.
+ */
+export const gregorianToEthiopian = (date: Date | string): EthiopianDateParts => {
+  let year: number, month: number, day: number;
+
+  if (typeof date === 'string') {
+    if (date.includes('T') || date.endsWith('Z')) {
+      // ISO datetime: shift to EAT before reading date parts
+      const parsed = new Date(date);
+      if (isNaN(parsed.getTime())) return { year: 2018, month: 1, day: 1 };
+      const EAT_OFFSET_MS = 3 * 60 * 60 * 1000;
+      const eat = new Date(parsed.getTime() + EAT_OFFSET_MS);
+      year = eat.getUTCFullYear();
+      month = eat.getUTCMonth() + 1;
+      day = eat.getUTCDate();
+    } else {
+      // Plain YYYY-MM-DD: parse as local date to avoid UTC shift
+      const parts = date.split('-').map(Number);
+      if (parts.length !== 3 || parts.some(isNaN)) return { year: 2018, month: 1, day: 1 };
+      year = parts[0]; month = parts[1]; day = parts[2];
+    }
+  } else {
+    if (isNaN(date.getTime())) return { year: 2018, month: 1, day: 1 };
+    year = date.getFullYear();
+    month = date.getMonth() + 1;
+    day = date.getDate();
+  }
+
+  const jdn = toJdnFromGregorian(year, month, day);
   return jdnToEthiopian(jdn);
 };
 
@@ -53,13 +111,16 @@ export const ethiopianToGregorianDate = (parts: EthiopianDateParts): Date => {
   return new Date(year, month - 1, day);
 };
 
+/** Returns the current Ethiopian calendar year using EAT-correct date. */
 export function getCurrentECYear(): number {
-  return gregorianToEthiopian(new Date()).year;
+  return gregorianToEthiopian(nowInEAT()).year;
 }
 
+/** Returns the current academic semester using EAT-correct date. */
 export function getCurrentSemester(): 1 | 2 {
-  const month = new Date().getMonth() + 1; // 1-based (1=Jan, 12=Dec)
-  const day = new Date().getDate();
+  const eat = nowInEAT();
+  const month = eat.getUTCMonth() + 1; // 1-based
+  const day = eat.getUTCDate();
   // Sep 11 to Jan 31 → First Semester
   if ((month === 9 && day >= 11) || month >= 10 || month === 1) return 1;
   // Feb 1 to Jun 30 → Second Semester
