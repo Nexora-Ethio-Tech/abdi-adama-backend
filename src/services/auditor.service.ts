@@ -1,5 +1,4 @@
 import pool from '../config/database';
-import { todayEthiopic } from '../utils/ethiopicUtils';
 
 class AuditorService {
   // View all payments (READ ONLY)
@@ -300,47 +299,75 @@ class AuditorService {
 
   // Dashboard
   async getDashboard(branchId: string) {
+    // ── Total Payments ──────────────────────────────────────────────────────
+    // Count and sum ALL payments recorded by Finance Officer (all fee types)
     const totalResult = await pool.query(
-      `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
-       FROM finance_transactions
-       WHERE branch_id = $1`,
+      `SELECT
+         COUNT(DISTINCT p.id) AS count,
+         COALESCE(SUM(pi.amount), 0) AS total
+       FROM payments p
+       JOIN payment_items pi ON pi.payment_id = p.id
+       WHERE p.branch_id = $1`,
       [branchId]
     );
 
-    const ethToday = todayEthiopic();
+    // ── Monthly Payments ────────────────────────────────────────────────────
+    // Monthly + Bus + Penalty fees only (excludes Registration)
     const monthlyResult = await pool.query(
-      `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
-       FROM finance_transactions
-       WHERE branch_id = $1
-       AND LOWER(ethiopic_month) = $2
-       AND ethiopic_year = $3`,
-      [branchId, ethToday.month.toLowerCase(), ethToday.year]
+      `SELECT
+         COUNT(DISTINCT p.id) AS count,
+         COALESCE(SUM(pi.amount), 0) AS total
+       FROM payments p
+       JOIN payment_items pi ON pi.payment_id = p.id
+       WHERE p.branch_id = $1
+         AND pi.fee_type IN ('monthly', 'bus', 'penalty')`,
+      [branchId]
     );
 
-    // Count pending fee reduction requests for this branch
+    // ── Pending Approvals ───────────────────────────────────────────────────
+    // Fee deduction requests submitted by Finance Officer awaiting Auditor approval
     const pendingFeeResult = await pool.query(
       `SELECT COUNT(*) as count
        FROM students
-       WHERE branch_id = $1 AND fee_approval_status = 'pending'`,
+       WHERE branch_id = $1 AND fee_approval_status::text = 'pending'`,
       [branchId]
     );
 
-    // Count pending employee loan requests (not scoped to branch — loans are system-wide for auditor review)
+    // Count pending employee loan requests (system-wide — auditor reviews all)
     const pendingLoansResult = await pool.query(
       `SELECT COUNT(*) as count
        FROM loans
        WHERE status = 'pending'`
     );
 
+    // ── Recent Activity ─────────────────────────────────────────────────────
+    // Most recent payment transactions recorded by Finance Officer (last 5)
     const recentResult = await pool.query(
-      `SELECT * FROM finance_transactions
-       WHERE branch_id = $1
-       ORDER BY created_at DESC
+      `SELECT
+         p.id,
+         p.student_id,
+         u.name AS student_name,
+         p.total_amount AS amount,
+         p.date,
+         p.created_at,
+         p.month,
+         p.reference,
+         COALESCE(
+           (SELECT STRING_AGG(pi2.fee_type, ', ') FROM payment_items pi2 WHERE pi2.payment_id = p.id),
+           'payment'
+         ) AS type,
+         p.branch_id
+       FROM payments p
+       JOIN students s ON s.id = p.student_id
+       JOIN users u ON u.id = s.user_id
+       WHERE p.branch_id = $1
+       ORDER BY p.created_at DESC
        LIMIT 5`,
       [branchId]
     );
 
-    // Registration fee stats: count students with a cleared registration-fee and sum the amounts paid
+    // ── Registration Fees ───────────────────────────────────────────────────
+    // Only registration fee payments recorded by Finance Officer
     const regFeeResult = await pool.query(
       `SELECT
          COUNT(DISTINCT p.student_id) AS count,
