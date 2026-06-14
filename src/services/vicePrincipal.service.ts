@@ -487,11 +487,14 @@ class VicePrincipalService {
   }
 
   // Get student transcript
-  async getStudentTranscript(studentId: string, branchId: string) {
+  async getStudentTranscript(studentId: string, branchId: string, academicYear?: string, semester?: number) {
+    const activeYear = academicYear || this.getActiveAcademicYear();
+    const activeSem = semester !== undefined ? semester : this.getActiveSemester();
+
     // Resolve the student using either the internal UUID or the visible school identifier.
     const studentResult = await pool.query(
       `SELECT 
-        s.id, s.grade, s.status,
+        s.id, s.grade, s.status, s.section_id,
         u.name, u.email, u.digital_id
       FROM students s
       JOIN users u ON s.user_id = u.id
@@ -511,7 +514,7 @@ class VicePrincipalService {
 
     const student = studentResult.rows[0];
 
-    // Get all grades grouped by course
+    // Get grades grouped by course for the specified academic year and semester
     const gradesResult = await pool.query(
       `SELECT 
         g.id, g.type, g.score, g.total, g.weight, g.created_at,
@@ -523,8 +526,11 @@ class VicePrincipalService {
       LEFT JOIN teachers t ON c.teacher_id = t.id
       LEFT JOIN users u ON t.user_id = u.id
       WHERE g.student_id = $1
+        AND g.academic_year = $2
+        AND g.semester = $3
+        AND COALESCE(g.is_finalized, false) = true
       ORDER BY c.name, g.created_at DESC`,
-      [student.id]
+      [student.id, activeYear, activeSem]
     );
 
     // Group grades by course and calculate averages
@@ -590,33 +596,107 @@ class VicePrincipalService {
         ? parseFloat((courses.reduce((sum, c) => sum + c.average, 0) / courses.length).toFixed(2))
         : 0;
 
-    // Calculate student's rank in their grade
+    // Calculate student's rank in their section for the specified academic year and semester
     let studentRank = 0;
-    if (student.grade) {
-      const rankResult = await pool.query(
-        `SELECT COUNT(DISTINCT s.id) + 1 as rank
-         FROM students s
-         WHERE s.branch_id = $1
-           AND s.grade = $2
-           AND s.status = 'active'
-         LIMIT 1`,
-        [branchId, student.grade]
-      );
-      studentRank = rankResult.rows.length > 0 ? rankResult.rows[0].rank : 0;
+    let sectionId = null;
+
+    // 1. Try to find the section the student was in during that academic year
+    const sectionCheck = await pool.query(
+      `SELECT DISTINCT c.class_id
+       FROM grades g
+       JOIN courses c ON g.course_id = c.id
+       WHERE g.student_id = $1 AND g.academic_year = $2
+       LIMIT 1`,
+      [student.id, activeYear]
+    );
+
+    if (sectionCheck.rows.length > 0) {
+      sectionId = sectionCheck.rows[0].class_id;
+    } else {
+      sectionId = student.section_id;
     }
 
-    // Get current academic year and semester
-    const currentECYear = getCurrentECYear();
-    const currentSemester = getCurrentSemester();
-    const academicYearDisplay = `${currentECYear} E.C.`;
-    const semesterDisplay = formatSemester(currentSemester);
+    let className = student.grade;
+    let sectionName = '';
+
+    if (sectionId) {
+      const classCheck = await pool.query(
+        `SELECT name, section, grade FROM classes WHERE id = $1`,
+        [sectionId]
+      );
+      if (classCheck.rows.length > 0) {
+        const cls = classCheck.rows[0];
+        className = cls.grade || cls.name || student.grade;
+        sectionName = cls.section ? `Section ${cls.section}` : '';
+      }
+
+      // Get all students who were in this section in this year
+      const sectionStudents = await pool.query(
+        `SELECT DISTINCT s.id
+         FROM students s
+         LEFT JOIN classes cl ON s.section_id = cl.id
+         WHERE s.branch_id = $2
+           AND (
+             s.section_id = $1
+             OR
+             s.id IN (
+               SELECT DISTINCT g.student_id 
+               FROM grades g
+               JOIN courses co ON g.course_id = co.id
+               WHERE co.class_id = $1 AND g.academic_year = $3
+             )
+           )`,
+        [sectionId, branchId, activeYear]
+      );
+
+      const studentAverages: Array<{ studentId: string; average: number }> = [];
+
+      for (const sRow of sectionStudents.rows) {
+        const courseAgg = await pool.query(
+          `SELECT c.id as course_id,
+                  COALESCE(SUM(NULLIF(COALESCE(g.score::text, ''), '')::numeric), 0) AS score,
+                  COALESCE(SUM(NULLIF(COALESCE(g.total::text, ''), '')::numeric), 0) AS total
+           FROM grades g
+           JOIN courses c ON g.course_id = c.id
+           WHERE g.student_id = $1
+             AND COALESCE(g.is_finalized, false) = true
+             AND c.class_id = $2
+             AND g.academic_year = $3
+             AND g.semester = $4
+           GROUP BY c.id`,
+          [sRow.id, sectionId, activeYear, activeSem]
+        );
+
+        let sumPercent = 0;
+        let subjectCount = 0;
+
+        for (const r of courseAgg.rows) {
+          const sVal = parseFloat(r.score) || 0;
+          const tVal = parseFloat(r.total) || 0;
+          const pct = tVal > 0 ? (sVal / tVal) * 100 : 0;
+          sumPercent += pct;
+          subjectCount++;
+        }
+
+        const averagePct = subjectCount > 0 ? sumPercent / subjectCount : 0;
+        studentAverages.push({ studentId: sRow.id, average: averagePct });
+      }
+
+      studentAverages.sort((a, b) => b.average - a.average);
+
+      const index = studentAverages.findIndex(sa => sa.studentId === student.id);
+      if (index !== -1) {
+        studentRank = index + 1;
+      }
+    }
 
     return {
       studentId: student.id,
       studentName: student.name,
-      className: student.grade,
-      academicYear: academicYearDisplay,
-      semester: semesterDisplay,
+      className: className,
+      section: sectionName,
+      academicYear: `${activeYear}`,
+      semester: activeSem === 1 ? 'First Semester' : 'Second Semester',
       overallAverage: overallAverage,
       overallRank: studentRank,
       courses: courses.map(course => ({
@@ -878,22 +958,51 @@ class VicePrincipalService {
     }));
   }
 
-  async getStudentsBySection(sectionId: string, branchId: string) {
-    const result = await pool.query(
-      `SELECT 
-        s.id,
-        s.user_id,
-        u.name as name,
-        s.grade,
-        COALESCE(c.name, s.grade) as section,
-        s.created_at as enrollment_date
-      FROM students s
-      JOIN users u ON s.user_id = u.id
-      JOIN classes c ON s.section_id = c.id
-      WHERE c.id = $1 AND s.branch_id = $2
-      ORDER BY u.name`,
-      [sectionId, branchId]
-    );
+  async getStudentsBySection(sectionId: string, branchId: string, academicYear?: string) {
+    let result;
+    if (academicYear) {
+      result = await pool.query(
+        `SELECT DISTINCT
+          s.id,
+          s.user_id,
+          u.name as name,
+          s.grade,
+          COALESCE(c.name, s.grade) as section,
+          s.created_at as enrollment_date
+        FROM students s
+        JOIN users u ON s.user_id = u.id
+        LEFT JOIN classes c ON s.section_id = c.id
+        WHERE s.branch_id = $2
+          AND (
+            s.section_id = $1
+            OR
+            s.id IN (
+              SELECT DISTINCT g.student_id 
+              FROM grades g
+              JOIN courses co ON g.course_id = co.id
+              WHERE co.class_id = $1 AND g.academic_year = $3
+            )
+          )
+        ORDER BY u.name`,
+        [sectionId, branchId, academicYear]
+      );
+    } else {
+      result = await pool.query(
+        `SELECT 
+          s.id,
+          s.user_id,
+          u.name as name,
+          s.grade,
+          COALESCE(c.name, s.grade) as section,
+          s.created_at as enrollment_date
+        FROM students s
+        JOIN users u ON s.user_id = u.id
+        JOIN classes c ON s.section_id = c.id
+        WHERE c.id = $1 AND s.branch_id = $2
+        ORDER BY u.name`,
+        [sectionId, branchId]
+      );
+    }
 
     return result.rows;
   }
@@ -941,17 +1050,8 @@ class VicePrincipalService {
     const activeYear = academicYear || this.getActiveAcademicYear();
     const activeSem = semester !== undefined ? semester : this.getActiveSemester();
 
-    // Get students in the section
-    const studentsResult = await pool.query(
-      `SELECT s.id, s.user_id, u.name
-       FROM students s
-       JOIN users u ON s.user_id = u.id
-       JOIN classes c ON s.section_id = c.id
-       WHERE c.id = $1
-         AND c.branch_id = $2
-       ORDER BY u.name`,
-      [sectionId, branchId]
-    );
+    // Get students in the section for the specified academic year
+    const students = await this.getStudentsBySection(sectionId, branchId, activeYear);
 
     // Get courses for the section
     const coursesResult = await pool.query(
@@ -978,7 +1078,7 @@ class VicePrincipalService {
       FROM grades g
       JOIN students s ON g.student_id = s.id
       JOIN courses c ON g.course_id = c.id
-      JOIN classes cl ON s.section_id = cl.id AND c.class_id = cl.id
+      JOIN classes cl ON c.class_id = cl.id
       WHERE cl.id = $1
         AND cl.branch_id = $2
         AND g.academic_year = $3
@@ -995,7 +1095,7 @@ class VicePrincipalService {
         FROM grades g
         JOIN students s ON g.student_id = s.id
         JOIN courses c ON g.course_id = c.id
-        JOIN classes cl ON s.section_id = cl.id AND c.class_id = cl.id
+        JOIN classes cl ON c.class_id = cl.id
         WHERE cl.id = $1
           AND cl.branch_id = $2
           AND g.academic_year = $3
@@ -1019,7 +1119,7 @@ class VicePrincipalService {
           FROM grades g
           JOIN students s ON g.student_id = s.id
           JOIN courses c ON g.course_id = c.id
-          JOIN classes cl ON s.section_id = cl.id AND c.class_id = cl.id
+          JOIN classes cl ON c.class_id = cl.id
           WHERE cl.id = $1
             AND cl.branch_id = $2
             AND g.academic_year = $3
@@ -1033,7 +1133,7 @@ class VicePrincipalService {
 
     // Structure the data
     const gradesMap: Record<string, Record<string, any>> = {};
-    for (const student of studentsResult.rows) {
+    for (const student of students) {
       gradesMap[student.id] = {
         id: student.id,
         name: student.name,
@@ -1051,7 +1151,7 @@ class VicePrincipalService {
     }
 
     return {
-      students: studentsResult.rows,
+      students: students,
       courses: coursesResult.rows,
       grades: Object.values(gradesMap),
       queriedSemester: activeSem,
@@ -1064,19 +1164,12 @@ class VicePrincipalService {
     const activeYear = academicYear || this.getActiveAcademicYear();
     const activeSem = semester !== undefined ? semester : this.getActiveSemester();
 
-    // Get all students in the section and branch
-    const studentsResult = await pool.query(
-      `SELECT s.id
-       FROM students s
-       JOIN classes c ON s.section_id = c.id
-       WHERE c.id = $1
-         AND c.branch_id = $2`,
-      [sectionId, branchId]
-    );
+    // Get all students in the section and branch for the specified academic year
+    const students = await this.getStudentsBySection(sectionId, branchId, activeYear);
 
     // Calculate totals, averages, and ranks for each student
     const results: any[] = [];
-    for (const student of studentsResult.rows) {
+    for (const student of students) {
       const gradesResult = await pool.query(
         `SELECT score, total
          FROM grades g

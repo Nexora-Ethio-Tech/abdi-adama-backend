@@ -219,8 +219,10 @@ class VicePrincipalController {
     try {
       const { studentId } = req.params;
       const branchId = req.user!.branch_id;
+      const academicYear = req.query.academicYear as string;
+      const semester = req.query.semester ? parseInt(req.query.semester as string, 10) : undefined;
 
-      const transcript = await vicePrincipalService.getStudentTranscript(studentId, branchId!);
+      const transcript = await vicePrincipalService.getStudentTranscript(studentId, branchId!, academicYear, semester);
 
       res.json({
         success: true,
@@ -430,7 +432,8 @@ class VicePrincipalController {
     try {
       const { sectionId } = req.params;
       const branchId = req.user!.branch_id;
-      const students = await vicePrincipalService.getStudentsBySection(sectionId, branchId!);
+      const academicYear = req.query.academicYear as string;
+      const students = await vicePrincipalService.getStudentsBySection(sectionId, branchId!, academicYear);
       res.json({ success: true, data: students });
     } catch (error) {
       next(error);

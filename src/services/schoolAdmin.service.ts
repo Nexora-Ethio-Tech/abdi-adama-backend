@@ -544,6 +544,20 @@ class SchoolAdminService {
         studentValues.push(formattedStatus);
         studentParamCount++;
 
+        if (formattedStatus === 'Graduated') {
+          const now = new Date();
+          const m = now.getMonth() + 1;
+          const d = now.getDate();
+          const gYear = now.getFullYear();
+          const ecYear = (m > 9 || (m === 9 && d >= 11)) ? gYear - 7 : gYear - 8;
+          const currentYearStr = `${ecYear + 7}/${ecYear + 8}`;
+          studentUpdates.push(`graduation_year = $${studentParamCount}`);
+          studentValues.push(currentYearStr);
+          studentParamCount++;
+        } else {
+          studentUpdates.push(`graduation_year = NULL`);
+        }
+
         // Also update users.is_active to match student status (Active -> true, others -> false)
         const isActive = (formattedStatus === 'Active');
         await pool.query(
