@@ -3,6 +3,7 @@ import userService from './user.service';
 import { generate4DigitPIN, hashPassword } from '../utils/password';
 import { sendAdmissionCredentialsEmail } from '../utils/emailService';
 import { gregorianToEthiopian, ethiopianToGregorianDate, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
+import { invalidateUserCache } from '../cache/userCache';
 
 export function getEthiopianNow() {
   const now = new Date();
@@ -415,6 +416,7 @@ class SchoolAdminService {
       [status, userId]
     );
 
+    invalidateUserCache(userId);
     return result.rows[0];
   }
 

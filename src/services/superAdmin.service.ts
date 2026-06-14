@@ -3,6 +3,7 @@ import { hashPassword, generateRandomPassword } from '../utils/password';
 import { sendWelcomeEmail } from '../utils/emailService';
 import { todayEthiopic } from '../utils/ethiopicUtils';
 import { syncSchoolCalendarForEvent } from './schoolAdmin.service';
+import { invalidateFinanceSettingsCache } from '../cache/financeSettingsCache';
 import { UUID } from 'crypto';
 
 // Roles that receive a welcome email on creation — must match user.service.ts
@@ -1198,6 +1199,9 @@ class SuperAdminService {
        VALUES ($1, $2, $3, $4, $5)`,
       [key, oldValue, value, userId, userName]
     );
+
+    // Invalidate the in-memory finance settings cache so all services see new values immediately
+    invalidateFinanceSettingsCache();
 
     return result.rows[0];
   }

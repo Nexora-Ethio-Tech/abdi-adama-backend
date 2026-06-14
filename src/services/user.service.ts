@@ -6,6 +6,7 @@ import { USER_STATUS } from '../config/constants';
 import logger from '../utils/logger';
 import { sendWelcomeEmail } from '../utils/emailService';
 import { CreateUserDTO, User, UserFilters, CreateUserResult, UserStatus } from '../types';
+import { invalidateUserCache } from '../cache/userCache';
 
 // Roles that use 4-digit PIN instead of complex password
 const PIN_BASED_ROLES = ['teacher', 'student', 'parent', 'finance-clerk', 'librarian', 'clinic-admin', 'driver'];
@@ -187,6 +188,7 @@ class UserService {
       }
 
       logger.info(`User status updated: ${userId} to ${status} by ${updatedBy}`);
+      invalidateUserCache(userId);
 
       return result.rows[0];
     } catch (error) {
@@ -217,6 +219,7 @@ class UserService {
       }
 
       await client.query('COMMIT');
+      invalidateUserCache(userId);
 
       logger.info(`User deleted: ${result.rows[0].email} by ${deletedBy}`);
 

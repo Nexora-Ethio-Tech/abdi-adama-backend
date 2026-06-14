@@ -4,6 +4,7 @@ import pool from '../config/database';
 import { AuthRequest, UserRole, User } from '../types';
 import logger from '../utils/logger';
 import { normalizeRole } from '../utils/roleUtils';
+import { getCachedUser, setCachedUser } from '../cache/userCache';
 
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -29,24 +30,31 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     }
     const decoded = verifyAccessToken(token);
 
-    let result = await pool.query<User>(
-      `SELECT id, digital_id, username, name, email, role, branch_id, status, is_active 
-       FROM users WHERE id = $1`,
-      [decoded.userId]
-    );
+    // Try cache first to avoid a DB query on every request
+    let user: any = getCachedUser(decoded.userId);
 
-    if (result.rows.length === 0) {
-      res.status(401).json({
-        success: false,
-        error: {
-          code: 'USER_NOT_FOUND',
-          message: 'User not found'
-        }
-      });
-      return;
+    if (!user) {
+      // Cache miss — query DB and cache the result
+      const result = await pool.query<User>(
+        `SELECT id, digital_id, username, name, email, role, branch_id, status, is_active 
+         FROM users WHERE id = $1`,
+        [decoded.userId]
+      );
+
+      if (result.rows.length === 0) {
+        res.status(401).json({
+          success: false,
+          error: {
+            code: 'USER_NOT_FOUND',
+            message: 'User not found'
+          }
+        });
+        return;
+      }
+
+      user = result.rows[0];
+      setCachedUser(decoded.userId, user);
     }
-
-    const user: any = result.rows[0];
 
     // Normalize role to standard format
     const normalizedRole = normalizeRole(user.role);
@@ -87,7 +95,6 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     }
 
     req.user = user;
-    logger.info(`User authenticated: ${user.email} (${user.role}, branch: ${user.branch_id || 'N/A'})`);
     next();
   } catch (error) {
     logger.error('Authentication error:', error);
@@ -130,3 +137,4 @@ export const requireBranchId = (req: AuthRequest, res: Response, next: NextFunct
   }
   next();
 };
+

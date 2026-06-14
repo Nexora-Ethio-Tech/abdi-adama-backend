@@ -29,7 +29,7 @@ const pool = new Pool({
   user: DB_USER,
   password: DB_PASSWORD,
   ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-  max: 20,
+  max: 50,                       // Scaled for 4K students + 300 teachers
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
 });
