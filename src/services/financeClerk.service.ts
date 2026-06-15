@@ -237,9 +237,6 @@ class FinanceClerkService {
     const now = nowInEAT();
 
     for (const month of months) {
-      if (monthsStatusMap.get(month) === 'cleared') {
-        continue;
-      }
       // Use computeMonthlyFeesOutstanding to exclude registration fee from collection status
       const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, branchId, month, now);
       const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
@@ -274,8 +271,13 @@ class FinanceClerkService {
     }
 
     // Safeguard: If student enrolled after the deadline of the billing month, do not charge penalty for this month
-    if (student.created_at && new Date(student.created_at) > dueDate) {
-      return 0;
+    if (student.created_at) {
+      const createdDate = new Date(student.created_at);
+      const createdStr = `${createdDate.getFullYear()}-${String(createdDate.getMonth() + 1).padStart(2, '0')}-${String(createdDate.getDate()).padStart(2, '0')}`;
+      const dueStr = `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(dueDate.getDate()).padStart(2, '0')}`;
+      if (createdStr > dueStr) {
+        return 0;
+      }
     }
 
     // Now we are past the deadline. Let's see if the student paid their base fees on time.
@@ -308,10 +310,24 @@ class FinanceClerkService {
       return 0;
     }
 
-    // Otherwise, penalty applies
-    const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
-    const defaultPenalty = Number(student.penalty_fee || 0) || penaltyRate;
-    return defaultPenalty;
+    // Otherwise, penalty applies.
+    // Resolution order: student.penalty_fee → global finance setting → branch_grade_fees.penalty_rate.
+    const perStudentPenalty = Number(student.penalty_fee || 0);
+    if (perStudentPenalty > 0) return perStudentPenalty;
+
+    const globalPenaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
+    if (globalPenaltyRate > 0) return globalPenaltyRate;
+
+    // Last resort: branch_grade_fees.penalty_rate for the student's grade
+    const bgfRes = await client.query(
+      `SELECT COALESCE(penalty_rate, 0) AS penalty_rate
+       FROM branch_grade_fees
+       WHERE branch_id = $1
+         AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER($2), 'grade', ''), ' ', '')
+       LIMIT 1`,
+      [student.branch_id, student.grade]
+    );
+    return Number(bgfRes.rows[0]?.penalty_rate || 0);
   }
 
   private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string, now = nowInEAT()) {
@@ -641,25 +657,34 @@ class FinanceClerkService {
         }
       }
 
-      // Recompute outstanding MONTHLY FEES ONLY (excluding registration) and update student_collections for the paid month
-      // Registration is a one-time fee and should NOT affect collection status
-      const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, data.month);
+      // Recompute outstanding MONTHLY FEES ONLY (excluding registration) and update student_collections for the paid month.
+      // IMPORTANT: Registration fee is a one-time annual fee and must NEVER flip collection_status to 'cleared'.
+      // Only update the collection record when at least one non-registration fee was paid.
+      const paidNonRegistration = toInsertItems.some(it => it.feeType !== 'registration');
       const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
       const dueDate = this.getPaymentDueDateForMonth(data.month, deadlineDay);
       const now = nowInEAT();
 
+      // Hoist these so they are accessible by the summer settlement block and return value below.
+      let outstandingTotal = 0;
       let status = 'in_collections';
 
-      const [_, outMonthNum] = data.month.split('-').map(Number);
-      if (outstandingTotal <= 0) status = 'cleared';
-      else if (now > dueDate) status = (outMonthNum === 11 || outMonthNum === 12 || outMonthNum === 13) ? 'in_collections' : 'overdue';
+      if (paidNonRegistration) {
+        outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, data.month);
+        const [_, outMonthNum] = data.month.split('-').map(Number);
+        if (outstandingTotal <= 0) status = 'cleared';
+        else if (now > dueDate) status = (outMonthNum === 11 || outMonthNum === 12 || outMonthNum === 13) ? 'in_collections' : 'overdue';
 
-      await client.query(
-        `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (student_id, month) DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
-        [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
-      );
+        await client.query(
+          `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (student_id, month) DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
+          [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
+        );
+      }
+      // If only registration was paid: do NOT touch student_collections.
+      // The sync job (syncCollectionStatusesForMonth) will set the status correctly
+      // once the student's monthly fees are paid.
 
       // ── One-time fee deduction expiry ─────────────────────────────────────
       // If a monthly payment was made and there is an approved fee deduction for
@@ -694,7 +719,8 @@ class FinanceClerkService {
       // (Hamle 11, Nehase 12, Pagume 13) OR as a carry-over in a later month,
       // all three summer records are auto-cleared. No 3× charging.
       const paidRegFee = toInsertItems.some(it => it.feeType === 'registration');
-      if (paidRegFee && status === 'cleared') {
+      // Only auto-clear summer records when the monthly-fee outstanding is also cleared
+      if (paidRegFee && paidNonRegistration && status === 'cleared') {
         const [pyStr, pmStr] = data.month.split('-');
         const summerMonths = this.getSummerMonths(parseInt(pyStr), parseInt(pmStr));
         for (const sm of summerMonths) {
@@ -955,7 +981,15 @@ class FinanceClerkService {
         s.fee_status, s.fee_approval_status, s.fee_notes, s.requested_aid_amount,
         s.parent_phone,
         u.name, u.email, u.digital_id,
-        sc.status AS collection_status
+        -- If student has ANY overdue month, surface it as overdue so frontend filter works correctly.
+        -- Otherwise use the current-month collection status.
+        CASE
+          WHEN EXISTS (
+            SELECT 1 FROM student_collections ox
+            WHERE ox.student_id = s.id AND ox.status = 'overdue'
+          ) THEN 'overdue'
+          ELSE sc.status
+        END AS collection_status
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN student_collections sc ON sc.student_id = s.id AND sc.month = $1
@@ -1963,17 +1997,10 @@ class FinanceClerkService {
       const summerClearStudentIds: string[] = [];
 
       for (const student of studentsRes.rows) {
-        // Skip already cleared months
-        if (collStatusMap.get(student.id) === 'cleared') {
-          continue;
-        }
-
         // Compute outstanding using pre-fetched payment data
         const pd = payDataMap.get(student.id) || {
           monthly_paid: 0, bus_paid: 0, penalty_paid: 0, approved_deduction: 0, aid_paid: 0
         };
-
-        const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
 
         const standardFee = isSummerMonth ? 0 : Number(student.monthly_fee || 0);
         const monthlyDue = Math.max(0, standardFee - Number(pd.approved_deduction));
@@ -1981,6 +2008,15 @@ class FinanceClerkService {
 
         const busDue = (isSummerMonth || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
         const busPaid = Number(pd.bus_paid);
+
+        // Skip already cleared months ONLY if they actually paid their monthly tuition and bus fee.
+        // If their database status says 'cleared' but they haven't paid their fees (e.g. registration-only payment bug),
+        // we must not skip them so they can be transitioned to 'overdue' or 'in_collections' correctly.
+        if (collStatusMap.get(student.id) === 'cleared' && monthlyPaid >= monthlyDue && busPaid >= busDue) {
+          continue;
+        }
+
+        const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
 
         const penaltyDueVal = isSummerMonth ? 0 : penaltyDue;
         const penaltyPaid = Number(pd.penalty_paid);
@@ -2033,7 +2069,7 @@ class FinanceClerkService {
         const valuesClauses: string[] = [];
         for (let i = 0; i < upsertRows.length; i++) {
           const base = i * 4;
-          valuesClauses.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
+          valuesClauses.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, NOW())`);
           valuesParams.push(upsertRows[i].studentId, month, dueDateStr, upsertRows[i].status);
         }
         await client.query(
@@ -2059,7 +2095,7 @@ class FinanceClerkService {
           const smClauses: string[] = [];
           for (let i = 0; i < summerClearStudentIds.length; i++) {
             const base = i * 4;
-            smClauses.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
+            smClauses.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, NOW())`);
             smParams.push(summerClearStudentIds[i], sm, smDueDate.toISOString().slice(0, 10), 'cleared');
           }
           await client.query(
