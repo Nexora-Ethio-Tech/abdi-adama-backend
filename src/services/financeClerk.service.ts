@@ -119,8 +119,8 @@ class FinanceClerkService {
   /**
    * Convert a date string that may be Ethiopian (YYYY-MM-DD EC) to a Gregorian ISO date string.
    * The frontend sends dates formatted with getTodayEthiopianDate() which returns EC dates like "2018-09-25".
-   * EC years are ~7-8 years behind Gregorian, so any year < 2015 is treated as Ethiopian.
-   * Years >= 2015 are assumed already Gregorian (safe cut-off for this system).
+   * EC years are ~7-8 years behind Gregorian, so any year < 2023 is treated as Ethiopian.
+   * Years >= 2023 are assumed already Gregorian (safe cut-off for this system).
    */
   private ethiopianDateStringToGregorian(dateStr: string): string {
     if (!dateStr) return getTodayEATDateString();
@@ -130,9 +130,9 @@ class FinanceClerkService {
     if (parts.length !== 3 || parts.some(isNaN)) return getTodayEATDateString();
     const [y, m, d] = parts;
     // Ethiopian years for this school system are in the 2000–2030 range.
-    // Gregorian years for dates relevant to this system start at 2020+.
-    // If year < 2015, treat as Ethiopian and convert; otherwise assume Gregorian.
-    if (y < 2015) {
+    // Gregorian years for dates relevant to this system start at 2023+.
+    // If year < 2023, treat as Ethiopian and convert; otherwise assume Gregorian.
+    if (y < 2023) {
       try {
         const gregDate = ethiopianToGregorianDate({ year: y, month: m, day: d });
         const gy = gregDate.getFullYear();
