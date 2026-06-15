@@ -18,15 +18,15 @@ const ETHIOPIAN_MONTH_NAMES = [
 // GET /api/finance/summary
 router.get('/summary', async (req: AuthRequest, res, next) => {
   try {
-    // 1. Total revenue: sum of all finance_transactions where type = 'Income', starts with 'Payment', or is 'Registration Fee'
+    // 1. Total revenue: sum of all finance_transactions where type is not 'Expense'
     const totalRevRes = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total
        FROM finance_transactions
-       WHERE type = 'Income' OR type LIKE 'Payment%' OR type = 'Registration Fee'`
+       WHERE type != 'Expense'`
     );
     const totalRevenue = Number(totalRevRes.rows[0]?.total || 0);
 
-    // 2. Monthly revenue: sum of all finance_transactions in the current Ethiopian month
+    // 2. Monthly revenue: sum of all finance_transactions in the current Ethiopian month where type is not 'Expense'
     const today = new Date();
     const ethToday = gregorianToEthiopian(today);
     const ethMonthLabel = ETHIOPIAN_MONTH_NAMES[ethToday.month - 1] || 'Meskerem';
@@ -34,53 +34,78 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
     const monthlyRevRes = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total
        FROM finance_transactions
-       WHERE (type = 'Income' OR type LIKE 'Payment%' OR type = 'Registration Fee')
+       WHERE type != 'Expense'
          AND LOWER(ethiopic_month) = LOWER($1)
          AND ethiopic_year = $2`,
       [ethMonthLabel, ethToday.year]
     );
     const monthlyRevenue = Number(monthlyRevRes.rows[0]?.total || 0);
 
-    // 3. Pending fees: calculate outstanding amount for each active non-scholarship student
-    // Try to include fee_deductions if table exists, otherwise use basic calculation
+    // 3. Pending fees: calculate number of active non-scholarship students who have not paid their Monthly Fee yet
     const currentMonthStr = `${ethToday.year}-${String(ethToday.month).padStart(2, '0')}`;
-    let pendingFeesRes;
+    let countsRes;
     try {
-      // Try advanced query with fee_deductions
-      pendingFeesRes = await pool.query(
-        `SELECT COALESCE(SUM(
-           GREATEST(0, COALESCE(s.monthly_fee, 0) - COALESCE(
-             (SELECT approved_amount FROM fee_deductions WHERE student_id = s.id AND month = $1 AND status = 'approved'),
-             0
-           )) + 
-           COALESCE(s.bus_fee, 0) + 
-           COALESCE(s.penalty_fee, 0)
-          ), 0) AS total
-         FROM students s
-         WHERE s.is_scholarship = false AND s.status = 'active'`,
+      countsRes = await pool.query(
+        `WITH student_status AS (
+          SELECT 
+            s.id,
+            COALESCE(
+              (SELECT status FROM student_collections WHERE student_id = s.id AND month = $1),
+              'in_collections'
+            ) AS collection_status
+          FROM students s
+          WHERE s.is_scholarship = false AND LOWER(s.status) IN ('active', 'suspended')
+        )
+        SELECT 
+          COUNT(CASE WHEN collection_status != 'cleared' THEN 1 END) AS unpaid_count,
+          COUNT(CASE WHEN collection_status = 'cleared' THEN 1 END) AS paid_count
+        FROM student_status`,
         [currentMonthStr]
       );
     } catch (err) {
-      // Fallback: basic calculation without fee_deductions
-      pendingFeesRes = await pool.query(
-        `SELECT COALESCE(SUM(
-           COALESCE(s.monthly_fee, 0) + 
-           COALESCE(s.bus_fee, 0) + 
-           COALESCE(s.penalty_fee, 0)
-          ), 0) AS total
-         FROM students s
-         WHERE s.is_scholarship = false AND s.status = 'active'`
+      // Fallback: calculate based on dues minus paid
+      countsRes = await pool.query(
+        `WITH student_monthly_status AS (
+          SELECT 
+            s.id,
+            COALESCE(
+              NULLIF(s.monthly_fee, 0),
+              (
+                SELECT monthly_fee FROM branch_grade_fees 
+                WHERE branch_id = s.branch_id 
+                  AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+                LIMIT 1
+              ),
+              0
+            ) AS monthly_due,
+            COALESCE((
+              SELECT SUM(pi.amount)
+              FROM payments p
+              JOIN payment_items pi ON pi.payment_id = p.id
+              WHERE p.student_id = s.id AND p.month = $1 AND pi.fee_type = 'monthly'
+            ), 0) AS monthly_paid
+          FROM students s
+          WHERE s.is_scholarship = false AND LOWER(s.status) IN ('active', 'suspended')
+        )
+        SELECT 
+          COUNT(CASE WHEN monthly_paid < monthly_due THEN 1 END) AS unpaid_count,
+          COUNT(CASE WHEN monthly_paid >= monthly_due THEN 1 END) AS paid_count
+        FROM student_monthly_status`,
+        [currentMonthStr]
       );
     }
-    const pendingFees = Math.max(0, Number(pendingFeesRes.rows[0]?.total || 0));
+    const pendingFeesCount = Number(countsRes.rows[0]?.unpaid_count || 0);
+    const monthlyFeesPaidCount = Number(countsRes.rows[0]?.paid_count || 0);
 
-    // 4. Monthly fees: sum of monthly tuition fees for all active, non-scholarship students
-    const monthlyFeesRes = await pool.query(
-      `SELECT COALESCE(SUM(s.monthly_fee), 0) AS total
-       FROM students s
-       WHERE s.is_scholarship = false AND s.status = 'active'`
+    // 4. Monthly fees collected: total money collected from Monthly Fees, Bus Fees, Penalty Fees (excluding Registration Fees)
+    const monthlyFeesCollectedRes = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM finance_transactions
+       WHERE type != 'Expense'
+         AND type != 'Registration Fee'
+         AND type NOT ILIKE '%registration%'`
     );
-    const monthlyFees = Number(monthlyFeesRes.rows[0]?.total || 0);
+    const monthlyFeesCollected = Number(monthlyFeesCollectedRes.rows[0]?.total || 0);
 
     // 5. Registration fees: sum of all finance_transactions where type = 'Registration Fee' or includes 'registration'
     const regFeesRes = await pool.query(
@@ -92,9 +117,12 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
 
     res.json({
       total_revenue: totalRevenue,
-      pending_fees: pendingFees,
+      pending_fees: pendingFeesCount,
+      pending_fees_count: pendingFeesCount,
       monthly_revenue: monthlyRevenue,
-      monthly_fees: monthlyFees,
+      monthly_fees: monthlyFeesCollected,
+      monthly_fees_paid_count: monthlyFeesPaidCount,
+      monthly_fees_collected: monthlyFeesCollected,
       registration_fees: registrationFees
     });
   } catch (error) {
