@@ -18,33 +18,71 @@ const ETHIOPIAN_MONTH_NAMES = [
 // GET /api/finance/summary
 router.get('/summary', async (req: AuthRequest, res, next) => {
   try {
-    // 1. Total revenue: sum of all finance_transactions where type is not 'Expense'
-    const totalRevRes = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total
-       FROM finance_transactions
-       WHERE type != 'Expense'`
-    );
-    const totalRevenue = Number(totalRevRes.rows[0]?.total || 0);
-
-    // 2. Monthly revenue: sum of all finance_transactions in the current Ethiopian month where type is not 'Expense'
     const today = new Date();
     const ethToday = gregorianToEthiopian(today);
     const ethMonthLabel = ETHIOPIAN_MONTH_NAMES[ethToday.month - 1] || 'Meskerem';
-    
-    const monthlyRevRes = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total
-       FROM finance_transactions
-       WHERE type != 'Expense'
-         AND LOWER(ethiopic_month) = LOWER($1)
-         AND ethiopic_year = $2`,
-      [ethMonthLabel, ethToday.year]
-    );
-    const monthlyRevenue = Number(monthlyRevRes.rows[0]?.total || 0);
-
-    // 3. Pending fees: calculate number of active non-scholarship students who have not paid their Monthly Fee yet
     const currentMonthStr = `${ethToday.year}-${String(ethToday.month).padStart(2, '0')}`;
+
+    // 1. Schema check: Determine if ethiopic_month/ethiopic_year exist on finance_transactions table
+    let hasEthioColumns = false;
+    try {
+      const columnsRes = await pool.query(
+        `SELECT column_name 
+         FROM information_schema.columns 
+         WHERE table_name = 'finance_transactions'`
+      );
+      const columns = columnsRes.rows.map(r => r.column_name.toLowerCase());
+      hasEthioColumns = columns.includes('ethiopic_month') && columns.includes('ethiopic_year');
+    } catch (err) {
+      console.warn('Failed to inspect finance_transactions columns, defaulting to fallback.', err);
+    }
+
+    // 2. Safely fetch all revenue transactions
+    let allRevRows: any[] = [];
+    try {
+      const selectFields = hasEthioColumns 
+        ? 'amount, type, date, ethiopic_month, ethiopic_year'
+        : 'amount, type, date';
+      const allRevRes = await pool.query(
+        `SELECT ${selectFields} FROM finance_transactions WHERE type != 'Expense'`
+      );
+      allRevRows = allRevRes.rows;
+    } catch (err) {
+      console.error('Failed to query finance_transactions, using fallback empty list.', err);
+    }
+
+    // Calculate revenues based on transaction types and dates
+    const totalRevenue = allRevRows.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    
+    const monthlyRevenue = allRevRows.reduce((sum, r) => {
+      let isCurrentMonth = false;
+      if (hasEthioColumns && r.ethiopic_month && r.ethiopic_year) {
+        isCurrentMonth = (r.ethiopic_month.toLowerCase() === ethMonthLabel.toLowerCase()) && 
+                         (Number(r.ethiopic_year) === ethToday.year);
+      } else if (r.date) {
+        try {
+          const txDate = new Date(r.date);
+          if (!isNaN(txDate.getTime())) {
+            const txEth = gregorianToEthiopian(txDate);
+            isCurrentMonth = (txEth.month === ethToday.month) && (txEth.year === ethToday.year);
+          }
+        } catch (e) {}
+      }
+      return isCurrentMonth ? sum + Number(r.amount || 0) : sum;
+    }, 0);
+
+    const monthlyFeesCollected = allRevRows
+      .filter(r => r.type !== 'Registration Fee' && !/registration/i.test(r.type || ''))
+      .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+
+    const registrationFees = allRevRows
+      .filter(r => r.type === 'Registration Fee' || /registration/i.test(r.type || ''))
+      .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+
+    // 3. Unpaid vs Paid counts with nested fail-safes
     let countsRes;
     try {
+      // Level 1: query from student_collections
       countsRes = await pool.query(
         `WITH student_status AS (
           SELECT 
@@ -63,57 +101,68 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
         [currentMonthStr]
       );
     } catch (err) {
-      // Fallback: calculate based on dues minus paid
-      countsRes = await pool.query(
-        `WITH student_monthly_status AS (
+      console.warn('Level 1 student counts failed, falling back to Level 2 (dues vs paid).', err);
+      try {
+        // Level 2: dues vs paid
+        countsRes = await pool.query(
+          `WITH student_monthly_status AS (
+            SELECT 
+              s.id,
+              COALESCE(
+                NULLIF(s.monthly_fee, 0),
+                (
+                  SELECT monthly_fee FROM branch_grade_fees 
+                  WHERE branch_id = s.branch_id 
+                    AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
+                  LIMIT 1
+                ),
+                0
+              ) AS monthly_due,
+              COALESCE((
+                SELECT SUM(pi.amount)
+                FROM payments p
+                JOIN payment_items pi ON pi.payment_id = p.id
+                WHERE p.student_id = s.id AND p.month = $1 AND pi.fee_type = 'monthly'
+              ), 0) AS monthly_paid
+            FROM students s
+            WHERE s.is_scholarship = false AND LOWER(s.status) IN ('active', 'suspended')
+          )
           SELECT 
-            s.id,
-            COALESCE(
-              NULLIF(s.monthly_fee, 0),
-              (
-                SELECT monthly_fee FROM branch_grade_fees 
-                WHERE branch_id = s.branch_id 
-                  AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER(s.grade), 'grade', ''), ' ', '')
-                LIMIT 1
-              ),
-              0
-            ) AS monthly_due,
-            COALESCE((
-              SELECT SUM(pi.amount)
-              FROM payments p
-              JOIN payment_items pi ON pi.payment_id = p.id
-              WHERE p.student_id = s.id AND p.month = $1 AND pi.fee_type = 'monthly'
-            ), 0) AS monthly_paid
-          FROM students s
-          WHERE s.is_scholarship = false AND LOWER(s.status) IN ('active', 'suspended')
-        )
-        SELECT 
-          COUNT(CASE WHEN monthly_paid < monthly_due THEN 1 END) AS unpaid_count,
-          COUNT(CASE WHEN monthly_paid >= monthly_due THEN 1 END) AS paid_count
-        FROM student_monthly_status`,
-        [currentMonthStr]
-      );
+            COUNT(CASE WHEN monthly_paid < monthly_due THEN 1 END) AS unpaid_count,
+            COUNT(CASE WHEN monthly_paid >= monthly_due THEN 1 END) AS paid_count
+          FROM student_monthly_status`,
+          [currentMonthStr]
+        );
+      } catch (err2) {
+        console.warn('Level 2 student counts failed, falling back to Level 3 (basic student counts).', err2);
+        try {
+          // Level 3: basic student count on students table
+          const simpleCountRes = await pool.query(
+            `SELECT COUNT(*) AS total 
+             FROM students 
+             WHERE is_scholarship = false AND LOWER(status) IN ('active', 'suspended')`
+          );
+          const totalStudentsCount = Number(simpleCountRes.rows[0]?.total || 0);
+          countsRes = {
+            rows: [{
+              unpaid_count: totalStudentsCount,
+              paid_count: 0
+            }]
+          };
+        } catch (err3) {
+          console.error('All student count queries failed.', err3);
+          countsRes = {
+            rows: [{
+              unpaid_count: 0,
+              paid_count: 0
+            }]
+          };
+        }
+      }
     }
+
     const pendingFeesCount = Number(countsRes.rows[0]?.unpaid_count || 0);
     const monthlyFeesPaidCount = Number(countsRes.rows[0]?.paid_count || 0);
-
-    // 4. Monthly fees collected: total money collected from Monthly Fees, Bus Fees, Penalty Fees (excluding Registration Fees)
-    const monthlyFeesCollectedRes = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total
-       FROM finance_transactions
-       WHERE type != 'Expense'
-         AND type != 'Registration Fee'
-         AND type NOT ILIKE '%registration%'`
-    );
-    const monthlyFeesCollected = Number(monthlyFeesCollectedRes.rows[0]?.total || 0);
-
-    // 5. Registration fees: sum of all finance_transactions where type = 'Registration Fee' or includes 'registration'
-    const regFeesRes = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total
-       FROM finance_transactions
-       WHERE type = 'Registration Fee' OR type ILIKE '%registration%'`
-    );
-    const registrationFees = Number(regFeesRes.rows[0]?.total || 0);
 
     res.json({
       total_revenue: totalRevenue,
