@@ -318,10 +318,10 @@ class FinanceClerkService {
     const globalPenaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
     if (globalPenaltyRate > 0) return globalPenaltyRate;
 
-    // Last resort: branch_grade_fees.penalty_rate for the student's grade
+    // Last resort: financial_policies.penalty_rate for the student's grade
     const bgfRes = await client.query(
       `SELECT COALESCE(penalty_rate, 0) AS penalty_rate
-       FROM branch_grade_fees
+       FROM financial_policies
        WHERE branch_id = $1
          AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER($2), 'grade', ''), ' ', '')
        LIMIT 1`,

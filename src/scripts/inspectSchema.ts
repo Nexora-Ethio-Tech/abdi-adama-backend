@@ -31,7 +31,6 @@ async function main() {
       WHERE table_name = 'student_collections'
     `);
     console.table(colsSC.rows);
-
   } catch (err) {
     console.error(err);
   } finally {
