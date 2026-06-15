@@ -2183,8 +2183,7 @@ class FinanceClerkService {
         await client.query('BEGIN');
 
         const paymentDateGregorian = getTodayEATDateString();
-        const eatNow = nowInEAT();
-        const ethDate = gregorianToEthiopic(new Date(eatNow.getUTCFullYear(), eatNow.getUTCMonth(), eatNow.getUTCDate()));
+        const ethDate = gregorianToEthiopian(nowInEAT());
         const currentMonth = `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
 
         // Insert into payments

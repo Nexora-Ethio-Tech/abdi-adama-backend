@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import { gregorianToEthiopian, nowInEAT } from '../shared/ethiopianCalendar';
 
 class AuditorService {
   // View all payments (READ ONLY)
@@ -81,11 +82,8 @@ class AuditorService {
     const requestedAmount = student.requested_aid_amount || 0;
     const approvedAmount = normalized === 'approved' ? requestedAmount : 0;
 
-    // Get the current month in Ethiopian calendar
-    const now = new Date();
-    const eatMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + (3 * 60 * 60 * 1000);
-    const eatDate = new Date(eatMs);
-    const ethDate = require('../utils/ethiopicUtils').gregorianToEthiopic(eatDate);
+    // Get the current month in Ethiopian calendar (YYYY-MM format)
+    const ethDate = gregorianToEthiopian(nowInEAT());
     const currentMonth = `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
 
     // Insert or update fee_deductions table
