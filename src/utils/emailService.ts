@@ -239,6 +239,130 @@ export async function sendLoanApprovedEmail(
   return sendEmail(email, subject, htmlBody);
 }
 
+/**
+ * Sent when the AUDITOR approves the loan (status → approved, awaiting Finance disbursement).
+ */
+export async function sendLoanAuditorApprovedEmail(
+  employeeName: string,
+  email: string,
+  amount: number,
+  monthlyDeduction: number,
+  maxMonths: number
+): Promise<boolean> {
+  const subject = 'Loan Request Approved by Auditor – Abdi Adama School IMS';
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+      <h2 style="color: #16a34a; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">✅ Loan Request Approved</h2>
+      <p>Dear <strong>${employeeName}</strong>,</p>
+      <p>Great news! Your loan request has been <strong>reviewed and approved by the Auditor</strong>. The Finance Department will now process the disbursement.</p>
+
+      <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
+        <tr style="background-color: #f8fafc;">
+          <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Approved Amount</th>
+          <td style="padding: 10px; border: 1px solid #e2e8f0;"><strong style="color: #16a34a;">${amount.toFixed(2)} ETB</strong></td>
+        </tr>
+        <tr>
+          <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Monthly Deduction</th>
+          <td style="padding: 10px; border: 1px solid #e2e8f0; color: #dc2626;"><strong>${monthlyDeduction.toFixed(2)} ETB / month</strong></td>
+        </tr>
+        <tr style="background-color: #f8fafc;">
+          <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Repayment Period</th>
+          <td style="padding: 10px; border: 1px solid #e2e8f0;"><strong>Up to ${maxMonths} months</strong></td>
+        </tr>
+      </table>
+
+      <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 15px; margin: 20px 0;">
+        <strong style="color: #166534;">⏳ Next Step: Finance Disbursement</strong>
+        <p style="margin: 8px 0 0; color: #166534;">
+          Your loan has been approved and is now awaiting final payment by the Finance Department.
+          You will receive another email confirmation once the funds have been disbursed and deductions are active.
+        </p>
+      </div>
+
+      <div style="margin-top: 30px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+        This is an automated system notification from Abdi Adama School IMS. For any inquiries, please contact the Finance Department.
+      </div>
+    </div>
+  `;
+  return sendEmail(email, subject, htmlBody);
+}
+
+/**
+ * Sent when the AUDITOR rejects the loan request (status → rejected).
+ */
+export async function sendLoanRejectedEmail(
+  employeeName: string,
+  email: string,
+  amount: number,
+  reason?: string
+): Promise<boolean> {
+  const subject = 'Loan Request Not Approved – Abdi Adama School IMS';
+  const displayReason = reason && reason.trim() && reason.toLowerCase() !== 'rejected by auditor'
+    ? reason.trim()
+    : 'financial constraints at this time';
+
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+      <h2 style="color: #dc2626; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">❌ Loan Request Not Approved</h2>
+      <p>Dear <strong>${employeeName}</strong>,</p>
+      <p>We regret to inform you that your loan request of <strong>${amount.toFixed(2)} ETB</strong> could not be approved at this time.</p>
+
+      <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 15px; margin: 20px 0;">
+        <strong style="color: #991b1b;">Reason:</strong>
+        <p style="margin: 8px 0 0; color: #7f1d1d;">
+          Sorry, we cannot grant your loan request at this time due to ${displayReason}.
+        </p>
+      </div>
+
+      <p style="color: #475569;">
+        If you believe this decision was made in error or you would like to submit a new request in the future,
+        please contact your Finance Department or Branch Administrator.
+      </p>
+
+      <div style="margin-top: 30px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+        This is an automated system notification from Abdi Adama School IMS.
+      </div>
+    </div>
+  `;
+  return sendEmail(email, subject, htmlBody);
+}
+
+/**
+ * Sent when an active loan is CANCELLED/voided by Finance.
+ */
+export async function sendLoanCancelledEmail(
+  employeeName: string,
+  email: string,
+  amount: number
+): Promise<boolean> {
+  const subject = 'Loan Cancelled – Abdi Adama School IMS';
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+      <h2 style="color: #92400e; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">⚠️ Loan Cancelled</h2>
+      <p>Dear <strong>${employeeName}</strong>,</p>
+      <p>Please be informed that your active loan of <strong>${amount.toFixed(2)} ETB</strong> has been <strong>cancelled and voided</strong> by the Finance Department.</p>
+
+      <div style="background-color: #fefce8; border: 1px solid #fde68a; border-radius: 6px; padding: 15px; margin: 20px 0;">
+        <strong style="color: #92400e;">What this means:</strong>
+        <ul style="margin: 8px 0 0; color: #78350f; padding-left: 20px; line-height: 1.8;">
+          <li>No further monthly deductions will be applied to your salary.</li>
+          <li>Any previously deducted amounts remain as recorded.</li>
+          <li>You may be eligible to apply for a new loan in the future.</li>
+        </ul>
+      </div>
+
+      <p style="color: #475569;">
+        If you have questions about this cancellation, please contact your Finance Department or Branch Administrator.
+      </p>
+
+      <div style="margin-top: 30px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+        This is an automated system notification from Abdi Adama School IMS.
+      </div>
+    </div>
+  `;
+  return sendEmail(email, subject, htmlBody);
+}
+
 // Keep the old export name as an alias so any other callers don't break.
 // Points to the "submitted" variant since that was the original call site.
 export const sendLoanNotification = sendLoanSubmittedEmail;

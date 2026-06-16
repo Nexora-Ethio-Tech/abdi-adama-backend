@@ -1,5 +1,11 @@
 import pool from '../config/database';
-import { sendLoanSubmittedEmail, sendLoanApprovedEmail } from '../utils/emailService';
+import {
+  sendLoanSubmittedEmail,
+  sendLoanAuditorApprovedEmail,
+  sendLoanApprovedEmail,
+  sendLoanRejectedEmail,
+  sendLoanCancelledEmail
+} from '../utils/emailService';
 
 class LoanService {
   /**
@@ -105,6 +111,29 @@ class LoanService {
       ]
     );
 
+    // Send auditor-approval email so the employee knows funds are being processed
+    const userResult = await pool.query(
+      `SELECT u.name, u.email, l.monthly_deduction, l.max_months
+       FROM users u
+       JOIN loans l ON l.id = $1
+       WHERE u.id = $2`,
+      [loanId, loanCheck.rows[0].employee_id]
+    );
+    if (userResult.rows.length > 0) {
+      const { name, email, monthly_deduction, max_months } = userResult.rows[0];
+      if (email) {
+        sendLoanAuditorApprovedEmail(
+          name,
+          email,
+          Number(loanCheck.rows[0].amount),
+          Number(monthly_deduction),
+          Number(max_months)
+        ).catch((err) => {
+          console.error('Failed to send auditor approval email:', err);
+        });
+      }
+    }
+
     return loan;
   }
 
@@ -135,6 +164,17 @@ class LoanService {
         `Your loan request of ${loanCheck.rows[0].amount} ETB has been rejected by the auditor. ${reason || ''}`.trim()
       ]
     );
+
+    // Send rejection email
+    const userResult = await pool.query(`SELECT name, email FROM users WHERE id = $1`, [loanCheck.rows[0].employee_id]);
+    if (userResult.rows.length > 0) {
+      const { name, email } = userResult.rows[0];
+      if (email) {
+        sendLoanRejectedEmail(name, email, Number(loanCheck.rows[0].amount), reason).catch((err) => {
+          console.error('Failed to send loan rejection email:', err);
+        });
+      }
+    }
 
     return loan;
   }
@@ -285,6 +325,17 @@ class LoanService {
         `Your active loan of ${loanCheck.rows[0].amount} ETB has been cancelled/voided by the Finance Department.`
       ]
     );
+
+    // Send cancellation email
+    const userResult = await pool.query(`SELECT name, email FROM users WHERE id = $1`, [loanCheck.rows[0].employee_id]);
+    if (userResult.rows.length > 0) {
+      const { name, email } = userResult.rows[0];
+      if (email) {
+        sendLoanCancelledEmail(name, email, Number(loanCheck.rows[0].amount)).catch((err) => {
+          console.error('Failed to send loan cancellation email:', err);
+        });
+      }
+    }
 
     return result.rows[0];
   }
