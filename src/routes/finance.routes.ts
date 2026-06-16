@@ -281,11 +281,19 @@ router.get('/audit', async (req: AuthRequest, res, next) => {
         COALESCE(asec.section_name, 'N/A') AS "section",
         'Fees' AS "category",
         CASE WHEN psl.status = true THEN 'In' ELSE 'Out' END AS "direction",
-        CASE WHEN psl.status = true THEN 'Paid' ELSE 'Pending' END AS "actionLabel"
+        CASE WHEN psl.status = true THEN 'Paid' ELSE 'Pending' END AS "actionLabel",
+        COALESCE(s.monthly_fee, 0) AS "amount",
+        CASE WHEN psl.status = true THEN 'Created' ELSE 'Updated' END AS "actionType",
+        CASE 
+          WHEN u_mod.role::text IN ('super-admin', 'school-admin') THEN 'Admin'
+          WHEN u_mod.role::text = 'vice-principal' THEN 'Vice Principal'
+          ELSE 'Accountant'
+        END AS "userRole"
       FROM payment_status_logs psl
       JOIN students s ON psl.student_id = s.id
       JOIN users u ON s.user_id = u.id
       LEFT JOIN academic_sections asec ON s.section_id = asec.id
+      LEFT JOIN users u_mod ON (u_mod.name = psl.modified_by OR u_mod.email = psl.modified_by)
     `;
     const feeParams: any[] = [];
     if (role === UserRole.SCHOOL_ADMIN || role === UserRole.FINANCE_CLERK) {
@@ -303,10 +311,17 @@ router.get('/audit', async (req: AuthRequest, res, next) => {
         COALESCE(pr.finalized_at, pr.created_at) AS "timestamp",
         pi.employee_name AS "studentName",
         u_emp.digital_id AS "studentId",
-        COALESCE(epp.role, 'Staff') AS "section",
+        COALESCE(u_emp.role::text, 'Staff') AS "section",
         'Staff' AS "category",
         'Out' AS "direction",
-        'Paid' AS "actionLabel"
+        'Paid' AS "actionLabel",
+        COALESCE(pi.net_pay, 0) AS "amount",
+        'Created' AS "actionType",
+        CASE 
+          WHEN u_fin.role::text IN ('super-admin', 'school-admin') THEN 'Admin'
+          WHEN u_fin.role::text = 'vice-principal' THEN 'Vice Principal'
+          ELSE 'Accountant'
+        END AS "userRole"
       FROM payroll_items pi
       JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
       LEFT JOIN users u_gen ON pr.generated_by = u_gen.id
