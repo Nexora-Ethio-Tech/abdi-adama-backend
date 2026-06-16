@@ -424,6 +424,27 @@ class AuditorController {
       next(error);
     }
   };
+
+  getNetProfit = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const branchId = this.resolveBranchId(req);
+      const { startDate, endDate } = req.query;
+
+      if (!branchId) {
+        res.status(400).json({ success: false, error: { code: 'BRANCH_REQUIRED', message: 'Please select a branch first.' } });
+        return;
+      }
+
+      const result = await auditorService.getNetProfit(branchId, {
+        startDate: startDate as string,
+        endDate: endDate as string
+      });
+
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export default new AuditorController();

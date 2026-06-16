@@ -297,15 +297,12 @@ class AuditorService {
 
   // Dashboard
   async getDashboard(branchId: string) {
-    // ── Total Payments ──────────────────────────────────────────────────────
-    // Count and sum ALL payments recorded by Finance Officer (all fee types)
     const totalResult = await pool.query(
       `SELECT
-         COUNT(DISTINCT p.id) AS count,
-         COALESCE(SUM(pi.amount), 0) AS total
-       FROM payments p
-       JOIN payment_items pi ON pi.payment_id = p.id
-       WHERE p.branch_id = $1`,
+         COUNT(*) AS count,
+         COALESCE(SUM(CASE WHEN type = 'Expense' OR LOWER(type) = 'expense' OR amount < 0 THEN -ABS(amount) ELSE ABS(amount) END), 0) AS total
+       FROM finance_transactions
+       WHERE branch_id = $1`,
       [branchId]
     );
 
@@ -400,6 +397,107 @@ class AuditorService {
       pendingLoans,
       pendingApprovals: pendingFeeReductions + pendingLoans,
       recentTransactions: recentResult.rows
+    };
+  }
+
+  async getNetProfit(branchId: string, filters?: { startDate?: string; endDate?: string }) {
+    const params1: any[] = [branchId];
+    let idx1 = 2;
+    let dateRange1 = '';
+
+    if (filters?.startDate) {
+      dateRange1 += ` AND date >= $${idx1++}`;
+      params1.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      dateRange1 += ` AND date <= $${idx1++}`;
+      params1.push(filters.endDate);
+    }
+
+    // 1. Money In (student fees + other income) from finance_transactions
+    const inResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN type = 'Expense' OR LOWER(type) = 'expense' OR amount < 0 THEN 0 ELSE ABS(amount) END), 0) AS total_in
+       FROM finance_transactions
+       WHERE branch_id = $1
+         ${dateRange1}`,
+      params1
+    );
+    const totalIn = parseFloat(inResult.rows[0]?.total_in || 0);
+
+    // 2. Money Out (Expenses) from finance_transactions
+    const outResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN type = 'Expense' OR LOWER(type) = 'expense' OR amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_expenses
+       FROM finance_transactions
+       WHERE branch_id = $1
+         ${dateRange1}`,
+      params1
+    );
+    const totalExpenses = parseFloat(outResult.rows[0]?.total_expenses || 0);
+
+    // 3. Staff Payments (Payroll) from payroll_runs
+    const params2: any[] = [branchId];
+    let idx2 = 2;
+    let dateRange2 = '';
+    if (filters?.startDate) {
+      dateRange2 += ` AND created_at >= $${idx2++}`;
+      params2.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      dateRange2 += ` AND created_at <= $${idx2++}`;
+      params2.push(filters.endDate);
+    }
+
+    const payrollResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(total_net + total_pension_employer), 0) AS total_payroll
+       FROM payroll_runs
+       WHERE branch_id = $1
+         AND status IN ('finalized', 'exported')
+         ${dateRange2}`,
+      params2
+    );
+    const totalPayroll = parseFloat(payrollResult.rows[0]?.total_payroll || 0);
+
+    // 4. Loan Disbursements (Out) from loans
+    const params3: any[] = [branchId];
+    let idx3 = 2;
+    let dateRange3 = '';
+    if (filters?.startDate) {
+      dateRange3 += ` AND l.paid_at >= $${idx3++}`;
+      params3.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      dateRange3 += ` AND l.paid_at <= $${idx3++}`;
+      params3.push(filters.endDate);
+    }
+
+    const loansResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(l.amount), 0) AS total_loans
+       FROM loans l
+       JOIN users u ON l.employee_id = u.id
+       WHERE u.branch_id = $1
+         AND l.status IN ('active', 'completed')
+         ${dateRange3}`,
+      params3
+    );
+    const totalLoans = parseFloat(loansResult.rows[0]?.total_loans || 0);
+
+    const totalOut = totalExpenses + totalPayroll + totalLoans;
+
+    return {
+      totalIn,
+      totalOut,
+      netProfit: totalIn - totalOut,
+      breakdown: {
+        totalIn,
+        totalExpenses,
+        totalPayroll,
+        totalLoans,
+        totalOut
+      }
     };
   }
 }

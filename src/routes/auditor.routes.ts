@@ -49,4 +49,7 @@ router.get('/loans-summary', auditorController.getLoansSummary);
 // Other (non-student) transactions: expenses, income — accepts ?branchId=
 router.get('/other-transactions', auditorController.getOtherTransactions);
 
+// Net profit summary (Money In, Money Out, Net Profit) — accepts ?branchId=, ?startDate=, ?endDate=
+router.get('/net-profit', auditorController.getNetProfit);
+
 export default router;
