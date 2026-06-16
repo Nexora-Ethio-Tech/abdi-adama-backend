@@ -360,6 +360,54 @@ class FinanceClerkController {
       });
     }
   }
+
+  // Record a manual transaction (income/expense/other)
+  async recordManualTransaction(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { category, type, amount, details, date } = req.body;
+      const verifiedBy = req.user!.name;
+      const branchId = req.user!.branch_id;
+
+      const transaction = await financeClerkService.recordManualTransaction({
+        category,
+        type,
+        amount: Number(amount),
+        details,
+        date,
+        verifiedBy,
+        branchId: branchId!
+      });
+
+      res.status(201).json({
+        success: true,
+        data: transaction,
+        message: 'Transaction recorded successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get manual transactions
+  async getManualTransactions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { startDate, endDate, type } = req.query;
+
+      const transactions = await financeClerkService.getManualTransactions(branchId!, {
+        startDate: startDate as string,
+        endDate: endDate as string,
+        type: type as string
+      });
+
+      res.json({
+        success: true,
+        data: transactions
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new FinanceClerkController();

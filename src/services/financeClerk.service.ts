@@ -2278,6 +2278,71 @@ class FinanceClerkService {
       sentAt: new Date().toISOString()
     };
   }
+
+  // Record a manual transaction (income/expense/other)
+  async recordManualTransaction(data: {
+    category: 'expense' | 'income' | 'other';
+    type: string;
+    amount: number;
+    details: string;
+    date: string;
+    verifiedBy: string;
+    branchId: string;
+  }) {
+    const paymentDateGregorian = this.ethiopianDateStringToGregorian(data.date || '');
+    const ethDate = gregorianToEthiopic(new Date(paymentDateGregorian));
+
+    // Sign amount: negative for expense, positive for income/other
+    const signedAmount = data.category === 'expense' ? -Math.abs(data.amount) : Math.abs(data.amount);
+
+    const result = await pool.query(
+      `INSERT INTO finance_transactions (
+        student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year, description
+      ) VALUES (NULL, NULL, $1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *`,
+      [
+        signedAmount,
+        data.type,
+        paymentDateGregorian,
+        data.verifiedBy,
+        data.branchId,
+        ethDate.month,
+        ethDate.year,
+        data.details
+      ]
+    );
+
+    return result.rows[0];
+  }
+
+  // Get manual transactions
+  async getManualTransactions(branchId: string, filters?: { startDate?: string; endDate?: string; type?: string }) {
+    let query = `
+      SELECT ft.*, ft.verified_by AS recorded_by_name
+      FROM finance_transactions ft
+      WHERE ft.branch_id = $1 AND ft.student_id IS NULL
+    `;
+    const params: any[] = [branchId];
+    let idx = 2;
+
+    if (filters?.startDate) {
+      query += ` AND ft.date >= $${idx++}`;
+      params.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      query += ` AND ft.date <= $${idx++}`;
+      params.push(filters.endDate);
+    }
+    if (filters?.type) {
+      query += ` AND ft.type = $${idx++}`;
+      params.push(filters.type);
+    }
+
+    query += ` ORDER BY ft.date DESC, ft.created_at DESC`;
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
 }
 
 export default new FinanceClerkService();

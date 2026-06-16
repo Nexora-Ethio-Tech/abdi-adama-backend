@@ -59,6 +59,14 @@ const sendSmsSchema = Joi.object({
   message: Joi.string().min(1).max(160).required()
 });
 
+const recordManualTransactionSchema = Joi.object({
+  category: Joi.string().valid('expense', 'income', 'other').required(),
+  type: Joi.string().required(),
+  amount: Joi.number().positive().required(),
+  details: Joi.string().allow('').required(),
+  date: Joi.string().required()
+});
+
 // Role Guard segments
 const readOnlyInventory = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.SCHOOL_ADMIN]);
 const readWriteFinance = roleGuard([UserRole.FINANCE_CLERK, UserRole.SUPER_ADMIN, UserRole.AUDITOR]);
@@ -235,5 +243,9 @@ router.get('/audit-logs/export', clerkOnly, async (req: AuthRequest, res: Respon
     res.status(500).json({ success: false, error: { message: 'Failed to export audit logs' } });
   }
 });
+
+// Manual/Custom Transactions (Income, Expense, Other)
+router.post('/transactions', clerkOnly, validate(recordManualTransactionSchema), financeClerkController.recordManualTransaction);
+router.get('/transactions', readOnlyFinance, financeClerkController.getManualTransactions);
 
 export default router;

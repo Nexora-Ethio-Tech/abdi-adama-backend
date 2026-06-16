@@ -53,7 +53,8 @@ async function ensureSchemaExtensions(): Promise<void> {
     '37th_add_document_columns_to_users.sql',
     '38th_performance_indexes.sql',
     '39th_create_teacher_proxy_assignments.sql',
-    '40th_add_graduation_year_to_students.sql'
+    '40th_add_graduation_year_to_students.sql',
+    '41st_add_description_to_finance_transactions.sql'
   ];
 
   for (const fileName of migrationFiles) {
