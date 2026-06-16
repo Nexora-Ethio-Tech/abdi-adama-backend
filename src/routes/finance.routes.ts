@@ -37,24 +37,44 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
       console.warn('Failed to inspect finance_transactions columns, defaulting to fallback.', err);
     }
 
-    // 2. Safely fetch all revenue transactions
-    let allRevRows: any[] = [];
+    // 2. Safely fetch all transactions
+    let allRows: any[] = [];
     try {
       const selectFields = hasEthioColumns 
-        ? 'amount, type, date, ethiopic_month, ethiopic_year'
-        : 'amount, type, date';
-      const allRevRes = await pool.query(
-        `SELECT ${selectFields} FROM finance_transactions WHERE type != 'Expense'`
+        ? 'student_id, amount, type, date, ethiopic_month, ethiopic_year'
+        : 'student_id, amount, type, date';
+      const allRes = await pool.query(
+        `SELECT ${selectFields} FROM finance_transactions`
       );
-      allRevRows = allRevRes.rows;
+      allRows = allRes.rows;
     } catch (err) {
       console.error('Failed to query finance_transactions, using fallback empty list.', err);
     }
 
+    // Helper to calculate signed net amount
+    const getNetAmount = (r: any) => {
+      const isExpense = r.type === 'Expense' || r.type?.toLowerCase() === 'expense';
+      return isExpense ? -Math.abs(Number(r.amount || 0)) : Number(r.amount || 0);
+    };
+
+    const isRegistrationType = (type: string) => {
+      const t = (type || '').toLowerCase();
+      return t.includes('registration');
+    };
+
+    const isStudentFeeType = (type: string) => {
+      const t = (type || '').toLowerCase();
+      return t.includes('monthly') ||
+             t.includes('tuition') ||
+             t.includes('bus') ||
+             t.includes('penalty') ||
+             t.includes('payment');
+    };
+
     // Calculate revenues based on transaction types and dates
-    const totalRevenue = allRevRows.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    const totalRevenue = allRows.reduce((sum, r) => sum + getNetAmount(r), 0);
     
-    const monthlyRevenue = allRevRows.reduce((sum, r) => {
+    const monthlyRevenue = allRows.reduce((sum, r) => {
       let isCurrentMonth = false;
       if (hasEthioColumns && r.ethiopic_month && r.ethiopic_year) {
         isCurrentMonth = (r.ethiopic_month.toLowerCase() === ethMonthLabel.toLowerCase()) && 
@@ -68,16 +88,20 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
           }
         } catch (e) {}
       }
-      return isCurrentMonth ? sum + Number(r.amount || 0) : sum;
+      return isCurrentMonth ? sum + getNetAmount(r) : sum;
     }, 0);
 
-    const monthlyFeesCollected = allRevRows
-      .filter(r => r.type !== 'Registration Fee' && !/registration/i.test(r.type || ''))
-      .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    const monthlyFeesCollected = allRows
+      .filter(r => (r.student_id !== null || isStudentFeeType(r.type)) && !isRegistrationType(r.type))
+      .reduce((sum, r) => sum + getNetAmount(r), 0);
 
-    const registrationFees = allRevRows
-      .filter(r => r.type === 'Registration Fee' || /registration/i.test(r.type || ''))
-      .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    const registrationFees = allRows
+      .filter(r => (r.student_id !== null || isRegistrationType(r.type)) && isRegistrationType(r.type))
+      .reduce((sum, r) => sum + getNetAmount(r), 0);
+
+    const otherTransactionsCollected = allRows
+      .filter(r => r.student_id === null && !isStudentFeeType(r.type) && !isRegistrationType(r.type))
+      .reduce((sum, r) => sum + getNetAmount(r), 0);
 
     // 3. Unpaid vs Paid counts with nested fail-safes
     let countsRes;
@@ -172,7 +196,8 @@ router.get('/summary', async (req: AuthRequest, res, next) => {
       monthly_fees: monthlyFeesCollected,
       monthly_fees_paid_count: monthlyFeesPaidCount,
       monthly_fees_collected: monthlyFeesCollected,
-      registration_fees: registrationFees
+      registration_fees: registrationFees,
+      other_transactions_collected: otherTransactionsCollected
     });
   } catch (error) {
     next(error);
