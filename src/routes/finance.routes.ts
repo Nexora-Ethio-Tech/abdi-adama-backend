@@ -372,4 +372,137 @@ router.get('/audit', async (req: AuthRequest, res, next) => {
   }
 });
 
+// GET /api/finance/net-profit
+router.get('/net-profit', async (req: AuthRequest, res, next) => {
+  try {
+    const role = req.user!.role;
+    let targetBranchId: string | null = null;
+
+    if (role === UserRole.SCHOOL_ADMIN || role === UserRole.FINANCE_CLERK) {
+      targetBranchId = req.user!.branch_id;
+    } else if (role === UserRole.SUPER_ADMIN || role === UserRole.AUDITOR) {
+      targetBranchId = (req.query.branchId as string) || null;
+    }
+
+    const { startDate, endDate } = req.query;
+
+    // 1. Money In from finance_transactions
+    let inQuery = `
+      SELECT
+        COALESCE(SUM(CASE WHEN type = 'Expense' OR LOWER(type) = 'expense' OR amount < 0 THEN 0 ELSE ABS(amount) END), 0) AS total_in
+      FROM finance_transactions
+      WHERE 1=1
+    `;
+    const inParams: any[] = [];
+    let inIdx = 1;
+    if (targetBranchId) {
+      inQuery += ` AND branch_id = $${inIdx++}`;
+      inParams.push(targetBranchId);
+    }
+    if (startDate) {
+      inQuery += ` AND date >= $${inIdx++}`;
+      inParams.push(startDate);
+    }
+    if (endDate) {
+      inQuery += ` AND date <= $${inIdx++}`;
+      inParams.push(endDate);
+    }
+    const inResult = await pool.query(inQuery, inParams);
+    const totalIn = parseFloat(inResult.rows[0]?.total_in || 0);
+
+    // 2. Money Out (Expenses) from finance_transactions
+    let outQuery = `
+      SELECT
+        COALESCE(SUM(CASE WHEN type = 'Expense' OR LOWER(type) = 'expense' OR amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_expenses
+      FROM finance_transactions
+      WHERE 1=1
+    `;
+    const outParams: any[] = [];
+    let outIdx = 1;
+    if (targetBranchId) {
+      outQuery += ` AND branch_id = $${outIdx++}`;
+      outParams.push(targetBranchId);
+    }
+    if (startDate) {
+      outQuery += ` AND date >= $${outIdx++}`;
+      outParams.push(startDate);
+    }
+    if (endDate) {
+      outQuery += ` AND date <= $${outIdx++}`;
+      outParams.push(endDate);
+    }
+    const outResult = await pool.query(outQuery, outParams);
+    const totalExpenses = parseFloat(outResult.rows[0]?.total_expenses || 0);
+
+    // 3. Staff Payments (Payroll) from payroll_runs
+    let payrollQuery = `
+      SELECT
+        COALESCE(SUM(total_net + total_pension_employer), 0) AS total_payroll
+      FROM payroll_runs
+      WHERE status IN ('finalized', 'exported')
+    `;
+    const payrollParams: any[] = [];
+    let payrollIdx = 1;
+    if (targetBranchId) {
+      payrollQuery += ` AND branch_id = $${payrollIdx++}`;
+      payrollParams.push(targetBranchId);
+    }
+    if (startDate) {
+      payrollQuery += ` AND created_at >= $${payrollIdx++}`;
+      payrollParams.push(startDate);
+    }
+    if (endDate) {
+      payrollQuery += ` AND created_at <= $${payrollIdx++}`;
+      payrollParams.push(endDate);
+    }
+    const payrollResult = await pool.query(payrollQuery, payrollParams);
+    const totalPayroll = parseFloat(payrollResult.rows[0]?.total_payroll || 0);
+
+    // 4. Loan Disbursements (Out) from loans
+    let loansQuery = `
+      SELECT
+        COALESCE(SUM(l.amount), 0) AS total_loans
+      FROM loans l
+      JOIN users u ON l.employee_id = u.id
+      WHERE l.status IN ('active', 'completed')
+    `;
+    const loansParams: any[] = [];
+    let loansIdx = 1;
+    if (targetBranchId) {
+      loansQuery += ` AND u.branch_id = $${loansIdx++}`;
+      loansParams.push(targetBranchId);
+    }
+    if (startDate) {
+      loansQuery += ` AND l.paid_at >= $${loansIdx++}`;
+      loansParams.push(startDate);
+    }
+    if (endDate) {
+      loansQuery += ` AND l.paid_at <= $${loansIdx++}`;
+      loansParams.push(endDate);
+    }
+    const loansResult = await pool.query(loansQuery, loansParams);
+    const totalLoans = parseFloat(loansResult.rows[0]?.total_loans || 0);
+
+    const totalOut = totalExpenses + totalPayroll + totalLoans;
+
+    res.json({
+      success: true,
+      data: {
+        totalIn,
+        totalOut,
+        netProfit: totalIn - totalOut,
+        breakdown: {
+          totalIn,
+          totalExpenses,
+          totalPayroll,
+          totalLoans,
+          totalOut
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;
