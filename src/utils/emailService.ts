@@ -87,7 +87,7 @@ export async function sendWelcomeEmail(
   role: string,
   digitalId?: string
 ): Promise<boolean> {
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://abdi-adama.com';
   const subject = 'Welcome to Abdi Adama School IMS – Your Account is Ready';
 
   const htmlBody = `
@@ -293,7 +293,7 @@ export async function sendAdmissionCredentialsEmail(
   studentName: string,
   grade: string
 ): Promise<boolean> {
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://abdi-adama.com';
   const roleLabel = role === 'student' ? 'Student' : 'Parent / Guardian';
   const subject = `Your ${roleLabel} Account – Abdi Adama School IMS`;
 
