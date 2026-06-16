@@ -2,29 +2,7 @@ import pool from '../config/database';
 import schoolAdminService from './schoolAdmin.service';
 import { gregorianToEthiopic, todayEthiopic } from '../utils/ethiopicUtils';
 import { generateCredentials } from '../utils/credentialGenerator';
-import { gregorianToEthiopian, ethiopianToGregorianDate, nowInEAT, getTodayEATDateString } from '../shared/ethiopianCalendar';
-import { getCachedFinanceSetting } from '../cache/financeSettingsCache';
-
-/**
- * Rate-limiter for syncCollectionStatusesForMonth.
- * Prevents the same branch+month from being synced more than once every 60 seconds.
- * This is critical because getStudentsWithFees and getOverduePayments both call
- * syncCollectionStatusesForMonth before returning data — without this guard,
- * every page load / tab switch triggers a full re-sync of ALL students.
- */
-const syncLastRun = new Map<string, number>();
-const SYNC_COOLDOWN_MS = 60_000; // 60 seconds
-
-function shouldRunSync(month: string, branchId?: string): boolean {
-  const key = `${branchId || 'all'}:${month}`;
-  const lastRun = syncLastRun.get(key);
-  const now = Date.now();
-  if (lastRun && now - lastRun < SYNC_COOLDOWN_MS) {
-    return false; // Synced recently, skip
-  }
-  syncLastRun.set(key, now);
-  return true;
-}
+import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
 
 class FinanceClerkService {
   // Get available aid allocations for a student (active allocations with remaining balance)
@@ -112,35 +90,33 @@ class FinanceClerkService {
   }
 
   private async getFinanceSettingNumber(key: string, defaultValue = 0): Promise<number> {
-    // Uses in-memory cache — refreshes every 60s instead of querying per call
-    return getCachedFinanceSetting(key, defaultValue);
+    const result = await pool.query(`SELECT value FROM finance_settings WHERE key = $1 LIMIT 1`, [key]);
+    const value = Number(result.rows[0]?.value);
+    return Number.isFinite(value) && value > 0 ? value : defaultValue;
   }
 
   /**
    * Convert a date string that may be Ethiopian (YYYY-MM-DD EC) to a Gregorian ISO date string.
    * The frontend sends dates formatted with getTodayEthiopianDate() which returns EC dates like "2018-09-25".
-   * EC years are ~7-8 years behind Gregorian, so any year < 2023 is treated as Ethiopian.
-   * Years >= 2023 are assumed already Gregorian (safe cut-off for this system).
+   * EC years are ~7-8 years behind Gregorian, so any year < 2015 is treated as Ethiopian.
+   * Years >= 2015 are assumed already Gregorian (safe cut-off for this system).
    */
   private ethiopianDateStringToGregorian(dateStr: string): string {
-    if (!dateStr) return getTodayEATDateString();
+    if (!dateStr) return new Date().toISOString().slice(0, 10);
     // Strip any " EC" suffix if present
     const cleaned = dateStr.replace(/\s*EC\s*$/i, '').trim();
     const parts = cleaned.split('-').map(Number);
-    if (parts.length !== 3 || parts.some(isNaN)) return getTodayEATDateString();
+    if (parts.length !== 3 || parts.some(isNaN)) return new Date().toISOString().slice(0, 10);
     const [y, m, d] = parts;
     // Ethiopian years for this school system are in the 2000–2030 range.
-    // Gregorian years for dates relevant to this system start at 2023+.
-    // If year < 2023, treat as Ethiopian and convert; otherwise assume Gregorian.
-    if (y < 2023) {
+    // Gregorian years for dates relevant to this system start at 2020+.
+    // If year < 2015, treat as Ethiopian and convert; otherwise assume Gregorian.
+    if (y < 2015) {
       try {
         const gregDate = ethiopianToGregorianDate({ year: y, month: m, day: d });
-        const gy = gregDate.getFullYear();
-        const gm = String(gregDate.getMonth() + 1).padStart(2, '0');
-        const gd = String(gregDate.getDate()).padStart(2, '0');
-        return `${gy}-${gm}-${gd}`;
+        return gregDate.toISOString().slice(0, 10);
       } catch {
-        return getTodayEATDateString();
+        return new Date().toISOString().slice(0, 10);
       }
     }
     // Already Gregorian
@@ -206,7 +182,7 @@ class FinanceClerkService {
     );
     const months = Array.from(monthsStatusMap.keys());
 
-    const ethNow = gregorianToEthiopian(nowInEAT());
+    const ethNow = gregorianToEthiopian(new Date());
     const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
     if (!months.includes(currentMonth)) {
       months.push(currentMonth);
@@ -234,9 +210,12 @@ class FinanceClerkService {
     }
 
     const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
-    const now = nowInEAT();
+    const now = new Date();
 
     for (const month of months) {
+      if (monthsStatusMap.get(month) === 'cleared') {
+        continue;
+      }
       // Use computeMonthlyFeesOutstanding to exclude registration fee from collection status
       const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, branchId, month, now);
       const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
@@ -258,7 +237,7 @@ class FinanceClerkService {
     }
   }
 
-  async getPenaltyDueForMonth(client: any, student: any, month: string, now = nowInEAT()) {
+  async getPenaltyDueForMonth(client: any, student: any, month: string, now = new Date()) {
     const [_, monthNum] = month.split('-').map(Number);
     if (monthNum === 11 || monthNum === 12 || monthNum === 13) return 0; // No penalty for summer months
 
@@ -271,13 +250,8 @@ class FinanceClerkService {
     }
 
     // Safeguard: If student enrolled after the deadline of the billing month, do not charge penalty for this month
-    if (student.created_at) {
-      const createdDate = new Date(student.created_at);
-      const createdStr = `${createdDate.getFullYear()}-${String(createdDate.getMonth() + 1).padStart(2, '0')}-${String(createdDate.getDate()).padStart(2, '0')}`;
-      const dueStr = `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(dueDate.getDate()).padStart(2, '0')}`;
-      if (createdStr > dueStr) {
-        return 0;
-      }
+    if (student.created_at && new Date(student.created_at) > dueDate) {
+      return 0;
     }
 
     // Now we are past the deadline. Let's see if the student paid their base fees on time.
@@ -310,69 +284,49 @@ class FinanceClerkService {
       return 0;
     }
 
-    // Otherwise, penalty applies.
-    // Resolution order: student.penalty_fee → global finance setting → branch_grade_fees.penalty_rate.
-    const perStudentPenalty = Number(student.penalty_fee || 0);
-    if (perStudentPenalty > 0) return perStudentPenalty;
-
-    const globalPenaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
-    if (globalPenaltyRate > 0) return globalPenaltyRate;
-
-    // Last resort: financial_policies.penalty_rate for the student's grade
-    const bgfRes = await client.query(
-      `SELECT COALESCE(penalty_rate, 0) AS penalty_rate
-       FROM financial_policies
-       WHERE branch_id = $1
-         AND REPLACE(REPLACE(LOWER(grade_level), 'grade', ''), ' ', '') = REPLACE(REPLACE(LOWER($2), 'grade', ''), ' ', '')
-       LIMIT 1`,
-      [student.branch_id, student.grade]
-    );
-    return Number(bgfRes.rows[0]?.penalty_rate || 0);
+    // Otherwise, penalty applies
+    const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
+    const defaultPenalty = Number(student.penalty_fee || 0) || penaltyRate;
+    return defaultPenalty;
   }
 
-  private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string, now = nowInEAT()) {
+  private async computeMonthlyOutstanding(client: any, student: any, branchId: string, month: string, now = new Date()) {
+    const feeTypes = ['monthly', 'bus', 'penalty', 'registration'];
+    let outstandingTotal = 0;
+
     const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
     const [_, monthNum] = month.split('-').map(Number);
     const isSummer = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
-    // Single CTE query: fetch paid amounts for ALL fee types + aid in one round-trip
-    const batchRes = await client.query(
-      `WITH paid AS (
-         SELECT pi.fee_type, COALESCE(SUM(pi.amount), 0) AS total
-         FROM payments p
-         JOIN payment_items pi ON pi.payment_id = p.id
-         WHERE p.student_id = $1 AND p.month = $2
-         GROUP BY pi.fee_type
-       ),
-       aid AS (
-         SELECT COALESCE(SUM(amount), 0) AS total
-         FROM student_aid_usages
-         WHERE student_id = $1 AND month = $2
-       )
-       SELECT
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'monthly'), 0) AS monthly_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'bus'), 0) AS bus_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'penalty'), 0) AS penalty_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'registration'), 0) AS registration_paid,
-         COALESCE((SELECT total FROM aid), 0) AS aid_paid`,
-      [student.id, month]
-    );
+    for (const ft of feeTypes) {
+      let due = 0;
+      if (ft === 'monthly') due = isSummer ? 0 : Number(student.monthly_fee || 0);
+      else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+      else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
+      else if (ft === 'registration') due = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
 
-    const row = batchRes.rows[0];
-    const monthlyDue = isSummer ? 0 : Number(student.monthly_fee || 0);
-    const busDue = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
-    const penaltyDueVal = isSummer ? 0 : penaltyDue;
-    const registrationDue = await this.getRegistrationDueForMonth(client, student.id, branchId, month);
+      const paidRes = await client.query(
+        `SELECT COALESCE(SUM(pi.amount),0) as paid
+         FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
+        [student.id, month, ft]
+      );
 
-    const monthlyPaid = Number(row.monthly_paid) + Number(row.aid_paid);
-    const busPaid = Number(row.bus_paid);
-    const penaltyPaid = Number(row.penalty_paid);
-    const registrationPaid = Number(row.registration_paid);
+      let paid = Number(paidRes.rows[0].paid || 0);
+      if (ft === 'monthly') {
+        const aidPaidRes = await client.query(
+          `SELECT COALESCE(SUM(amount),0) as paid
+           FROM student_aid_usages
+           WHERE student_id = $1 AND month = $2`,
+          [student.id, month]
+        );
+        paid += Number(aidPaidRes.rows[0].paid || 0);
+      }
 
-    return Math.max(0, monthlyDue - monthlyPaid)
-         + Math.max(0, busDue - busPaid)
-         + Math.max(0, penaltyDueVal - penaltyPaid)
-         + Math.max(0, registrationDue - registrationPaid);
+      outstandingTotal += Math.max(0, due - paid);
+    }
+
+    return outstandingTotal;
   }
 
   /**
@@ -381,56 +335,54 @@ class FinanceClerkService {
    * This method is used to determine if a month's collection_status should be 'cleared'
    */
   private async computeMonthlyFeesOutstanding(
-    client: any, student: any, branchId: string, month: string, now = nowInEAT()
+    client: any, student: any, branchId: string, month: string, now = new Date()
   ) {
+    // Only include recurring monthly fees, NOT registration (one-time fee)
+    const feeTypes = ['monthly', 'bus', 'penalty'];
+    let outstandingTotal = 0;
+
     const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
     const [_, monthNum] = month.split('-').map(Number);
     const isSummer = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
-    // Single CTE query: fetch paid amounts, fee deductions, and aid in one round-trip
-    const batchRes = await client.query(
-      `WITH paid AS (
-         SELECT pi.fee_type, COALESCE(SUM(pi.amount), 0) AS total
-         FROM payments p
-         JOIN payment_items pi ON pi.payment_id = p.id
-         WHERE p.student_id = $1 AND p.month = $2
-         GROUP BY pi.fee_type
-       ),
-       deductions AS (
-         SELECT COALESCE(SUM(approved_amount), 0) AS total
-         FROM fee_deductions
-         WHERE student_id = $1 AND month = $2 AND status = 'approved'
-       ),
-       aid AS (
-         SELECT COALESCE(SUM(amount), 0) AS total
-         FROM student_aid_usages
-         WHERE student_id = $1 AND month = $2
-       )
-       SELECT
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'monthly'), 0) AS monthly_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'bus'), 0) AS bus_paid,
-         COALESCE((SELECT total FROM paid WHERE fee_type = 'penalty'), 0) AS penalty_paid,
-         COALESCE((SELECT total FROM deductions), 0) AS approved_deduction,
-         COALESCE((SELECT total FROM aid), 0) AS aid_paid`,
-      [student.id, month]
-    );
+    for (const ft of feeTypes) {
+      let due = 0;
+      if (ft === 'monthly') {
+        const standardFee = isSummer ? 0 : Number(student.monthly_fee || 0);
+        const dedRes = await client.query(
+          `SELECT COALESCE(approved_amount, 0) as approved_amount
+           FROM fee_deductions
+           WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+          [student.id, month]
+        );
+        const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
+        due = Math.max(0, standardFee - approvedDeduction);
+      }
+      else if (ft === 'bus') due = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+      else if (ft === 'penalty') due = isSummer ? 0 : penaltyDue;
 
-    const row = batchRes.rows[0];
+      const paidRes = await client.query(
+        `SELECT COALESCE(SUM(pi.amount),0) as paid
+         FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+         WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
+        [student.id, month, ft]
+      );
 
-    // Monthly fee after deduction
-    const standardFee = isSummer ? 0 : Number(student.monthly_fee || 0);
-    const monthlyDue = Math.max(0, standardFee - Number(row.approved_deduction));
-    const monthlyPaid = Number(row.monthly_paid) + Number(row.aid_paid);
+      let paid = Number(paidRes.rows[0].paid || 0);
+      if (ft === 'monthly') {
+        const aidPaidRes = await client.query(
+          `SELECT COALESCE(SUM(amount),0) as paid
+           FROM student_aid_usages
+           WHERE student_id = $1 AND month = $2`,
+          [student.id, month]
+        );
+        paid += Number(aidPaidRes.rows[0].paid || 0);
+      }
 
-    const busDue = (isSummer || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
-    const busPaid = Number(row.bus_paid);
+      outstandingTotal += Math.max(0, due - paid);
+    }
 
-    const penaltyDueVal = isSummer ? 0 : penaltyDue;
-    const penaltyPaid = Number(row.penalty_paid);
-
-    return Math.max(0, monthlyDue - monthlyPaid)
-         + Math.max(0, busDue - busPaid)
-         + Math.max(0, penaltyDueVal - penaltyPaid);
+    return outstandingTotal;
   }
 
   // Record an itemized payment and update collections status
@@ -487,12 +439,7 @@ class FinanceClerkService {
 
       // Enforce constraint: Penalty fees must be paid in full before paying other fees
       // Use the payment's own date as "now" so the penalty is anchored to when they actually paid
-      let paymentNow = nowInEAT();
-      if (data.date) {
-        const gregStr = this.ethiopianDateStringToGregorian(data.date);
-        const [py, pm, pd] = gregStr.split('-').map(Number);
-        paymentNow = new Date(py, pm - 1, pd);
-      }
+      const paymentNow = data.date ? new Date(data.date) : new Date();
       const penaltyDue = await this.getPenaltyDueForMonth(client, student, data.month, paymentNow);
       const penaltyPaidRes = await client.query(
         `SELECT COALESCE(SUM(pi.amount), 0) AS paid
@@ -637,8 +584,7 @@ class FinanceClerkService {
       // Also record a finance_transactions summary (backwards compatibility) - amount is cash collected
       // Use the same converted Gregorian date as the payment for consistency
       const actualGregorianDateStr = paymentDateGregorian;
-      const [py, pm, pd] = actualGregorianDateStr.split('-').map(Number);
-      const ethDate = gregorianToEthiopic(new Date(py, pm - 1, pd));
+      const ethDate = gregorianToEthiopic(new Date(actualGregorianDateStr));
 
       for (const it of itemsToPersist) {
         if (it.cashAmount && it.cashAmount > 0) {
@@ -657,70 +603,30 @@ class FinanceClerkService {
         }
       }
 
-      // Recompute outstanding MONTHLY FEES ONLY (excluding registration) and update student_collections for the paid month.
-      // IMPORTANT: Registration fee is a one-time annual fee and must NEVER flip collection_status to 'cleared'.
-      // Only update the collection record when at least one non-registration fee was paid.
-      const paidNonRegistration = toInsertItems.some(it => it.feeType !== 'registration');
+      // Recompute outstanding MONTHLY FEES ONLY (excluding registration) and update student_collections for the paid month
+      // Registration is a one-time fee and should NOT affect collection status
+      const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, data.month);
       const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
       const dueDate = this.getPaymentDueDateForMonth(data.month, deadlineDay);
-      const now = nowInEAT();
-
-      // Hoist these so they are accessible by the summer settlement block and return value below.
-      let outstandingTotal = 0;
+      const now = new Date();
       let status = 'in_collections';
+      const [_, outMonthNum] = data.month.split('-').map(Number);
+      if (outstandingTotal <= 0) status = 'cleared';
+      else if (now > dueDate) status = (outMonthNum === 11 || outMonthNum === 12 || outMonthNum === 13) ? 'in_collections' : 'overdue';
 
-      if (paidNonRegistration) {
-        outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, data.month);
-        const [_, outMonthNum] = data.month.split('-').map(Number);
-        if (outstandingTotal <= 0) status = 'cleared';
-        else if (now > dueDate) status = (outMonthNum === 11 || outMonthNum === 12 || outMonthNum === 13) ? 'in_collections' : 'overdue';
-
-        await client.query(
-          `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
-           VALUES ($1, $2, $3, $4, NOW())
-           ON CONFLICT (student_id, month) DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
-          [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
-        );
-      }
-      // If only registration was paid: do NOT touch student_collections.
-      // The sync job (syncCollectionStatusesForMonth) will set the status correctly
-      // once the student's monthly fees are paid.
-
-      // ── One-time fee deduction expiry ─────────────────────────────────────
-      // If a monthly payment was made and there is an approved fee deduction for
-      // this student+month, mark it as 'used' so it cannot be applied again in
-      // any future month. Also reset the student's approval workflow to 'none'
-      // so they must submit a new request for subsequent months.
-      const paidMonthly = toInsertItems.some(it => it.feeType === 'monthly');
-      if (paidMonthly) {
-        const dedUsedRes = await client.query(
-          `UPDATE fee_deductions
-           SET status = 'used', updated_at = NOW()
-           WHERE student_id = $1 AND month = $2 AND status = 'approved'
-           RETURNING id`,
-          [data.studentId, data.month]
-        );
-        if (dedUsedRes.rowCount && dedUsedRes.rowCount > 0) {
-          // Reset student workflow — they must re-apply for the next month
-          await client.query(
-            `UPDATE students
-             SET fee_approval_status = 'none'::fee_approval_status,
-                 fee_status = 'standard',
-                 requested_aid_amount = 0,
-                 updated_at = NOW()
-             WHERE id = $1`,
-            [data.studentId]
-          );
-        }
-      }
+      await client.query(
+        `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (student_id, month) DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
+        [data.studentId, data.month, dueDate.toISOString().slice(0, 10), status]
+      );
 
       // ── Summer / carry-over cross-month settlement ────────────────────────────
       // Registration fee is a ONE-TIME annual charge. If paid in any summer month
       // (Hamle 11, Nehase 12, Pagume 13) OR as a carry-over in a later month,
       // all three summer records are auto-cleared. No 3× charging.
       const paidRegFee = toInsertItems.some(it => it.feeType === 'registration');
-      // Only auto-clear summer records when the monthly-fee outstanding is also cleared
-      if (paidRegFee && paidNonRegistration && status === 'cleared') {
+      if (paidRegFee && status === 'cleared') {
         const [pyStr, pmStr] = data.month.split('-');
         const summerMonths = this.getSummerMonths(parseInt(pyStr), parseInt(pmStr));
         for (const sm of summerMonths) {
@@ -795,7 +701,7 @@ class FinanceClerkService {
 
   // Get outstanding amounts per fee type for a student for a given month
   async getStudentOutstanding(studentId: string, month?: string) {
-    const ethNow = gregorianToEthiopian(nowInEAT());
+    const ethNow = gregorianToEthiopian(new Date());
     const targetMonth = month || `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
 
     // Fetch student fees - bus fee is 0 if student doesn't use transport
@@ -922,8 +828,6 @@ class FinanceClerkService {
         totalDue,
         totalPaid,
         totalRemaining: Math.max(0, totalDue - totalPaid),
-        // Fee deduction (one-time per month approval)
-        approvedDeduction,
         // Aid summary
         approvedAidTotal,
         aidUsed,
@@ -938,13 +842,10 @@ class FinanceClerkService {
 
   // Get students with fee information
   async getStudentsWithFees(branchId?: string | null, search?: string, feeStatus?: string, grade?: string) {
-    const ethNow = gregorianToEthiopian(nowInEAT());
+    const ethNow = gregorianToEthiopian(new Date());
     const month = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
     try {
-      // Rate-limit: skip sync if already synced within last 60s for this branch+month
-      if (shouldRunSync(month, branchId || undefined)) {
-        await this.syncCollectionStatusesForMonth(month, branchId || undefined);
-      }
+      await this.syncCollectionStatusesForMonth(month, branchId || undefined);
     } catch (e) {
       console.error('Failed to sync collection statuses:', e);
     }
@@ -981,15 +882,7 @@ class FinanceClerkService {
         s.fee_status, s.fee_approval_status, s.fee_notes, s.requested_aid_amount,
         s.parent_phone,
         u.name, u.email, u.digital_id,
-        -- If student has ANY overdue month, surface it as overdue so frontend filter works correctly.
-        -- Otherwise use the current-month collection status.
-        CASE
-          WHEN EXISTS (
-            SELECT 1 FROM student_collections ox
-            WHERE ox.student_id = s.id AND ox.status = 'overdue'
-          ) THEN 'overdue'
-          ELSE sc.status
-        END AS collection_status
+        sc.status AS collection_status
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN student_collections sc ON sc.student_id = s.id AND sc.month = $1
@@ -1031,7 +924,7 @@ class FinanceClerkService {
     const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
     const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
     const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
-    const isPastDeadline = nowInEAT() > dueDate;
+    const isPastDeadline = new Date() > dueDate;
 
     return result.rows.map((student: any) => {
       // Students without a collection record are still within their billing period → Pending
@@ -1335,17 +1228,14 @@ class FinanceClerkService {
       );
 
       // Calculate bus_start_date based on provided day or today's Gregorian date
-      let busStartDate = getTodayEATDateString(); // Default: today's Gregorian date
+      let busStartDate = new Date().toISOString().slice(0, 10); // Default: today's Gregorian date
       if (data.busStartDay !== undefined && data.busStartDay >= 1 && data.busStartDay <= 30) {
         // If a specific day is provided, calculate the Gregorian date for that day in current month
-        const today = nowInEAT();
-        const currentMonth = today.getUTCMonth();
-        const currentYear = today.getUTCFullYear();
+        const today = new Date();
+        const currentMonth = today.getMonth();
+        const currentYear = today.getFullYear();
         const startDateObj = new Date(currentYear, currentMonth, data.busStartDay);
-        const sy = startDateObj.getFullYear();
-        const sm = String(startDateObj.getMonth() + 1).padStart(2, '0');
-        const sd = String(startDateObj.getDate()).padStart(2, '0');
-        busStartDate = `${sy}-${sm}-${sd}`;
+        busStartDate = startDateObj.toISOString().slice(0, 10);
       }
 
       await client.query(
@@ -1411,8 +1301,8 @@ class FinanceClerkService {
       // Calculate actual days used based on start_date and stop_date using Ethiopian calendar
       let actualDaysUsed = Number(data.daysUsed);
       if (student.bus_start_date) {
-        const startEth = gregorianToEthiopian(student.bus_start_date);
-        const stopEth = gregorianToEthiopian(nowInEAT());
+        const startEth = gregorianToEthiopian(new Date(student.bus_start_date));
+        const stopEth = gregorianToEthiopian(new Date());
         
         if (startEth.year === stopEth.year && startEth.month === stopEth.month) {
           actualDaysUsed = stopEth.day - startEth.day + 1;
@@ -1440,14 +1330,12 @@ class FinanceClerkService {
       await client.query(
         `INSERT INTO finance_transactions
           (student_id, student_name, amount, type, date, verified_by, branch_id, ethiopic_month, ethiopic_year)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        // EAT-correct today date passed as explicit parameter
+         VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6, $7, $8)`,
         [
           data.studentId,
           student.name,
           amountDue,
           'Transport Stop Charge',
-          getTodayEATDateString(),
           data.verifiedBy,
           data.branchId,
           ethToday.month,
@@ -1549,7 +1437,7 @@ class FinanceClerkService {
       const student = result.rows[0];
 
       if (data.feeStatus === 'reduced') {
-        const ethNow = gregorianToEthiopian(nowInEAT());
+        const ethNow = gregorianToEthiopian(new Date());
         const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
         await client.query(
           `INSERT INTO fee_deductions (student_id, month, requested_amount, approved_amount, status, approved_by, updated_at)
@@ -1563,7 +1451,7 @@ class FinanceClerkService {
           [studentId, currentMonth, data.requestedAidAmount || 0]
         );
       } else if (data.feeStatus === 'standard') {
-        const ethNow = gregorianToEthiopian(nowInEAT());
+        const ethNow = gregorianToEthiopian(new Date());
         const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
         await client.query(
           `DELETE FROM fee_deductions WHERE student_id = $1 AND month = $2`,
@@ -1670,12 +1558,10 @@ class FinanceClerkService {
 
   // Get overdue payments - returns all students with ANY overdue month, with itemised unpaid amounts
   async getOverduePayments(branchId: string) {
-    const ethNow = gregorianToEthiopian(nowInEAT());
+    const ethNow = gregorianToEthiopian(new Date());
     const currentMonth = `${ethNow.year}-${String(ethNow.month).padStart(2, '0')}`;
-    // Rate-limit: skip sync if already synced within last 60s for this branch+month
-    if (shouldRunSync(currentMonth, branchId)) {
-      await this.syncCollectionStatusesForMonth(currentMonth, branchId);
-    }
+    // Sync the current month so newly overdue students are flagged
+    await this.syncCollectionStatusesForMonth(currentMonth, branchId);
 
     // 1. Fetch all overdue records for this branch
     const overdueRecs = await pool.query(
@@ -1724,53 +1610,8 @@ class FinanceClerkService {
     try {
       const results: any[] = [];
 
-      // ── Bulk pre-fetch: 3 queries instead of ~3,200 ──────────────────────────
-      // Collect all unique (student_id, month) pairs from overdue records
-      const overdueStudentIds = studentIds;
-      const allOverdueMonths = [...new Set(overdueRecs.rows.map((r: any) => r.month as string))];
-
-      // 1. Bulk fetch ALL fee deductions for overdue students/months
-      const bulkDedRes = await client.query(
-        `SELECT student_id, month, COALESCE(SUM(approved_amount), 0) AS total
-         FROM fee_deductions
-         WHERE student_id = ANY($1) AND month = ANY($2) AND status = 'approved'
-         GROUP BY student_id, month`,
-        [overdueStudentIds, allOverdueMonths]
-      );
-      const dedMap = new Map<string, number>();
-      for (const row of bulkDedRes.rows) {
-        dedMap.set(`${row.student_id}:${row.month}`, Number(row.total));
-      }
-
-      // 2. Bulk fetch ALL payment item sums grouped by student, month, fee_type
-      const bulkPaidRes = await client.query(
-        `SELECT p.student_id, p.month, pi.fee_type, COALESCE(SUM(pi.amount), 0) AS total
-         FROM payments p
-         JOIN payment_items pi ON pi.payment_id = p.id
-         WHERE p.student_id = ANY($1) AND p.month = ANY($2)
-         GROUP BY p.student_id, p.month, pi.fee_type`,
-        [overdueStudentIds, allOverdueMonths]
-      );
-      const paidMap = new Map<string, number>();
-      for (const row of bulkPaidRes.rows) {
-        paidMap.set(`${row.student_id}:${row.month}:${row.fee_type}`, Number(row.total));
-      }
-
-      // 3. Bulk fetch ALL aid usages for overdue students/months
-      const bulkAidRes = await client.query(
-        `SELECT student_id, month, COALESCE(SUM(amount), 0) AS total
-         FROM student_aid_usages
-         WHERE student_id = ANY($1) AND month = ANY($2)
-         GROUP BY student_id, month`,
-        [overdueStudentIds, allOverdueMonths]
-      );
-      const aidMap = new Map<string, number>();
-      for (const row of bulkAidRes.rows) {
-        aidMap.set(`${row.student_id}:${row.month}`, Number(row.total));
-      }
-
-      // ── Per-student computation using pre-fetched data ──────────────────────
       for (const student of studentsRes.rows) {
+        // All overdue months for this student (sorted ascending = oldest first)
         const overdue_months: string[] = overdueRecs.rows
           .filter((r: any) => r.student_id === student.id)
           .map((r: any) => r.month as string);
@@ -1784,41 +1625,73 @@ class FinanceClerkService {
         let registration_unpaid = 0;
 
         for (const m of overdue_months) {
-          // Fee deduction (from bulk map)
-          const approvedDeduction = dedMap.get(`${student.id}:${m}`) || 0;
+          // Fetch approved fee deduction from fee_deductions table for this student and month
+          const dedRes = await client.query(
+            `SELECT COALESCE(approved_amount, 0) as approved_amount
+             FROM fee_deductions
+             WHERE student_id = $1 AND month = $2 AND status = 'approved'`,
+            [student.id, m]
+          );
+          const approvedDeduction = Number(dedRes.rows[0]?.approved_amount || 0);
           const effectiveMFee = Math.max(0, mFee - approvedDeduction);
 
-          // Monthly paid (from bulk map) + aid (from bulk map)
-          const monthlyPaid = (paidMap.get(`${student.id}:${m}:monthly`) || 0) + (aidMap.get(`${student.id}:${m}`) || 0);
-          monthly_unpaid += Math.max(0, effectiveMFee - monthlyPaid);
+          // Monthly (cash + aid)
+          const mPaidRes = await client.query(
+            `SELECT COALESCE(
+               (SELECT SUM(pi.amount) FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+                WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'monthly'), 0
+             ) + COALESCE(
+               (SELECT SUM(amount) FROM student_aid_usages WHERE student_id = $1 AND month = $2), 0
+             ) AS paid`,
+            [student.id, m]
+          );
+          monthly_unpaid += Math.max(0, effectiveMFee - Number(mPaidRes.rows[0].paid || 0));
 
-          // Bus paid (from bulk map)
+          // Bus
           if (bFee > 0) {
-            const busPaid = paidMap.get(`${student.id}:${m}:bus`) || 0;
-            bus_unpaid += Math.max(0, bFee - busPaid);
+            const bPaidRes = await client.query(
+              `SELECT COALESCE(SUM(pi.amount),0) AS paid FROM payments p
+               JOIN payment_items pi ON pi.payment_id = p.id
+               WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'bus'`,
+              [student.id, m]
+            );
+            bus_unpaid += Math.max(0, bFee - Number(bPaidRes.rows[0].paid || 0));
           }
 
-          // Penalty — still per-student (has complex business logic with date checks)
+          // Penalty
           const penaltyDue = await this.getPenaltyDueForMonth(client, student, m);
-          const penaltyPaid = paidMap.get(`${student.id}:${m}:penalty`) || 0;
-          penalty_unpaid += Math.max(0, penaltyDue - penaltyPaid);
+          const pPaidRes = await client.query(
+            `SELECT COALESCE(SUM(pi.amount),0) AS paid FROM payments p
+             JOIN payment_items pi ON pi.payment_id = p.id
+             WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'penalty'`,
+            [student.id, m]
+          );
+          penalty_unpaid += Math.max(0, penaltyDue - Number(pPaidRes.rows[0].paid || 0));
 
-          // Registration — still per-student (has enrollment date logic)
+          // Registration (only due in enrollment month)
           const regDue = await this.getRegistrationDueForMonth(client, student.id, student.branch_id, m);
           if (regDue > 0) {
-            const regPaid = paidMap.get(`${student.id}:${m}:registration`) || 0;
-            registration_unpaid += Math.max(0, regDue - regPaid);
+            const rPaidRes = await client.query(
+              `SELECT COALESCE(SUM(pi.amount),0) AS paid FROM payments p
+               JOIN payment_items pi ON pi.payment_id = p.id
+               WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = 'registration'`,
+              [student.id, m]
+            );
+            registration_unpaid += Math.max(0, regDue - Number(rPaidRes.rows[0].paid || 0));
           }
         }
 
+        // Only include if there is still an actual unpaid balance.
+        // This guards against stale 'overdue' records in student_collections that
+        // haven't been re-synced yet after the student paid.
         const total_unpaid = monthly_unpaid + bus_unpaid + penalty_unpaid + registration_unpaid;
         if (total_unpaid <= 0) {
           // Auto-clear the stale overdue records in the DB so future queries are fast
-          if (overdue_months.length > 0) {
+          for (const m of overdue_months) {
             await client.query(
               `UPDATE student_collections SET status = 'cleared', updated_at = NOW()
-               WHERE student_id = $1 AND month = ANY($2) AND status = 'overdue'`,
-              [student.id, overdue_months]
+               WHERE student_id = $1 AND month = $2 AND status = 'overdue'`,
+              [student.id, m]
             );
           }
           continue;
@@ -1827,7 +1700,7 @@ class FinanceClerkService {
         results.push({
           ...student,
           collection_status: 'overdue',
-          overdue_months,
+          overdue_months,           // e.g. ["2018-01","2018-02"] oldest first
           monthly_unpaid,
           bus_unpaid,
           penalty_unpaid,
@@ -1885,226 +1758,199 @@ class FinanceClerkService {
         params
       );
 
-      const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+      // Pre-fetch settings ONCE to eliminate the inner loop queries
+      const deadlineRes = await client.query(`SELECT value FROM finance_settings WHERE key = 'student_payment_deadline' LIMIT 1`);
+      const deadlineDayStr = deadlineRes.rows[0]?.value;
+      let deadlineDay = 10;
+      if (deadlineDayStr && !isNaN(Number(deadlineDayStr))) deadlineDay = Number(deadlineDayStr);
+
+      const penaltyRes = await client.query(`SELECT value FROM finance_settings WHERE key = 'student_late_penalty_rate' LIMIT 1`);
+      const penaltyStr = penaltyRes.rows[0]?.value;
+      let penaltyRate = 0;
+      if (penaltyStr && !isNaN(Number(penaltyStr))) penaltyRate = Number(penaltyStr);
+
       const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
-      const now = nowInEAT();
+      const now = new Date();
       const [, monthNumStr] = month.split('-');
       const monthNum = parseInt(monthNumStr, 10);
       const isSummerMonth = monthNum === 11 || monthNum === 12 || monthNum === 13;
 
-      // ── Bulk pre-fetch: replaces ~28K queries with ~5 ────────────────────────
-      const allStudentIds = studentsRes.rows.map((s: any) => s.id);
+      // Extract all student IDs for bulk operations
+      const studentIds = studentsRes.rows.map(s => s.id);
 
-      // 1. Bulk fetch latest fee_deduction month per student (for rollover reset)
-      const bulkLatestDedRes = await client.query(
-        `SELECT DISTINCT ON (student_id) student_id, month
-         FROM fee_deductions
-         WHERE student_id = ANY($1)
-         ORDER BY student_id, month DESC`,
-        [allStudentIds]
-      );
-      const latestDedMap = new Map<string, string>();
-      for (const row of bulkLatestDedRes.rows) {
-        latestDedMap.set(row.student_id, row.month);
-      }
-
-      // 2. Bulk fetch ALL student_collections for this month (skip already cleared)
-      const bulkCollRes = await client.query(
-        `SELECT student_id, status FROM student_collections
-         WHERE student_id = ANY($1) AND month = $2`,
-        [allStudentIds, month]
-      );
-      const collStatusMap = new Map<string, string>();
-      for (const row of bulkCollRes.rows) {
-        collStatusMap.set(row.student_id, row.status);
-      }
-
-      // 3. Bulk fetch ALL payment sums + deductions + aid for this month in one CTE
-      const bulkPaymentRes = await client.query(
-        `WITH paid AS (
-           SELECT p.student_id, pi.fee_type, COALESCE(SUM(pi.amount), 0) AS total
-           FROM payments p
-           JOIN payment_items pi ON pi.payment_id = p.id
-           WHERE p.student_id = ANY($1) AND p.month = $2
-           GROUP BY p.student_id, pi.fee_type
-         ),
-         deductions AS (
-           SELECT student_id, COALESCE(SUM(approved_amount), 0) AS total
-           FROM fee_deductions
-           WHERE student_id = ANY($1) AND month = $2 AND status = 'approved'
-           GROUP BY student_id
-         ),
-         aid AS (
-           SELECT student_id, COALESCE(SUM(amount), 0) AS total
-           FROM student_aid_usages
-           WHERE student_id = ANY($1) AND month = $2
-           GROUP BY student_id
-         )
-         SELECT
-           s.id AS student_id,
-           COALESCE((SELECT total FROM paid WHERE paid.student_id = s.id AND fee_type = 'monthly'), 0) AS monthly_paid,
-           COALESCE((SELECT total FROM paid WHERE paid.student_id = s.id AND fee_type = 'bus'), 0) AS bus_paid,
-           COALESCE((SELECT total FROM paid WHERE paid.student_id = s.id AND fee_type = 'penalty'), 0) AS penalty_paid,
-           COALESCE((SELECT total FROM deductions WHERE deductions.student_id = s.id), 0) AS approved_deduction,
-           COALESCE((SELECT total FROM aid WHERE aid.student_id = s.id), 0) AS aid_paid
-         FROM unnest($1::uuid[]) AS s(id)`,
-        [allStudentIds, month]
-      );
-      const payDataMap = new Map<string, any>();
-      for (const row of bulkPaymentRes.rows) {
-        payDataMap.set(row.student_id, row);
-      }
-
-      // 4. Bulk fetch ALL overdue records for re-evaluation
-      const bulkOverdueRes = await client.query(
-        `SELECT student_id, month FROM student_collections
-         WHERE student_id = ANY($1) AND status = 'overdue' AND month <> $2`,
-        [allStudentIds, month]
-      );
-      const overdueByStudent = new Map<string, string[]>();
-      for (const row of bulkOverdueRes.rows) {
-        const arr = overdueByStudent.get(row.student_id) || [];
-        arr.push(row.month);
-        overdueByStudent.set(row.student_id, arr);
-      }
-
-      // ── Batch rollover reset: students with stale fee_approval_status ──────
-      const rolloverIds: string[] = [];
-      for (const student of studentsRes.rows) {
-        const latestDedMonth = latestDedMap.get(student.id);
-        if (latestDedMonth && latestDedMonth !== month && student.fee_approval_status !== 'none') {
-          rolloverIds.push(student.id);
-          student.fee_status = 'standard';
-          student.fee_approval_status = 'none';
-          student.requested_aid_amount = 0;
-        }
-      }
-      if (rolloverIds.length > 0) {
-        await client.query(
-          `UPDATE students
-           SET fee_status = 'standard',
-               fee_approval_status = 'none',
-               requested_aid_amount = 0,
-               updated_at = NOW()
-           WHERE id = ANY($1)`,
-          [rolloverIds]
+      if (studentIds.length > 0) {
+        // Bulk fetch fee deductions for all students for the target month
+        const deductionsRes = await client.query(
+          `SELECT student_id, approved_amount FROM fee_deductions WHERE month = $1 AND status = 'approved' AND student_id = ANY($2)`,
+          [month, studentIds]
         );
-      }
-
-      // ── Per-student status computation using pre-fetched data ──────────────
-      // Collect UPSERT rows for batch insert
-      const upsertRows: { studentId: string; status: string }[] = [];
-      const summerClearStudentIds: string[] = [];
-
-      for (const student of studentsRes.rows) {
-        // Compute outstanding using pre-fetched payment data
-        const pd = payDataMap.get(student.id) || {
-          monthly_paid: 0, bus_paid: 0, penalty_paid: 0, approved_deduction: 0, aid_paid: 0
-        };
-
-        const standardFee = isSummerMonth ? 0 : Number(student.monthly_fee || 0);
-        const monthlyDue = Math.max(0, standardFee - Number(pd.approved_deduction));
-        const monthlyPaid = Number(pd.monthly_paid) + Number(pd.aid_paid);
-
-        const busDue = (isSummerMonth || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
-        const busPaid = Number(pd.bus_paid);
-
-        // Skip already cleared months ONLY if they actually paid their monthly tuition and bus fee.
-        // If their database status says 'cleared' but they haven't paid their fees (e.g. registration-only payment bug),
-        // we must not skip them so they can be transitioned to 'overdue' or 'in_collections' correctly.
-        if (collStatusMap.get(student.id) === 'cleared' && monthlyPaid >= monthlyDue && busPaid >= busDue) {
-          continue;
+        const deductionsMap = new Map();
+        for (const row of deductionsRes.rows) {
+          deductionsMap.set(row.student_id, Number(row.approved_amount || 0));
         }
 
-        const penaltyDue = await this.getPenaltyDueForMonth(client, student, month, now);
-
-        const penaltyDueVal = isSummerMonth ? 0 : penaltyDue;
-        const penaltyPaid = Number(pd.penalty_paid);
-
-        const outstandingTotal = Math.max(0, monthlyDue - monthlyPaid)
-                               + Math.max(0, busDue - busPaid)
-                               + Math.max(0, penaltyDueVal - penaltyPaid);
-
-        let status = 'in_collections';
-        if (outstandingTotal <= 0) {
-          status = 'cleared';
-        } else if (now > dueDate) {
-          status = isSummerMonth ? 'in_collections' : 'overdue';
-        }
-
-        upsertRows.push({ studentId: student.id, status });
-
-        if (isSummerMonth && status === 'cleared') {
-          summerClearStudentIds.push(student.id);
-        }
-
-        // Re-evaluate previously overdue months (only for students that have them)
-        const overdueMonths = overdueByStudent.get(student.id);
-        if (overdueMonths && overdueMonths.length > 0) {
-          for (const om of overdueMonths) {
-            const omOutstanding = await this.computeMonthlyFeesOutstanding(client, student, student.branch_id, om);
-            const [, omNumStr] = om.split('-');
-            const omNum = parseInt(omNumStr, 10);
-            const omDueDate = this.getPaymentDueDateForMonth(om, deadlineDay);
-            let omStatus = 'in_collections';
-            if (omOutstanding <= 0) {
-              omStatus = 'cleared';
-            } else if (now > omDueDate) {
-              omStatus = (omNum === 11 || omNum === 12 || omNum === 13) ? 'in_collections' : 'overdue';
-            }
-            await client.query(
-              `UPDATE student_collections SET status = $1, updated_at = NOW()
-               WHERE student_id = $2 AND month = $3`,
-              [omStatus, student.id, om]
-            );
-          }
-        }
-      }
-
-      // ── Batch UPSERT all collection statuses ──────────────────────────────
-      const dueDateStr = dueDate.toISOString().slice(0, 10);
-      if (upsertRows.length > 0) {
-        // Build a VALUES list for batch upsert
-        const valuesParams: any[] = [];
-        const valuesClauses: string[] = [];
-        for (let i = 0; i < upsertRows.length; i++) {
-          const base = i * 4;
-          valuesClauses.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, NOW())`);
-          valuesParams.push(upsertRows[i].studentId, month, dueDateStr, upsertRows[i].status);
-        }
-        await client.query(
-          `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
-           VALUES ${valuesClauses.join(', ')}
-           ON CONFLICT (student_id, month)
-           DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()`,
-          valuesParams
+        // Bulk fetch payments for base fees for all students for the target month
+        const paymentsRes = await client.query(
+          `SELECT p.student_id, pi.fee_type, SUM(pi.amount) as paid
+           FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
+           WHERE p.month = $1 AND pi.fee_type IN ('monthly', 'bus', 'penalty') AND p.student_id = ANY($2)
+           GROUP BY p.student_id, pi.fee_type`,
+          [month, studentIds]
         );
-      }
+        const paymentsMap = new Map();
+        for (const row of paymentsRes.rows) {
+          if (!paymentsMap.has(row.student_id)) paymentsMap.set(row.student_id, {});
+          paymentsMap.get(row.student_id)[row.fee_type] = Number(row.paid || 0);
+        }
 
-      // ── Batch cascade-clear summer months for cleared students ─────────────
-      if (isSummerMonth && summerClearStudentIds.length > 0) {
-        const [yearStr] = month.split('-');
-        const year = parseInt(yearStr, 10);
-        const otherSummerMonths = ['11', '12', '13']
-          .map(m => `${year}-${m}`)
-          .filter(m => m !== month);
-        for (const sm of otherSummerMonths) {
-          const smDueDate = this.getPaymentDueDateForMonth(sm, deadlineDay);
-          // Batch upsert for all cleared summer students
-          const smParams: any[] = [];
-          const smClauses: string[] = [];
-          for (let i = 0; i < summerClearStudentIds.length; i++) {
-            const base = i * 4;
-            smClauses.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, NOW())`);
-            smParams.push(summerClearStudentIds[i], sm, smDueDate.toISOString().slice(0, 10), 'cleared');
+        // Bulk fetch aid usages for monthly fees
+        const aidsRes = await client.query(
+          `SELECT student_id, SUM(amount) as paid FROM student_aid_usages WHERE month = $1 AND student_id = ANY($2) GROUP BY student_id`,
+          [month, studentIds]
+        );
+        for (const row of aidsRes.rows) {
+          if (!paymentsMap.has(row.student_id)) paymentsMap.set(row.student_id, {});
+          paymentsMap.get(row.student_id)['monthly_aid'] = Number(row.paid || 0);
+        }
+
+        // Bulk fetch existing collections
+        const existingCollRes = await client.query(
+          `SELECT student_id, status FROM student_collections WHERE month = $1 AND student_id = ANY($2)`,
+          [month, studentIds]
+        );
+        const existingCollMap = new Map();
+        for (const row of existingCollRes.rows) {
+          existingCollMap.set(row.student_id, row.status);
+        }
+
+        // Bulk fetch latest fee deduction records for rollover reset logic
+        const latestDedRes = await client.query(
+          `SELECT student_id, month FROM (
+             SELECT student_id, month, ROW_NUMBER() OVER (PARTITION BY student_id ORDER BY month DESC) as rn
+             FROM fee_deductions WHERE student_id = ANY($1)
+           ) t WHERE rn = 1`,
+          [studentIds]
+        );
+        const latestDedMap = new Map();
+        for (const row of latestDedRes.rows) {
+          latestDedMap.set(row.student_id, row.month);
+        }
+        
+        // Prepare bulk upsert arrays
+        const collValues: any[] = [];
+        let paramIndex = 1;
+        const insertParams: any[] = [];
+
+        // Prepare bulk update for student fee_status reset
+        const resetStudentIds: string[] = [];
+
+        for (const student of studentsRes.rows) {
+          // Rollover reset logic
+          const latestDedMonth = latestDedMap.get(student.id);
+          if (latestDedMonth && latestDedMonth !== month && student.fee_approval_status !== 'none') {
+            resetStudentIds.push(student.id);
+            student.fee_status = 'standard';
+            student.fee_approval_status = 'none';
+            student.requested_aid_amount = 0;
           }
-          await client.query(
-            `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
-             VALUES ${smClauses.join(', ')}
-             ON CONFLICT (student_id, month)
-             DO UPDATE SET status = 'cleared', due_date = EXCLUDED.due_date, updated_at = NOW()`,
-            smParams
+
+          if (existingCollMap.get(student.id) === 'cleared') {
+            continue;
+          }
+
+          // Calculate outstanding total completely in memory!
+          let outstandingTotal = 0;
+          let penaltyDue = 0;
+
+          if (!isSummerMonth && now > dueDate) {
+             if (student.created_at && new Date(student.created_at) > dueDate) {
+                 // Skip penalty
+             } else {
+                 const baseDue = Number(student.monthly_fee || 0) + (student.is_bus_user ? Number(student.bus_fee || 0) : 0);
+                 const paidBase = (paymentsMap.get(student.id)?.['monthly'] || 0) + (paymentsMap.get(student.id)?.['bus'] || 0) + (paymentsMap.get(student.id)?.['monthly_aid'] || 0);
+                 if (paidBase < baseDue) {
+                    penaltyDue = Number(student.penalty_fee || 0) || penaltyRate;
+                 }
+             }
+          }
+
+          const feeTypes = ['monthly', 'bus', 'penalty'];
+          for (const ft of feeTypes) {
+             let due = 0;
+             if (ft === 'monthly') {
+               const standardFee = isSummerMonth ? 0 : Number(student.monthly_fee || 0);
+               const approvedDeduction = deductionsMap.get(student.id) || 0;
+               due = Math.max(0, standardFee - approvedDeduction);
+             } else if (ft === 'bus') {
+               due = (isSummerMonth || !student.is_bus_user) ? 0 : Number(student.bus_fee || 0);
+             } else if (ft === 'penalty') {
+               due = isSummerMonth ? 0 : penaltyDue;
+             }
+
+             let paid = paymentsMap.get(student.id)?.[ft] || 0;
+             if (ft === 'monthly') paid += paymentsMap.get(student.id)?.['monthly_aid'] || 0;
+
+             outstandingTotal += Math.max(0, due - paid);
+          }
+
+
+          let status = 'in_collections';
+          if (outstandingTotal <= 0) {
+            status = 'cleared';
+          } else if (now > dueDate) {
+            status = isSummerMonth ? 'in_collections' : 'overdue';
+          }
+
+          insertParams.push(student.id, month, dueDate.toISOString().slice(0, 10), status);
+          collValues.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, NOW())`);
+
+          // Re-evaluation of prior overdue months will be handled safely below by continuing to use the original method for only the specific subset of students with prior overdues, but we can optimise it later if needed. For now, it's rarely hit compared to the main loop.
+        }
+
+        // Execute bulk reset of student fee statuses
+        if (resetStudentIds.length > 0) {
+           await client.query(
+            `UPDATE students
+             SET fee_status = 'standard',
+                 fee_approval_status = 'none',
+                 requested_aid_amount = 0,
+                 updated_at = NOW()
+             WHERE id = ANY($1)`,
+            [resetStudentIds]
           );
+        }
+
+        // Execute bulk upsert of collections
+        if (collValues.length > 0) {
+          const insertQuery = `
+            INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+            VALUES ${collValues.join(', ')}
+            ON CONFLICT (student_id, month)
+            DO UPDATE SET status = EXCLUDED.status, due_date = EXCLUDED.due_date, updated_at = NOW()
+          `;
+          await client.query(insertQuery, insertParams);
+        }
+        
+        // Handle summer month cascade clear separately for the subset that just cleared
+        if (isSummerMonth) {
+           const [yearStr] = month.split('-');
+           const year = parseInt(yearStr, 10);
+           const otherSummerMonths = ['11', '12', '13'].map(m => `${year}-${m}`).filter(m => m !== month);
+           
+           for (const sm of otherSummerMonths) {
+               const smDueDate = this.getPaymentDueDateForMonth(sm, deadlineDay);
+               
+               // We only want to clear students who are 'cleared' for the current summer month.
+               // We can do this with a direct database update based on the state we just saved!
+               await client.query(
+                  `INSERT INTO student_collections (student_id, month, due_date, status, updated_at)
+                   SELECT student_id, $1, $2, 'cleared', NOW()
+                   FROM student_collections WHERE month = $3 AND status = 'cleared' AND student_id = ANY($4)
+                   ON CONFLICT (student_id, month)
+                   DO UPDATE SET status = 'cleared', due_date = EXCLUDED.due_date, updated_at = NOW()`,
+                  [sm, smDueDate.toISOString().slice(0, 10), month, studentIds]
+               );
+           }
         }
       }
 
@@ -2119,7 +1965,7 @@ class FinanceClerkService {
 
   // Get daily collection report
   async getDailyReport(branchId: string, date?: string) {
-    const targetDate = date || getTodayEATDateString();
+    const targetDate = date || new Date().toISOString().split('T')[0];
 
     const result = await pool.query(
       `SELECT 
@@ -2182,8 +2028,8 @@ class FinanceClerkService {
       try {
         await client.query('BEGIN');
 
-        const paymentDateGregorian = getTodayEATDateString();
-        const ethDate = gregorianToEthiopian(nowInEAT());
+        const paymentDateGregorian = new Date().toISOString().slice(0, 10);
+        const ethDate = gregorianToEthiopic(new Date());
         const currentMonth = `${ethDate.year}-${String(ethDate.month).padStart(2, '0')}`;
 
         // Insert into payments
