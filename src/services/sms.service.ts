@@ -23,7 +23,7 @@ function getCurrentDateTime(): string {
 export class SMSService {
     private readonly baseUrl: string;
 
-    constructor(baseUrl: string = 'http://192.168.8.1') {
+    constructor(baseUrl: string = process.env.SMS_MODEM_URL || 'http://192.168.8.1') {
         this.baseUrl = baseUrl;
     }
 

@@ -21,6 +21,9 @@ export interface SectionInfo {
 /** Normalize "Grade 7", "7", "grade 7" → "7" */
 export const normalizeGradeForSectionQuery = (grade: string): string => {
   const trimmed = grade.trim();
+  if (/^kg/i.test(trimmed)) {
+    return trimmed;
+  }
   const fromLabel = trimmed.match(/grade\s*(\d{1,2})/i);
   if (fromLabel) return fromLabel[1];
   const digits = trimmed.match(/(\d{1,2})/);
@@ -30,9 +33,19 @@ export const normalizeGradeForSectionQuery = (grade: string): string => {
 const sectionCountSql = 'COALESCE(c.current_count, c.student_count, 0)';
 
 const gradeMatchSql = `(
-  c.name ILIKE 'Grade ' || $1 || '%'
-  OR c.name ILIKE $1 || '%'
-  OR regexp_replace(c.name, '[^0-9]', '', 'g') = $1
+  (
+    $1 ILIKE 'KG%' AND (c.name ILIKE $1 || '%')
+  )
+  OR
+  (
+    $1 NOT ILIKE 'KG%'
+    AND c.name NOT ILIKE 'KG%'
+    AND (
+      c.name ILIKE 'Grade ' || $1 || '%'
+      OR c.name ILIKE $1 || '%'
+      OR regexp_replace(c.name, '[^0-9]', '', 'g') = $1
+    )
+  )
 )`;
 
 const hasAvailableSlotSql = `(
@@ -248,10 +261,20 @@ export const bulkAssignStudents = async (
 };
 
 const studentGradeMatchSql = `(
-  s.grade = $1
-  OR s.grade ILIKE 'Grade ' || $1
-  OR s.grade ILIKE 'Grade ' || $1 || '%'
-  OR regexp_replace(s.grade, '[^0-9]', '', 'g') = $1
+  (
+    $1 ILIKE 'KG%' AND (s.grade = $1 OR s.grade ILIKE $1 || '%')
+  )
+  OR
+  (
+    $1 NOT ILIKE 'KG%'
+    AND s.grade NOT ILIKE 'KG%'
+    AND (
+      s.grade = $1
+      OR s.grade ILIKE 'Grade ' || $1
+      OR s.grade ILIKE 'Grade ' || $1 || '%'
+      OR regexp_replace(s.grade, '[^0-9]', '', 'g') = $1
+    )
+  )
 )`;
 
 /**

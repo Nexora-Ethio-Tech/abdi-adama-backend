@@ -1067,8 +1067,7 @@ class FinanceClerkService {
     gradeApplying?: string | null
   ): Promise<{ amount: number; source: string }> {
     const gradeLevel = String(gradeApplying || '')
-      .replace(/grade\s*/i, '')
-      .replace(/\D/g, '')
+      .replace(/^grade\s*/i, '')
       .trim();
 
     if (gradeLevel) {
