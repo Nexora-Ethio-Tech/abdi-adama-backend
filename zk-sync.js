@@ -6,7 +6,7 @@ const ZK_DEVICE_IP = '192.168.1.201';   // Your device's IP address
 const ZK_DEVICE_PORT = 4370;
 const ZK_PASSWORD = 0;                  // Change if you set a device password (use number, e.g. 12345)
 
-const API_URL = 'https://abdi-adama.com/api/machine/attendance';
+const API_URL = 'http://localhost:5000/api/machine/attendance';
 const API_KEY = 'abdi_adama_zk_secure_key_2026';
 
 // ── State: track the last synced log index to avoid resending ──
