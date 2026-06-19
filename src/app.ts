@@ -39,11 +39,13 @@ app.use(helmet());
 
 // Allowed origins (add/remove as needed)
 const allowedOrigins = [
-  'https://abdi-adama.com',   // Production frontend
-  'https://www.abdi-adama.com', // Production frontend with www
-  'http://localhost:5173',    // Vite dev server
-  'http://localhost:3000',    // Create React App / other dev server
-  'http://localhost:4173',    // Vite preview server
+  'https://abdi-adama.com',
+  'https://www.abdi-adama.com',
+  'http://abdi-adama.com',
+  'http://www.abdi-adama.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:4173',
 ];
 
 app.use(cors({
@@ -58,8 +60,25 @@ app.use(cors({
       return callback(null, true);
     }
 
+    // Direct match against explicit allowed origins list
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
+    }
+
+    // Dynamic hostname match: Allow any protocol (http/https) for abdi-adama.com, its subdomains, and localhost
+    try {
+      const parsedOrigin = new URL(origin);
+      const hostname = parsedOrigin.hostname.toLowerCase();
+      if (
+        hostname === 'abdi-adama.com' || 
+        hostname.endsWith('.abdi-adama.com') || 
+        hostname === 'localhost' || 
+        hostname === '127.0.0.1'
+      ) {
+        return callback(null, true);
+      }
+    } catch (e) {
+      // Ignore URL parsing errors and let it fall through
     }
 
     return callback(new Error('Not allowed by CORS'));
