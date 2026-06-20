@@ -195,8 +195,8 @@ class SchoolAdminService {
                      AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
                      AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
                  )
-                 AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
-               THEN 'absent' ELSE 'zzz' END
+                  AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
+                THEN 'absent' ELSE 'zzz' END
            ) = 'absent'   THEN 1
            WHEN COALESCE(ea.status,'zzz') = 'late'     THEN 2
            WHEN COALESCE(ea.status,'zzz') = 'half-day' THEN 3
@@ -228,7 +228,6 @@ class SchoolAdminService {
     const { adminId, userId, date, status, sign_in_time, lunch_out_time, lunch_in_time, sign_out_time } = data;
 
     // Compute is_late_arrival from the Arrival time string ("HH:MM AM/PM" in Ethiopian clock)
-    // Ethiopian clock is 12h starting at 06:00 AM Gregorian (=12:00 AM Ethiopian).
     // The late cutoff is 02:20 AM Ethiopian = 2*60+20 = 140 minutes past Ethiopian midnight.
     let isLateArrival = false;
     if (sign_in_time) {
@@ -236,11 +235,21 @@ class SchoolAdminService {
       const [hStr, mStr] = timePart.split(':');
       let h = parseInt(hStr, 10);
       const m = parseInt(mStr, 10);
-      // Convert Ethiopian 12h to 24h (Ethiopian hours 0–23 past midnight/dawn)
       if (meridiem === 'PM' && h !== 12) h += 12;
       if (meridiem === 'AM' && h === 12) h = 0;
       const totalMin = h * 60 + m;
       isLateArrival = totalMin > 2 * 60 + 20; // 02:20 AM Ethiopian clock
+    }
+
+    const validStatuses = ['present', 'absent', 'late', 'half-day', 'excused', 'leave'];
+    const statusClean = status ? status.toLowerCase().trim() : '';
+
+    if (statusClean && !validStatuses.includes(statusClean)) {
+      await pool.query(
+        `DELETE FROM employee_attendance WHERE user_id = $1 AND date = $2`,
+        [userId, date]
+      );
+      return null;
     }
 
     // Compute effective status if not explicitly supplied
@@ -325,9 +334,19 @@ class SchoolAdminService {
         }
 
         // Determine effective status
+        const validStatuses = ['present', 'absent', 'late', 'half-day', 'excused', 'leave'];
         let effectiveStatus = rec.status || 'absent';
         // Normalise "present-(late)" -> stored as "present" with is_late_arrival=true
         if (effectiveStatus === 'present-(late)') effectiveStatus = 'present';
+
+        const statusClean = effectiveStatus.toLowerCase().trim();
+        if (!validStatuses.includes(statusClean)) {
+          await client.query(
+            `DELETE FROM employee_attendance WHERE user_id = $1 AND date = $2`,
+            [rec.userId, date]
+          );
+          continue;
+        }
 
         const result = await client.query(
           `INSERT INTO employee_attendance

@@ -1486,10 +1486,10 @@ class VicePrincipalService {
         ea.id AS attendance_id
       FROM public.users u
       JOIN public.teachers t ON t.user_id = u.id
-      LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $1::date
+      LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $3::date
       WHERE u.branch_id = $2 AND u.role = 'teacher' AND u.status = 'Approved'
       ORDER BY u.name ASC`,
-      [gregDateStr, branchId]
+      [gregDateStr, branchId, targetDate]
     );
 
     // Fetch proxy assignments for today
@@ -1506,8 +1506,8 @@ class VicePrincipalService {
       FROM public.teacher_proxy_assignments pa
       JOIN public.teachers t_proxy ON pa.proxy_teacher_id = t_proxy.id
       JOIN public.users u_proxy ON t_proxy.user_id = u_proxy.id
-      WHERE pa.date = $1::date AND pa.branch_id = $2`,
-      [gregDateStr, branchId]
+      WHERE pa.date = $3::date AND pa.branch_id = $2`,
+      [gregDateStr, branchId, targetDate]
     );
 
     // Fetch schedules for the weekday of gregDateStr
@@ -1553,6 +1553,17 @@ class VicePrincipalService {
       throw new Error('Teacher not found in this branch');
     }
 
+    const validStatuses = ['present', 'absent', 'late', 'half-day', 'excused', 'leave'];
+    const statusClean = status ? status.toLowerCase().trim() : '';
+
+    if (statusClean && !validStatuses.includes(statusClean)) {
+      await pool.query(
+        `DELETE FROM public.employee_attendance WHERE user_id = $1 AND date = $2::date`,
+        [userId, targetDate]
+      );
+      return null;
+    }
+
     const result = await pool.query(
       `INSERT INTO public.employee_attendance (user_id, date, status, recorded_by)
        VALUES ($1, $2::date, $3, $4)
@@ -1562,7 +1573,7 @@ class VicePrincipalService {
          recorded_by = EXCLUDED.recorded_by,
          created_at = NOW()
        RETURNING *`,
-      [userId, gregDateStr, status, recordedBy]
+      [userId, targetDate, status, recordedBy]
     );
 
     // If marked present, delete any proxy schedules for this teacher as absent_teacher
@@ -1572,7 +1583,7 @@ class VicePrincipalService {
         await pool.query(
           `DELETE FROM public.teacher_proxy_assignments 
            WHERE absent_teacher_id = $1 AND date = $2::date`,
-          [teacherRes.rows[0].id, gregDateStr]
+          [teacherRes.rows[0].id, targetDate]
         );
       }
     }
@@ -1657,7 +1668,7 @@ class VicePrincipalService {
             ) AS teaches_section
           FROM public.teachers t
           JOIN public.users u ON t.user_id = u.id
-          LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $1::date
+          LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $9::date
           WHERE u.branch_id = $2
             AND u.role = 'teacher'
             AND u.status = 'Approved'
@@ -1676,14 +1687,14 @@ class VicePrincipalService {
           AND NOT EXISTS (
               SELECT 1 FROM public.teacher_proxy_assignments pa
               WHERE pa.proxy_teacher_id = pt.teacher_id
-                AND pa.date = $1::date
+                AND pa.date = $9::date
                 AND pa.period_number = $7
           )
       )
       SELECT * 
       FROM free_teachers
       ORDER BY teaches_section DESC, name ASC`,
-      [gregDateStr, branchId, parsedClass, parsedSection, dayOfWeekName, absentTeacherId, periodNumber, className]
+      [gregDateStr, branchId, parsedClass, parsedSection, dayOfWeekName, absentTeacherId, periodNumber, className, targetDate]
     );
 
     return result.rows;
@@ -1732,7 +1743,7 @@ class VicePrincipalService {
          section = EXCLUDED.section,
          subject = EXCLUDED.subject
        RETURNING *`,
-      [branchId, absentTeacherId, proxyTeacherId, gregDateStr, periodNumber, parsedClass, parsedSection, subject]
+      [branchId, absentTeacherId, proxyTeacherId, targetDate, periodNumber, parsedClass, parsedSection, subject]
     );
     return result.rows[0];
   }
