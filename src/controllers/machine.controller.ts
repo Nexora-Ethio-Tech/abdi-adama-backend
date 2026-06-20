@@ -47,7 +47,8 @@ class MachineController {
   async syncAttendance(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const apiKey = req.headers['x-api-key'];
-      if (apiKey !== process.env.MACHINE_API_KEY) {
+      const expectedKey = process.env.MACHINE_API_KEY || 'abdi_adama_zk_secure_key_2026';
+      if (apiKey !== expectedKey) {
         res.status(401).json({ success: false, message: 'Unauthorized' });
         return;
       }

@@ -1,5 +1,15 @@
 try {
-  require('dotenv').config();
+  const path = require('path');
+  const fs = require('fs');
+  const localEnv = path.join(__dirname, '.env');
+  const parentEnv = path.join(__dirname, '..', '.env');
+  if (fs.existsSync(localEnv)) {
+    require('dotenv').config({ path: localEnv });
+  } else if (fs.existsSync(parentEnv)) {
+    require('dotenv').config({ path: parentEnv });
+  } else {
+    require('dotenv').config();
+  }
 } catch (e) {
   // dotenv not installed/loaded in this execution context
 }
