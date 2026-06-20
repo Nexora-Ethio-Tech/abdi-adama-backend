@@ -151,6 +151,7 @@ class MachineController {
                    WHERE user_id = $3 AND date = $4`,
                   [signTime, computeStatus(projected), userId, date]
                 );
+                processed++;
               } else if (row.lunch_in_time === null) {
                 // ── THIRD PUNCH: Must be a Check-In (Lunch In) ──
                 if (punchDir !== 'in') {
@@ -165,6 +166,7 @@ class MachineController {
                    WHERE user_id = $3 AND date = $4`,
                   [signTime, computeStatus(projected), userId, date]
                 );
+                processed++;
               } else if (row.sign_out_time === null) {
                 // ── FOURTH PUNCH: Must be a Check-Out (Departure) ──
                 if (punchDir !== 'out') {
@@ -178,10 +180,13 @@ class MachineController {
                    WHERE user_id = $2 AND date = $3`,
                   [signTime, userId, date]
                 );
+                processed++;
               } else {
                 console.log(`[ZK Sync] Ignored extra punch for user ${userId} on date ${date}: All 4 attendance sequence slots already recorded.`);
               }
             }
+          } else {
+            console.log(`[ZK Sync] Skipped punch: ZK ID ${log.zkDeviceId} is not registered to any user in the database.`);
           }
         }
 
