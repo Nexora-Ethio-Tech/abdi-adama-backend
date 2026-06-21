@@ -7,7 +7,8 @@ import {
   subscribeToNotifications,
   postAlert,
   getAlerts,
-  deleteAlert
+  deleteAlert,
+  getSchoolAnnouncements
 } from '../controllers/driverController';
 import { authenticateToken, authorizeRoles } from '../middleware/authMiddleware';
 
@@ -21,6 +22,7 @@ router.use(authenticateToken);
 
 // Manifest is Driver-only (STRICT ISOLATION)
 router.get('/manifest', authorizeRoles('Driver'), getManifest);
+router.get('/school-announcements', authorizeRoles('Driver'), getSchoolAnnouncements);
 
 // Logistics Notices - Shared accessibility for tracking & visibility
 router.post('/notice', authorizeRoles('Driver'), postNotice);

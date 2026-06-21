@@ -475,3 +475,36 @@ export const deleteAlert = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * GET /api/driver/school-announcements
+ * Fetch notices posted by School Admin targeted to drivers or all users within 60 days
+ */
+export const getSchoolAnnouncements = async (req: AuthRequest, res: Response) => {
+  const branchId = req.user?.branch_id || '1';
+
+  try {
+    const result = await pool.query(
+      `SELECT 
+         n.id::text,
+         n.title,
+         n.content,
+         n.priority,
+         n.category,
+         n.created_at AS timestamp,
+         u.name AS posted_by_name
+       FROM notices n
+       LEFT JOIN users u ON n.posted_by = u.id
+       WHERE n.created_at > NOW() - INTERVAL '60 days'
+         AND (n.branch_id = $1 OR n.branch_id IS NULL)
+         AND (n.audience = 'all' OR n.audience LIKE '%driver%')
+       ORDER BY n.created_at DESC
+       LIMIT 50`,
+      [branchId]
+    );
+
+    return sendSuccess(res, result.rows);
+  } catch (err: any) {
+    return sendError(res, 'Failed to fetch school announcements.', 500, err.message);
+  }
+};
+

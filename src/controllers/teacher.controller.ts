@@ -334,6 +334,20 @@ class TeacherController {
     }
   }
 
+  // Get announcements
+  async getAnnouncements(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const announcements = await teacherService.getAnnouncements(teacherUserId);
+      res.json({
+        success: true,
+        data: announcements
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Submit grades for a course
   async submitCourseGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

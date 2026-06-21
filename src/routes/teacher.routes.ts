@@ -129,6 +129,7 @@ router.get('/communication-logs/:studentId', teacherController.getCommunicationL
 router.get('/students/:studentId/grades', teacherController.getStudentGrades);
 router.get('/schedule', teacherController.getSchedule);
 router.get('/dashboard', teacherController.getDashboard);
+router.get('/announcements', teacherController.getAnnouncements);
 
 // Exam Management - Teacher
 router.post('/exams', examController.createExam);

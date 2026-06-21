@@ -72,7 +72,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
 
     user.role = normalizedRole;
 
-    if (!user.is_active) {
+    if (!user.is_active && user.role !== 'student') {
       res.status(403).json({
         success: false,
         error: {

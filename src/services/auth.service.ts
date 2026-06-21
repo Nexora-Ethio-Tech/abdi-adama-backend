@@ -46,7 +46,7 @@ class AuthService {
         throw error;
       }
 
-      if (!user.is_active) {
+      if (!user.is_active && user.role !== 'student') {
         const error: any = new Error('Account is inactive. Please contact administrator');
         error.statusCode = 403;
         throw error;
@@ -132,7 +132,7 @@ class AuthService {
         throw new Error('Invalid refresh token');
       }
 
-      if (!user || !user.is_active) {
+      if (!user || (!user.is_active && user.role !== 'student')) {
         throw new Error('Invalid refresh token');
       }
 

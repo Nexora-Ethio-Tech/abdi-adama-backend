@@ -1817,6 +1817,44 @@ class TeacherService {
       throw error;
     }
   }
+
+  /**
+   * Get school announcements for teacher
+   */
+  async getAnnouncements(teacherUserId: string) {
+    try {
+      const teacherResult = await pool.query(
+        'SELECT branch_id FROM teachers WHERE user_id = $1',
+        [teacherUserId]
+      );
+
+      const branchId = teacherResult.rows[0]?.branch_id || null;
+
+      const result = await pool.query(
+        `SELECT 
+           n.id::text,
+           n.title,
+           n.content,
+           n.priority,
+           n.category,
+           n.created_at AS timestamp,
+           u.name AS posted_by_name
+         FROM notices n
+         LEFT JOIN users u ON n.posted_by = u.id
+         WHERE n.created_at > NOW() - INTERVAL '60 days'
+           AND (n.branch_id = $1 OR n.branch_id IS NULL)
+           AND (n.audience = 'all' OR n.audience LIKE '%teacher%')
+         ORDER BY n.created_at DESC
+         LIMIT 50`,
+        [branchId]
+      );
+
+      return result.rows;
+    } catch (error) {
+      console.error('Error fetching teacher announcements:', error);
+      throw error;
+    }
+  }
 }
 
 export default new TeacherService();
