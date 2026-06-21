@@ -1486,10 +1486,10 @@ class VicePrincipalService {
         ea.id AS attendance_id
       FROM public.users u
       JOIN public.teachers t ON t.user_id = u.id
-      LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $3::date
-      WHERE u.branch_id = $2 AND u.role = 'teacher' AND u.status = 'Approved'
+      LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $2::date
+      WHERE u.branch_id = $1 AND u.role = 'teacher' AND u.status = 'Approved'
       ORDER BY u.name ASC`,
-      [gregDateStr, branchId, targetDate]
+      [branchId, targetDate]
     );
 
     // Fetch proxy assignments for today
@@ -1506,8 +1506,8 @@ class VicePrincipalService {
       FROM public.teacher_proxy_assignments pa
       JOIN public.teachers t_proxy ON pa.proxy_teacher_id = t_proxy.id
       JOIN public.users u_proxy ON t_proxy.user_id = u_proxy.id
-      WHERE pa.date = $3::date AND pa.branch_id = $2`,
-      [gregDateStr, branchId, targetDate]
+      WHERE pa.date = $2::date AND pa.branch_id = $1`,
+      [branchId, targetDate]
     );
 
     // Fetch schedules for the weekday of gregDateStr
@@ -1634,8 +1634,8 @@ class VicePrincipalService {
               JOIN public.classes c ON ct.class_id = c.id
               WHERE ct.teacher_id = t.id 
                 AND (
-                  (c.name = $3 AND c.section = $4) OR
-                  (c.name || c.section = $8)
+                  (c.name = $2 AND c.section = $3) OR
+                  (c.name || c.section = $7)
                 )
               
               UNION
@@ -1643,8 +1643,8 @@ class VicePrincipalService {
               SELECT 1 FROM public.classes c
               WHERE c.teacher_id = t.id 
                 AND (
-                  (c.name = $3 AND c.section = $4) OR
-                  (c.name || c.section = $8)
+                  (c.name = $2 AND c.section = $3) OR
+                  (c.name || c.section = $7)
                 )
               
               UNION
@@ -1653,8 +1653,8 @@ class VicePrincipalService {
               JOIN public.classes c ON co.class_id = c.id
               WHERE co.teacher_id = t.id 
                 AND (
-                  (c.name = $3 AND c.section = $4) OR
-                  (c.name || c.section = $8)
+                  (c.name = $2 AND c.section = $3) OR
+                  (c.name || c.section = $7)
                 )
               
               UNION
@@ -1662,17 +1662,17 @@ class VicePrincipalService {
               SELECT 1 FROM public.schedules s
               WHERE s.teacher_id = t.id 
                 AND (
-                  (s.class_name = $3 AND s.section = $4) OR
-                  (s.class_name = $8)
+                  (s.class_name = $2 AND s.section = $3) OR
+                  (s.class_name = $7)
                 )
             ) AS teaches_section
           FROM public.teachers t
           JOIN public.users u ON t.user_id = u.id
-          LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $9::date
-          WHERE u.branch_id = $2
+          LEFT JOIN public.employee_attendance ea ON ea.user_id = u.id AND ea.date = $8::date
+          WHERE u.branch_id = $1
             AND u.role = 'teacher'
             AND u.status = 'Approved'
-            AND t.id <> $6::uuid
+            AND t.id <> $5::uuid
             AND COALESCE(ea.status, 'present') NOT IN ('absent', 'excused', 'leave')
       ),
       free_teachers AS (
@@ -1681,20 +1681,20 @@ class VicePrincipalService {
           WHERE NOT EXISTS (
               SELECT 1 FROM public.schedules s
               WHERE s.teacher_id = pt.teacher_id
-                AND s.day = $5
-                AND s.period_number = $7
+                AND s.day = $4
+                AND s.period_number = $6
           )
           AND NOT EXISTS (
               SELECT 1 FROM public.teacher_proxy_assignments pa
               WHERE pa.proxy_teacher_id = pt.teacher_id
-                AND pa.date = $9::date
-                AND pa.period_number = $7
+                AND pa.date = $8::date
+                AND pa.period_number = $6
           )
       )
       SELECT * 
       FROM free_teachers
       ORDER BY teaches_section DESC, name ASC`,
-      [gregDateStr, branchId, parsedClass, parsedSection, dayOfWeekName, absentTeacherId, periodNumber, className, targetDate]
+      [branchId, parsedClass, parsedSection, dayOfWeekName, absentTeacherId, periodNumber, className, targetDate]
     );
 
     return result.rows;
