@@ -401,7 +401,7 @@ class FinanceClerkService {
 
       // Lock student row and fetch fees (standard fallbacks from branch_grade_fees if not overridden)
       const studentRes = await client.query(
-        `SELECT s.id, s.grade, s.branch_id, s.parent_phone, u.name, s.is_bus_user, s.created_at,
+        `SELECT s.id, s.grade, s.branch_id, COALESCE(s.parent_phone, (SELECT pa.parent_phone FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_phone, u.name, s.is_bus_user, s.created_at,
            COALESCE(
              NULLIF(s.monthly_fee, 0),
              (
@@ -706,7 +706,7 @@ class FinanceClerkService {
 
     // Fetch student fees - bus fee is 0 if student doesn't use transport
     const studentRes = await pool.query(
-      `SELECT s.id, s.grade, s.is_bus_user, s.branch_id, s.parent_phone, s.created_at, u.name,
+      `SELECT s.id, s.grade, s.is_bus_user, s.branch_id, COALESCE(s.parent_phone, (SELECT pa.parent_phone FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_phone, s.created_at, u.name,
          COALESCE(
            NULLIF(s.monthly_fee, 0),
            (
@@ -880,7 +880,7 @@ class FinanceClerkService {
         ELSE 0 END AS bus_fee,
         s.penalty_fee,
         s.fee_status, s.fee_approval_status, s.fee_notes, s.requested_aid_amount,
-        s.parent_phone,
+        COALESCE(s.parent_phone, (SELECT pa.parent_phone FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_phone,
         u.name, u.email, u.digital_id,
         sc.status AS collection_status
       FROM students s
@@ -1579,7 +1579,7 @@ class FinanceClerkService {
 
     // 3. Student details (include created_at so penalty enrollment-date check works)
     const studentsRes = await pool.query(
-      `SELECT s.id, s.grade, s.branch_id, s.is_bus_user, s.parent_phone, s.created_at, s.penalty_fee,
+      `SELECT s.id, s.grade, s.branch_id, s.is_bus_user, COALESCE(s.parent_phone, (SELECT pa.parent_phone FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_phone, s.created_at, s.penalty_fee,
          COALESCE(
            NULLIF(s.monthly_fee, 0),
            (SELECT monthly_fee FROM branch_grade_fees
@@ -2195,7 +2195,7 @@ class FinanceClerkService {
     const query = `
       SELECT 
         s.id,
-        s.parent_phone,
+        COALESCE(s.parent_phone, (SELECT pa.parent_phone FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_phone,
         u.name as student_name,
         u.digital_id,
         s.grade,
@@ -2250,22 +2250,10 @@ class FinanceClerkService {
 
     // 4. Send SMS via SMS service
     const { smsService } = require('./sms.service');
-    const sent = await smsService.sendSMS(phone, message);
+    const sent = await smsService.sendSMS(phone, message, studentId, branchId);
 
     if (!sent) {
       throw new Error('Failed to send SMS. Modem may be unavailable.');
-    }
-
-    // 5. Log the SMS attempt (optional - for audit trail)
-    try {
-      await pool.query(
-        `INSERT INTO sms_logs (student_id, parent_phone, message, status, sent_at, branch_id)
-         VALUES ($1, $2, $3, $4, NOW(), $5)`,
-        [studentId, phone, message, 'sent', branchId || null]
-      );
-    } catch (logErr) {
-      console.warn('[FinanceClerk SMS] Could not log SMS attempt:', logErr);
-      // Don't throw - SMS was sent, just couldn't log it
     }
 
     return {

@@ -202,6 +202,56 @@ class MachineController {
       next(error);
     }
   }
+
+  async getPendingSMS(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const apiKey = req.headers['x-api-key'];
+      const expectedKey = process.env.MACHINE_API_KEY || 'abdi_adama_zk_secure_key_2026';
+      if (apiKey !== expectedKey) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const result = await pool.query(
+        `SELECT id, parent_phone, message 
+         FROM sms_logs 
+         WHERE status = 'pending' 
+         ORDER BY created_at ASC`
+      );
+
+      res.json({ success: true, sms: result.rows });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateSMSStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const apiKey = req.headers['x-api-key'];
+      const expectedKey = process.env.MACHINE_API_KEY || 'abdi_adama_zk_secure_key_2026';
+      if (apiKey !== expectedKey) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const { id, status } = req.body;
+      if (!id || !status || !['sent', 'failed'].includes(status)) {
+        res.status(400).json({ success: false, message: 'Invalid payload: id and status (sent/failed) are required' });
+        return;
+      }
+
+      await pool.query(
+        `UPDATE sms_logs 
+         SET status = $1, sent_at = $2 
+         WHERE id = $3`,
+        [status, status === 'sent' ? new Date() : null, id]
+      );
+
+      res.json({ success: true, message: `SMS status updated to ${status}` });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new MachineController();

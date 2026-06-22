@@ -631,7 +631,9 @@ class TeacherService {
   async getStudentRoster(classId: string) {
     const result = await pool.query(
       `SELECT 
-        s.id, s.grade, s.parent_name, s.parent_phone,
+        s.id, s.grade,
+        COALESCE(s.parent_name, (SELECT pa.parent_name FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_name,
+        COALESCE(s.parent_phone, (SELECT pa.parent_phone FROM pending_applications pa WHERE pa.student_user_id = s.user_id LIMIT 1)) as parent_phone,
         s.allergies, s.medications, s.chronic_conditions, s.status,
         u.name, u.email, u.digital_id
       FROM students s

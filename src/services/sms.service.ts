@@ -1,4 +1,5 @@
 import axios from 'axios';
+import pool from '../config/database';
 
 function htmlEscape(text: string): string {
     return text
@@ -49,8 +50,31 @@ export class SMSService {
         }
     }
 
-    /** Sends SMS via Huawei modem */
-    public async sendSMS(phone: string, message: string): Promise<boolean> {
+    /** Sends SMS via Huawei modem or queues it in production */
+    public async sendSMS(
+        phone: string, 
+        message: string, 
+        studentId?: string, 
+        branchId?: string
+    ): Promise<boolean> {
+        const isQueueMode = process.env.SMS_MODE === 'queue' || process.env.NODE_ENV === 'production';
+
+        if (isQueueMode) {
+            console.log(`[SMS Queue] Queuing SMS to ${phone} (pending sending via local client)...`);
+            try {
+                await pool.query(
+                    `INSERT INTO sms_logs (student_id, parent_phone, message, status, sent_at, branch_id)
+                     VALUES ($1, $2, $3, 'pending', NULL, $4)`,
+                    [studentId || null, phone, message, branchId || null]
+                );
+                return true;
+            } catch (dbErr) {
+                console.error('[SMS Queue] Failed to queue SMS in database:', dbErr);
+                return false;
+            }
+        }
+
+        // Direct mode: Send using local Huawei USB modem
         const token = await this.getToken();
         if (!token) {
             console.error(`[SMS] Failed to obtain token for phone: ${phone}`);
@@ -58,8 +82,6 @@ export class SMSService {
         }
 
         const url = `${this.baseUrl}/api/sms/send-sms`;
-        
-        // Match Python app.py payload structure and encoding
         const payload = `<?xml version="1.0" encoding="UTF-8"?>
 <request>
     <Index>-1</Index>
@@ -77,7 +99,7 @@ export class SMSService {
             console.log(`[SMS] Sending to ${phone}: ${message.substring(0, 50)}...`);
             
             const res = await axios.post(url, payload, {
-                timeout: 10000,  // Increased timeout like Python version
+                timeout: 10000,
                 headers: {
                     '__RequestVerificationToken': token,
                     'X-Requested-With': 'XMLHttpRequest',
@@ -86,12 +108,21 @@ export class SMSService {
             });
 
             console.log(`[SMS RESPONSE] Status: ${res.status}`);
-            console.log(`[SMS RESPONSE] Body: ${res.data.substring(0, 200)}`);
-
-            // Check both response formats (like Python app.py does)
             const responseText = String(res.data);
             if (responseText.includes('OK') || responseText.includes('<response>OK</response>')) {
                 console.log(`[SMS] ✓ Successfully sent to ${phone}`);
+                
+                // Log directly sent message to the database
+                try {
+                    await pool.query(
+                        `INSERT INTO sms_logs (student_id, parent_phone, message, status, sent_at, branch_id)
+                         VALUES ($1, $2, $3, 'sent', NOW(), $4)`,
+                        [studentId || null, phone, message, branchId || null]
+                    );
+                } catch (dbErr) {
+                    console.warn('[SMS] Could not log sent SMS to database:', dbErr);
+                }
+                
                 return true;
             }
 
