@@ -41,7 +41,7 @@ router.post("/send", auth, async (req, res) => {
     }
 });
 
-router.get("/pending", async (req, res) => {
+router.get("/pending", auth, async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT id, parent_phone, message
@@ -58,7 +58,7 @@ router.get("/pending", async (req, res) => {
     }
 });
 
-router.post("/:id/sent", async (req, res) => {
+router.post("/:id/sent", auth, async (req, res) => {
     const { id } = req.params;
 
     try {
@@ -77,7 +77,7 @@ router.post("/:id/sent", async (req, res) => {
     }
 });
 
-router.post("/:id/failed", async (req, res) => {
+router.post("/:id/failed", auth, async (req, res) => {
     const { id } = req.params;
 
     try {
