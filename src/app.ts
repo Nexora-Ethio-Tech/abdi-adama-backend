@@ -26,6 +26,7 @@ import publicRoutes from './routes/public.routes';
 import machineRoutes from './routes/machine.routes';
 import financeRoutes from './routes/finance.routes';
 import guestRoutes from './routes/guest.routes';
+import smsRoutes from "./routes/sms.routes";
 
 const app = express();
 
@@ -155,6 +156,7 @@ app.use('/api/sections', sectionAssignmentRoutes);
 app.use('/api/grading-configs', gradingRoutes);
 app.use('/api/finance', financeRoutes);
 app.use('/api/guest', guestRoutes);
+app.use("/api/sms", smsRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({
