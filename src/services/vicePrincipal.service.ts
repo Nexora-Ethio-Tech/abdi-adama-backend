@@ -206,10 +206,16 @@ class VicePrincipalService {
    * Returns all branch staff members with their biometric attendance status for a given date.
    * Excludes students and parents. Used by Vice Principal for dashboard monitoring and proxy suggestions.
    */
-  async getStaffAttendance(branchId: string, date: string) {
+  async getStaffAttendance(branchId: string, startDate?: string, endDate?: string) {
     const ethNow = getEthiopianNow();
-    const targetDate = date || ethNow.dateStr;
-    const gregDateStr = ethiopianToGregorianIso(targetDate);
+
+    // Fallback to today's Ethiopian date if no start date is provided
+    const targetStart = startDate || ethNow.dateStr;
+    // If no end date is provided, treat it as a single date query
+    const targetEnd = endDate || targetStart;
+
+    // We only need the Gregorian start date for the single-date ISODOW/calendar calculations
+    const gregStartStr = ethiopianToGregorianIso(targetStart);
 
     const result = await pool.query(
       `SELECT
@@ -237,34 +243,43 @@ class VicePrincipalService {
           ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
+          CASE 
+            WHEN $2::date = $3::date THEN COALESCE(ea.date::text, $2::text)
+            ELSE ea.date::text 
+          END                              AS attendance_date,
           CASE
-            WHEN EXTRACT(ISODOW FROM $5::date) IN (6, 7) THEN 'Weekend'
-            WHEN EXISTS (
-              SELECT 1 FROM school_calendar sc
-              WHERE $5::date BETWEEN sc.start_date AND sc.end_date
-                AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
-                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
-            ) THEN 'Holiday'
-            ELSE 'Pending'
+            WHEN $2::date = $3::date THEN
+              CASE
+                WHEN EXTRACT(ISODOW FROM $6::date) IN (6, 7) THEN 'Weekend'
+                WHEN EXISTS (
+                  SELECT 1 FROM school_calendar sc
+                  WHERE $6::date BETWEEN sc.start_date AND sc.end_date
+                    AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                    AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
+                ) THEN 'Holiday'
+                ELSE 'Pending'
+              END
+            ELSE 'Range'
           END                              AS day_off_type,
           -- Effective status: staff auto-absent when past 02:20 AM Ethiopian time with no punch
           -- AND it is a teaching day (not a weekend, holiday, or school break)
           CASE
             WHEN ea.status IS NOT NULL THEN ea.status
             WHEN ea.id IS NULL
+              AND $2::date = $3::date
               AND u.role::text IN ('teacher', 'vice-principal')
               -- Not a weekend (based on Gregorian calendar)
-              AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+              AND EXTRACT(ISODOW FROM $6::date) NOT IN (6, 7)
               -- Not a holiday or break in the school calendar (based on Gregorian calendar)
               AND NOT EXISTS (
                 SELECT 1 FROM school_calendar sc
-                WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                WHERE $6::date BETWEEN sc.start_date AND sc.end_date
                   AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
                   AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
               )
               AND (
-                $2::date < $3::date
-                OR ($2::date = $3::date AND $4::time > TIME '02:20:00')
+                $2::date < $4::date
+                OR ($2::date = $4::date AND $5::time > TIME '02:20:00')
               )
             THEN 'absent'
             ELSE NULL
@@ -284,7 +299,7 @@ class VicePrincipalService {
        LEFT JOIN branches b ON b.id = u.branch_id
        LEFT JOIN teachers t ON t.user_id = u.id
        LEFT JOIN employee_attendance ea
-              ON ea.user_id = u.id AND ea.date = $2::date
+              ON ea.user_id = u.id AND ea.date BETWEEN $2::date AND $3::date
        WHERE u.branch_id = $1
          AND u.role NOT IN ('student', 'parent', 'super-admin')
          AND u.status = 'Approved'
@@ -293,15 +308,15 @@ class VicePrincipalService {
          CASE
            WHEN COALESCE(ea.status,
              CASE
-               WHEN ea.id IS NULL AND u.role::text IN ('teacher', 'vice-principal')
-                 AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+               WHEN ea.id IS NULL AND $2::date = $3::date AND u.role::text IN ('teacher', 'vice-principal')
+                 AND EXTRACT(ISODOW FROM $6::date) NOT IN (6, 7)
                  AND NOT EXISTS (
                    SELECT 1 FROM school_calendar sc
-                   WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                   WHERE $6::date BETWEEN sc.start_date AND sc.end_date
                      AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
                      AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
                  )
-                 AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
+                 AND ($2::date < $4::date OR ($2::date = $4::date AND $5::time > TIME '02:20:00'))
                THEN 'absent' ELSE 'zzz' END
            ) = 'absent'   THEN 1
            WHEN COALESCE(ea.status,'zzz') = 'late'     THEN 2
@@ -309,8 +324,9 @@ class VicePrincipalService {
            WHEN COALESCE(ea.status,'zzz') = 'present'  THEN 4
            ELSE 5
          END,
-         u.name`,
-      [branchId, targetDate, ethNow.dateStr, ethNow.time24, gregDateStr]
+         u.name,
+         ea.date DESC`,
+      [branchId, targetStart, targetEnd, ethNow.dateStr, ethNow.time24, gregStartStr]
     );
 
     return result.rows;
@@ -1512,7 +1528,7 @@ class VicePrincipalService {
 
     // Fetch schedules for the weekday of gregDateStr
     const dayOfWeekName = new Date(gregDateStr as string).toLocaleDateString('en-US', { weekday: 'long' });
-    
+
     const schedulesResult = await pool.query(
       `SELECT 
         s.id,

@@ -199,6 +199,7 @@ router.get('/dashboard/at-risk-students', schoolAdminController.getAtRiskStudent
 
 // Attendance Summary
 router.get('/attendance-summary', schoolAdminController.getAttendanceSummary);
+router.get('/attendance/student/:studentId', schoolAdminController.getStudentAttendanceRecords);
 router.get('/students/:studentId/attendance-history', schoolAdminController.getStudentAttendanceHistory);
 router.get('/staff-attendance', schoolAdminController.getStaffAttendance);
 router.post('/staff-attendance/bulk', schoolAdminController.bulkRecordStaffAttendance);
