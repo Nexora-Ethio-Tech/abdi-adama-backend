@@ -51,9 +51,10 @@ router.post('/grade-locks', validate(gradeLockSchema), vicePrincipalController.t
 // Grade Submission Window (open/close for all teachers in branch)
 router.post('/grade-submission-settings', validate(gradeSubmissionSchema), vicePrincipalController.toggleGradeSubmission);
 
-// Grade submissions reviews
+// Grade submissions reviews & unlock
 router.get('/grade-submissions', vicePrincipalController.getGradeSubmissions);
 router.get('/grades/:courseId/:submissionType', vicePrincipalController.getSubmittedGrades);
+router.post('/unlock-grade-submission', vicePrincipalController.unlockGradeSubmission);
 
 // Grade Management
 router.get('/grade-management/sections', vicePrincipalController.getGradesAndSections);

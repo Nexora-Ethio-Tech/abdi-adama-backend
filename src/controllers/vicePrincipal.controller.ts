@@ -711,6 +711,32 @@ class VicePrincipalController {
       next(error);
     }
   }
+
+  async unlockGradeSubmission(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const vpUserId = req.user!.id;
+      const { courseId, submissionType, academicYear, semester } = req.body;
+
+      if (!courseId || !submissionType) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'courseId and submissionType are required' }
+        });
+        return;
+      }
+
+      const result = await vicePrincipalService.unlockGradeSubmission(vpUserId, {
+        courseId,
+        submissionType,
+        academicYear,
+        semester
+      });
+
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new VicePrincipalController();
