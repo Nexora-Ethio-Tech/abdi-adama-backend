@@ -100,10 +100,16 @@ class SchoolAdminService {
    * - Teachers with no punch after 08:20 (2:20 AM Ethiopian) are dynamically shown as 'absent'.
    * - is_late_arrival flag is returned so the UI can show "Present (Late)".
    */
-  async getStaffAttendance(branchId: string, date: string) {
+  async getStaffAttendance(branchId: string, startDate?: string, endDate?: string) {
     const ethNow = getEthiopianNow();
-    const targetDate = date || ethNow.dateStr;
-    const gregDateStr = ethiopianToGregorianIso(targetDate);
+
+    // Fallback to today's Ethiopian date if no start date is provided
+    const targetStart = startDate || ethNow.dateStr;
+    // If no end date is provided, treat it as a single date query
+    const targetEnd = endDate || targetStart;
+
+    // We only need the Gregorian start date for the single-date ISODOW/calendar calculations
+    const gregStartStr = ethiopianToGregorianIso(targetStart);
 
     const result = await pool.query(
       `SELECT
@@ -131,54 +137,62 @@ class SchoolAdminService {
           ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
+          CASE 
+            WHEN $2::date = $3::date THEN COALESCE(ea.date::text, $2::text)
+            ELSE ea.date::text 
+          END AS attendance_date,
           CASE
-            WHEN EXTRACT(ISODOW FROM $5::date) IN (6, 7) THEN 'Weekend'
-            WHEN EXISTS (
-              SELECT 1 FROM school_calendar sc
-              WHERE $5::date BETWEEN sc.start_date AND sc.end_date
-                AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
-                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
-            ) THEN 'Holiday'
-            ELSE 'Pending'
-          END                              AS day_off_type,
-          -- Effective status: teachers auto-absent when past 02:20 AM Ethiopian time with no punch
-          -- AND it is a teaching day (not a weekend, holiday, or school break)
+            WHEN $2::date = $3::date THEN
+              CASE
+                WHEN EXTRACT(ISODOW FROM $6::date) IN (6, 7) THEN 'Weekend'
+                WHEN EXISTS (
+                  SELECT 1 FROM school_calendar sc
+                  WHERE $6::date BETWEEN sc.start_date AND sc.end_date
+                    AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                    AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
+                ) THEN 'Holiday'
+                ELSE 'Pending'
+              END
+            ELSE 'Range'
+          END AS day_off_type,
+          -- Effective status: auto-absent logic ONLY runs when it's a single date query ($2 = $3)
           CASE
             WHEN ea.status IS NOT NULL THEN ea.status
             WHEN ea.id IS NULL
+              AND $2::date = $3::date
               AND u.role::text IN ('teacher', 'vice-principal')
               -- Not a weekend (based on Gregorian calendar)
-              AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
-              -- Not a holiday or break in the school calendar (based on Gregorian calendar)
+              AND EXTRACT(ISODOW FROM $6::date) NOT IN (6, 7)
+              -- Not a holiday or break in the school calendar
               AND NOT EXISTS (
                 SELECT 1 FROM school_calendar sc
-                WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                WHERE $6::date BETWEEN sc.start_date AND sc.end_date
                   AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
                   AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
               )
               AND (
-                $2::date < $3::date
-                OR ($2::date = $3::date AND $4::time > TIME '02:20:00')
+                $2::date < $4::date
+                OR ($2::date = $4::date AND $5::time > TIME '02:20:00')
               )
             THEN 'absent'
             ELSE NULL
-          END                              AS attendance_status,
+          END AS attendance_status,
           COALESCE(ea.is_late_arrival, false) AS is_late_arrival,
           ea.sign_in_time,
           ea.lunch_out_time,
           ea.lunch_in_time,
           ea.sign_out_time,
           ea.recorded_by,
-          ea.created_at                    AS attendance_recorded_at,
+          ea.created_at AS attendance_recorded_at,
           CASE
-            WHEN ea.recorded_by = 'zk-machine'    THEN true
+            WHEN ea.recorded_by = 'zk-machine' THEN true
             ELSE false
-          END                              AS is_biometric
+          END AS is_biometric
        FROM users u
        LEFT JOIN branches b ON b.id = u.branch_id
        LEFT JOIN teachers t ON t.user_id = u.id
        LEFT JOIN employee_attendance ea
-              ON ea.user_id = u.id AND ea.date = $2::date
+              ON ea.user_id = u.id AND ea.date BETWEEN $2::date AND $3::date
        WHERE u.branch_id = $1
          AND u.role NOT IN ('student', 'parent', 'super-admin')
          AND u.status = 'Approved'
@@ -187,15 +201,15 @@ class SchoolAdminService {
          CASE
            WHEN COALESCE(ea.status,
              CASE
-               WHEN ea.id IS NULL AND u.role::text IN ('teacher', 'vice-principal')
-                 AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+               WHEN ea.id IS NULL AND $2::date = $3::date AND u.role::text IN ('teacher', 'vice-principal')
+                 AND EXTRACT(ISODOW FROM $6::date) NOT IN (6, 7)
                  AND NOT EXISTS (
                    SELECT 1 FROM school_calendar sc
-                   WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                   WHERE $6::date BETWEEN sc.start_date AND sc.end_date
                      AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
                      AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
                  )
-                  AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
+                  AND ($2::date < $4::date OR ($2::date = $4::date AND $5::time > TIME '02:20:00'))
                 THEN 'absent' ELSE 'zzz' END
            ) = 'absent'   THEN 1
            WHEN COALESCE(ea.status,'zzz') = 'late'     THEN 2
@@ -203,8 +217,9 @@ class SchoolAdminService {
            WHEN COALESCE(ea.status,'zzz') = 'present'  THEN 4
            ELSE 5
          END,
-         u.name`,
-      [branchId, targetDate, ethNow.dateStr, ethNow.time24, gregDateStr]
+         u.name,
+         ea.date DESC`,
+      [branchId, targetStart, targetEnd, ethNow.dateStr, ethNow.time24, gregStartStr]
     );
 
     return result.rows;
@@ -2673,6 +2688,43 @@ class SchoolAdminService {
     );
 
     return result.rows[0] || null;
+  }
+
+  async getStudentAttendanceRecords(
+    studentId: string,
+    branchId: string,
+    startDate?: string,
+    endDate?: string
+  ) {
+    const conditions: string[] = ['sa.student_id = $1', 's.id = $1', 's.branch_id = $2'];
+    const params: any[] = [studentId, branchId];
+
+    if (startDate) {
+      conditions.push(`sa.date >= $${params.length + 1}`);
+      params.push(startDate);
+    }
+    if (endDate) {
+      conditions.push(`sa.date <= $${params.length + 1}`);
+      params.push(endDate);
+    }
+
+    const result = await pool.query(
+      `SELECT
+         sa.id,
+         sa.student_id,
+         sa.date,
+         sa.status,
+         sa.recorded_by,
+         u.name AS recorded_by_name
+       FROM student_attendance sa
+       JOIN students s ON sa.student_id = s.id
+       LEFT JOIN users u ON sa.recorded_by = u.id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY sa.date DESC`,
+      params
+    );
+
+    return result.rows;
   }
 }
 

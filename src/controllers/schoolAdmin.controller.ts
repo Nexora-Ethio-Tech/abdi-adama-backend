@@ -180,9 +180,18 @@ class SchoolAdminController {
   async getStaffAttendance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const { date } = req.query;
 
-      const attendance = await schoolAdminService.getStaffAttendance(branchId!, date as string);
+      // Pull startDate and endDate if provided, fallback to standard date if not
+      const { date, startDate, endDate } = req.query;
+
+      const targetStart = (startDate as string) || (date as string);
+      const targetEnd = (endDate as string) || (date as string);
+
+      const attendance = await schoolAdminService.getStaffAttendance(
+        branchId!,
+        targetStart,
+        targetEnd
+      );
 
       res.json({
         success: true,
@@ -1621,6 +1630,46 @@ class SchoolAdminController {
         branchId!,
         date as string | undefined,
         grade as string | undefined
+      );
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get student attendance records with optional date filtering
+  async getStudentAttendanceRecords(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { studentId } = req.params;
+      const { startDate, endDate } = req.query;
+
+      if (!studentId || typeof studentId !== 'string') {
+        res.status(400).json({ success: false, message: 'Student ID is required' });
+        return;
+      }
+
+      const validatedStartDate = startDate ? String(startDate) : undefined;
+      const validatedEndDate = endDate ? String(endDate) : undefined;
+
+      if (validatedStartDate && Number.isNaN(Date.parse(validatedStartDate))) {
+        res.status(400).json({ success: false, message: 'Invalid startDate' });
+        return;
+      }
+      if (validatedEndDate && Number.isNaN(Date.parse(validatedEndDate))) {
+        res.status(400).json({ success: false, message: 'Invalid endDate' });
+        return;
+      }
+
+      const result = await schoolAdminService.getStudentAttendanceRecords(
+        studentId,
+        branchId!,
+        validatedStartDate,
+        validatedEndDate
       );
 
       res.json({

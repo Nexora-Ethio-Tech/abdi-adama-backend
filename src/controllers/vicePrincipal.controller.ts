@@ -143,9 +143,18 @@ class VicePrincipalController {
   async getStaffAttendance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const { date } = req.query;
 
-      const attendance = await vicePrincipalService.getStaffAttendance(branchId!, date as string);
+      // Extract startDate and endDate if provided, fallback to standard 'date' if not
+      const { date, startDate, endDate } = req.query;
+
+      const targetStart = (startDate as string) || (date as string);
+      const targetEnd = (endDate as string) || (date as string);
+
+      const attendance = await vicePrincipalService.getStaffAttendance(
+        branchId!,
+        targetStart,
+        targetEnd
+      );
 
       res.json({
         success: true,
