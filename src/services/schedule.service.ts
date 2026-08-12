@@ -368,7 +368,8 @@ class ScheduleService {
       teacherName: string;
       classId: string;
       className: string;
-      sessionIndex: number; // which of the N sessions this is
+      sessionsPerWeek: number;
+      sessionIndex: number;
     }
 
     const sessions: CourseSession[] = [];
@@ -388,29 +389,48 @@ class ScheduleService {
       }
     }
 
-    // 6. Generate up to 5 candidate timetables using randomized backtracking
-    const MAX_CANDIDATES = 5;
-    const candidates: ScheduleEntry[][] = [];
+    // 6. Generate candidate timetables using randomized backtracking + repair
+    const MAX_CANDIDATES = 15;
+    const rawCandidates: ScheduleEntry[][] = [];
 
     for (let attempt = 0; attempt < MAX_CANDIDATES; attempt++) {
       const result = this.solveOnce(
         sessions, allSlots, days, periodsPerDay,
         unavailMap, maxConsec, distributeSubs, attempt
       );
-      if (result) {
-        // Check if this candidate is meaningfully different from existing ones
-        const isDuplicate = candidates.some(c => this.isSameSchedule(c, result));
-        if (!isDuplicate) {
-          candidates.push(result);
-        }
+      if (result && result.length > 0) {
+        rawCandidates.push(result);
       }
     }
 
-    if (candidates.length === 0) {
+    if (rawCandidates.length === 0) {
       throw new Error(
         'Unable to generate a valid timetable with the current constraints. ' +
         'Try reducing teacher unavailability, lowering sessions per week, or increasing periods per day.'
       );
+    }
+
+    // Sort by fill rate descending
+    rawCandidates.sort((a, b) => b.length - a.length);
+
+    // If 100% fill candidates exist, keep only 100% candidates
+    const maxSlotsFilled = rawCandidates[0].length;
+    let filteredCandidates = rawCandidates;
+    if (maxSlotsFilled === totalSlotsPossible) {
+      filteredCandidates = rawCandidates.filter(c => c.length === totalSlotsPossible);
+    }
+
+    const candidates: ScheduleEntry[][] = [];
+    for (const cand of filteredCandidates) {
+      const isDuplicate = candidates.some(c => this.isSameSchedule(c, cand));
+      if (!isDuplicate) {
+        candidates.push(cand);
+        if (candidates.length >= 5) break;
+      }
+    }
+
+    if (candidates.length === 0) {
+      candidates.push(rawCandidates[0]);
     }
 
     // 7. Store candidates in timetable_runs
@@ -444,7 +464,7 @@ class ScheduleService {
     sessions: Array<{
       courseId: string; courseName: string; courseCode: string;
       teacherId: string; teacherName: string;
-      classId: string; className: string; sessionIndex: number;
+      classId: string; className: string; sessionsPerWeek: number; sessionIndex: number;
     }>,
     allSlots: SlotKey[],
     days: string[],
@@ -455,42 +475,40 @@ class ScheduleService {
     seed: number
   ): ScheduleEntry[] | null {
 
-    // State tracking
-    const teacherSlots = new Map<string, Set<string>>();    // teacherId -> Set<"day-period">
-    const classSlots = new Map<string, Set<string>>();      // classId -> Set<"day-period">
-    const classDaySubjects = new Map<string, Set<string>>(); // "classId-day" -> Set<courseName>
-    const teacherDayPeriods = new Map<string, number[]>();   // "teacherId-day" -> sorted period list
+    const teacherSlots = new Map<string, Set<string>>();          // teacherId -> Set<"day-period">
+    const classSlots = new Map<string, Set<string>>();            // classId -> Set<"day-period">
+    const classDayCourseCounts = new Map<string, number>();       // "classId-day-courseName" -> count
+    const teacherDayPeriods = new Map<string, number[]>();         // "teacherId-day" -> sorted period list
 
-    // Seed-based random
     let s = seed;
     const nextRandom = () => {
       s = (s * 1664525 + 1013904223) & 0x7fffffff;
       return s / 0x7fffffff;
     };
 
-    const unassigned = new Set(sessions);
+    const sortedSessions = [...sessions];
+    this.shuffleWithSeed(sortedSessions, seed);
+    sortedSessions.sort((a, b) => b.sessionsPerWeek - a.sessionsPerWeek);
+
+    const unassigned = new Set(sortedSessions);
     const result: ScheduleEntry[] = [];
     let bestResult: ScheduleEntry[] = [];
     let maxPlaced = 0;
 
-    // Time limit for backtracking to prevent freezing
     const startTime = Date.now();
-    const TIME_LIMIT_MS = 800; // 800ms per attempt to keep overall execution snappy
+    const TIME_LIMIT_MS = 600;
 
     const backtrack = (): boolean => {
-      // If we placed all sessions, we are done!
       if (unassigned.size === 0) {
         bestResult = [...result];
         return true;
       }
 
-      // Track the best partial result we have found so far
       if (result.length > maxPlaced) {
         maxPlaced = result.length;
         bestResult = [...result];
       }
 
-      // If we exceed time limit, abort search
       if (Date.now() - startTime > TIME_LIMIT_MS) {
         return false;
       }
@@ -503,9 +521,8 @@ class ScheduleService {
       for (const session of unassigned) {
         const validSlots = this.getValidSlots(
           session, allSlots, unavailMap, teacherSlots, classSlots,
-          classDaySubjects, teacherDayPeriods, maxConsec, distributeSubs, periodsPerDay
+          classDayCourseCounts, teacherDayPeriods, maxConsec, distributeSubs, periodsPerDay
         );
-        // If a session has 0 valid slots, we have failed. Backtrack immediately!
         if (validSlots.length === 0) {
           return false;
         }
@@ -520,7 +537,6 @@ class ScheduleService {
         return false;
       }
 
-      // Randomize the order of valid slots using our seeded shuffle
       for (let i = bestValidSlots.length - 1; i > 0; i--) {
         const j = Math.floor(nextRandom() * (i + 1));
         [bestValidSlots[i], bestValidSlots[j]] = [bestValidSlots[j], bestValidSlots[i]];
@@ -530,18 +546,17 @@ class ScheduleService {
 
       for (const slot of bestValidSlots) {
         const slotKey = `${slot.day}-${slot.period}`;
-        const cdKey = `${bestSession.classId}-${slot.day}`;
+        const cdCourseKey = `${bestSession.classId}-${slot.day}-${bestSession.courseName}`;
         const tdKey = `${bestSession.teacherId}-${slot.day}`;
 
-        // Apply constraints
         if (!teacherSlots.has(bestSession.teacherId)) teacherSlots.set(bestSession.teacherId, new Set());
         teacherSlots.get(bestSession.teacherId)!.add(slotKey);
 
         if (!classSlots.has(bestSession.classId)) classSlots.set(bestSession.classId, new Set());
         classSlots.get(bestSession.classId)!.add(slotKey);
 
-        if (!classDaySubjects.has(cdKey)) classDaySubjects.set(cdKey, new Set());
-        classDaySubjects.get(cdKey)!.add(bestSession.courseName);
+        const currCount = classDayCourseCounts.get(cdCourseKey) || 0;
+        classDayCourseCounts.set(cdCourseKey, currCount + 1);
 
         if (!teacherDayPeriods.has(tdKey)) teacherDayPeriods.set(tdKey, []);
         teacherDayPeriods.get(tdKey)!.push(slot.period);
@@ -560,18 +575,22 @@ class ScheduleService {
         };
         result.push(entry);
 
-        // Recurse to next session
         if (backtrack()) {
           return true;
         }
 
-        // Backtrack constraints
         result.pop();
-        
+
         teacherSlots.get(bestSession.teacherId)!.delete(slotKey);
         classSlots.get(bestSession.classId)!.delete(slotKey);
-        classDaySubjects.get(cdKey)!.delete(bestSession.courseName);
-        
+
+        const cCount = classDayCourseCounts.get(cdCourseKey) || 1;
+        if (cCount <= 1) {
+          classDayCourseCounts.delete(cdCourseKey);
+        } else {
+          classDayCourseCounts.set(cdCourseKey, cCount - 1);
+        }
+
         const periods = teacherDayPeriods.get(tdKey)!;
         const pIdx = periods.indexOf(slot.period);
         if (pIdx > -1) {
@@ -583,51 +602,161 @@ class ScheduleService {
       return false;
     };
 
-    // Run backtracking search
     backtrack();
 
-    // Only return if we filled at least 80% of sessions
-    if (bestResult.length < sessions.length * 0.8) {
-      return null;
+    if (bestResult.length === sessions.length) {
+      return bestResult;
+    }
+
+    const unassignedList = sessions.filter(
+      s => !bestResult.some(e => e.classId === s.classId && e.subject === s.courseName && e.courseId === s.courseId)
+    );
+
+    if (unassignedList.length > 0) {
+      bestResult = this.repairUnassigned(
+        bestResult, unassignedList, allSlots, unavailMap, periodsPerDay, distributeSubs
+      );
     }
 
     return bestResult;
   }
 
+  private repairUnassigned(
+    currentSchedule: ScheduleEntry[],
+    unassigned: Array<{
+      courseId: string; courseName: string; courseCode: string;
+      teacherId: string; teacherName: string;
+      classId: string; className: string; sessionsPerWeek: number; sessionIndex: number;
+    }>,
+    allSlots: SlotKey[],
+    unavailMap: Map<string, Set<string>>,
+    periodsPerDay: number,
+    distributeSubs: boolean
+  ): ScheduleEntry[] {
+    const schedule = [...currentSchedule];
+
+    for (const session of unassigned) {
+      const maxDailyLimit = distributeSubs
+        ? 1
+        : Math.max(1, Math.ceil((session.sessionsPerWeek || 5) / 5));
+
+      let placed = false;
+      for (const slot of allSlots) {
+        const slotKey = `${slot.day}-${slot.period}`;
+        
+        if (unavailMap.get(session.teacherId)?.has(slotKey)) continue;
+        if (schedule.some(e => e.teacherId === session.teacherId && e.day === slot.day && e.period === slot.period)) continue;
+        if (schedule.some(e => e.classId === session.classId && e.day === slot.day && e.period === slot.period)) continue;
+
+        const currentDailyCount = schedule.filter(
+          e => e.classId === session.classId && e.day === slot.day && e.subject === session.courseName
+        ).length;
+        if (currentDailyCount >= maxDailyLimit) continue;
+
+        schedule.push({
+          teacherId: session.teacherId,
+          teacherName: session.teacherName,
+          day: slot.day,
+          period: slot.period,
+          timeSlot: this.periodToTimeSlot(slot.period),
+          classId: session.classId,
+          className: session.className,
+          courseId: session.courseId,
+          subject: session.courseName
+        });
+        placed = true;
+        break;
+      }
+
+      if (placed) continue;
+
+      for (const slot of allSlots) {
+        const slotKey = `${slot.day}-${slot.period}`;
+        if (unavailMap.get(session.teacherId)?.has(slotKey)) continue;
+        if (schedule.some(e => e.teacherId === session.teacherId && e.day === slot.day && e.period === slot.period)) continue;
+
+        const currentDailyCount = schedule.filter(
+          e => e.classId === session.classId && e.day === slot.day && e.subject === session.courseName
+        ).length;
+        if (currentDailyCount >= maxDailyLimit) continue;
+
+        const existingIndex = schedule.findIndex(
+          e => e.classId === session.classId && e.day === slot.day && e.period === slot.period
+        );
+        if (existingIndex === -1) continue;
+
+        const displaced = schedule[existingIndex];
+
+        for (const altSlot of allSlots) {
+          if (altSlot.day === slot.day && altSlot.period === slot.period) continue;
+
+          if (unavailMap.get(displaced.teacherId)?.has(`${altSlot.day}-${altSlot.period}`)) continue;
+          if (schedule.some(e => e.teacherId === displaced.teacherId && e.day === altSlot.day && e.period === altSlot.period)) continue;
+          if (schedule.some(e => e.classId === displaced.classId && e.day === altSlot.day && e.period === altSlot.period)) continue;
+
+          schedule[existingIndex] = {
+            teacherId: session.teacherId,
+            teacherName: session.teacherName,
+            day: slot.day,
+            period: slot.period,
+            timeSlot: this.periodToTimeSlot(slot.period),
+            classId: session.classId,
+            className: session.className,
+            courseId: session.courseId,
+            subject: session.courseName
+          };
+
+          schedule.push({
+            ...displaced,
+            day: altSlot.day,
+            period: altSlot.period,
+            timeSlot: this.periodToTimeSlot(altSlot.period)
+          });
+
+          placed = true;
+          break;
+        }
+
+        if (placed) break;
+      }
+    }
+
+    return schedule;
+  }
+
   private getValidSlots(
-    session: { teacherId: string; classId: string; courseName: string },
+    session: { teacherId: string; classId: string; courseName: string; sessionsPerWeek: number },
     allSlots: SlotKey[],
     unavailMap: Map<string, Set<string>>,
     teacherSlots: Map<string, Set<string>>,
     classSlots: Map<string, Set<string>>,
-    classDaySubjects: Map<string, Set<string>>,
+    classDayCourseCounts: Map<string, number>,
     teacherDayPeriods: Map<string, number[]>,
     maxConsec: number,
     distributeSubs: boolean,
     periodsPerDay: number
   ): SlotKey[] {
-    // 1. Hard constraints filter
+    const maxDailyLimit = distributeSubs
+      ? 1
+      : Math.max(1, Math.ceil((session.sessionsPerWeek || 5) / 5));
+
     const hardFiltered = allSlots.filter(slot => {
       const slotKey = `${slot.day}-${slot.period}`;
       if (unavailMap.get(session.teacherId)?.has(slotKey)) return false;
       if (teacherSlots.get(session.teacherId)?.has(slotKey)) return false;
       if (classSlots.get(session.classId)?.has(slotKey)) return false;
+
+      const cdCourseKey = `${session.classId}-${slot.day}-${session.courseName}`;
+      const currentCount = classDayCourseCounts.get(cdCourseKey) || 0;
+      if (currentCount >= maxDailyLimit) return false;
+
       return true;
     });
 
-    // 2. Soft constraints filter
     const softFiltered = hardFiltered.filter(slot => {
-      // Soft constraint: distribute subjects — avoid same subject twice in one day per class
-      if (distributeSubs) {
-        const cdKey = `${session.classId}-${slot.day}`;
-        if (classDaySubjects.get(cdKey)?.has(session.courseName)) return false;
-      }
-
-      // Soft constraint: max consecutive periods for teacher
       const tdKey = `${session.teacherId}-${slot.day}`;
       const existingPeriods = teacherDayPeriods.get(tdKey) || [];
-      if (existingPeriods.length > 0) {
-        // Check if adding this period would create a run > maxConsec
+      if (existingPeriods.length > 0 && maxConsec > 0) {
         const withNew = [...existingPeriods, slot.period].sort((a, b) => a - b);
         let maxRun = 1, currentRun = 1;
         for (let i = 1; i < withNew.length; i++) {
@@ -640,16 +769,10 @@ class ScheduleService {
         }
         if (maxRun > maxConsec) return false;
       }
-
       return true;
     });
 
-    // 3. Fallback: if soft constraints leave no options, return hard-filtered slots!
-    if (softFiltered.length === 0) {
-      return hardFiltered;
-    }
-
-    return softFiltered;
+    return softFiltered.length > 0 ? softFiltered : hardFiltered;
   }
 
   private countValidSlots(
