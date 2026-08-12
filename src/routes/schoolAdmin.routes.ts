@@ -204,6 +204,9 @@ router.get('/staff-attendance', schoolAdminController.getStaffAttendance);
 router.post('/staff-attendance/bulk', schoolAdminController.bulkRecordStaffAttendance);
 router.post('/staff-attendance', schoolAdminController.recordStaffAttendance);
 
+// Registration Toggle (open/close student registration)
+router.post('/system-settings/registration', schoolAdminController.toggleRegistration);
+
 // Events Calendar
 router.post('/events', validate(createEventSchema), schoolAdminController.createEvent);
 router.post('/events/:id', validate(updateEventSchema), schoolAdminController.updateEvent);
