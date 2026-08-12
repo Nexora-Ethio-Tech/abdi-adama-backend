@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import vicePrincipalService from '../services/vicePrincipal.service';
+import superAdminService from '../services/superAdmin.service';
 import teacherOfWeekService from '../services/teacherOfWeek.service';
 import { smsService } from '../services/sms.service';
 
@@ -116,6 +117,32 @@ class VicePrincipalController {
         success: true,
         data: lock,
         message: `Grade ${isLocked ? 'locked' : 'unlocked'} successfully`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Grade Submission Window Toggle
+  async toggleGradeSubmission(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { open } = req.body;
+      const userId = req.user!.id;
+
+      if (typeof open !== 'boolean') {
+        res.status(400).json({ success: false, message: 'open must be a boolean' });
+        return;
+      }
+
+      const settings = await superAdminService.updateSystemSettings(
+        { grade_submission_open: open ? 'true' : 'false' },
+        userId
+      );
+
+      res.json({
+        success: true,
+        data: settings,
+        message: `Grade submission is now ${open ? 'open' : 'closed'}`
       });
     } catch (error) {
       next(error);

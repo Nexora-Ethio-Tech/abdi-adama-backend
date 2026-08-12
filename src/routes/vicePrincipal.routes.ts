@@ -28,6 +28,10 @@ const gradeLockSchema = Joi.object({
   academicYearId: Joi.string().uuid()
 });
 
+const gradeSubmissionSchema = Joi.object({
+  open: Joi.boolean().required()
+});
+
 const sendAbsenceNotificationSchema = Joi.object({
   phoneNumbers: Joi.array().items(Joi.string().required()).required(),
   message: Joi.string().required(),
@@ -43,6 +47,9 @@ router.post('/weekly-plans/:id/review', validate(reviewPlanSchema), vicePrincipa
 
 router.get('/grade-locks', vicePrincipalController.getGradeLocks);
 router.post('/grade-locks', validate(gradeLockSchema), vicePrincipalController.toggleGradeLock);
+
+// Grade Submission Window (open/close for all teachers in branch)
+router.post('/grade-submission-settings', validate(gradeSubmissionSchema), vicePrincipalController.toggleGradeSubmission);
 
 // Grade submissions reviews
 router.get('/grade-submissions', vicePrincipalController.getGradeSubmissions);
