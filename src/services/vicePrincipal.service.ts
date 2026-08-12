@@ -1845,17 +1845,34 @@ class VicePrincipalService {
     try {
       await client.query('BEGIN');
 
-      // Release lock on grade_submissions
+      // 1. Release lock on grade_submissions (stage set to 'saved' to pass CHECK constraint)
       await client.query(
         `UPDATE grade_submissions
          SET is_locked = false,
-             submission_stage = 'unlocked',
+             submission_stage = 'saved',
              updated_at = NOW()
          WHERE id = $1`,
         [submission.id]
       );
 
-      // Release finalized/submitted state on individual grades
+      // 2. Remove lock from grade_submission_locks if it exists
+      await client.query(
+        `DELETE FROM grade_submission_locks
+         WHERE course_id = $1
+           AND grading_component = $2
+           AND academic_year = $3
+           AND semester = $4`,
+        [data.courseId, data.submissionType, targetYear, targetSemester]
+      );
+
+      // 3. Remove finalization entry if it exists
+      await client.query(
+        `DELETE FROM grade_submission_finalizations
+         WHERE grade_submission_id = $1`,
+        [submission.id]
+      );
+
+      // 4. Release finalized/submitted state on individual grades
       await client.query(
         `UPDATE grades
          SET is_submitted = false,
@@ -1872,7 +1889,7 @@ class VicePrincipalService {
 
       return {
         success: true,
-        message: 'Grade submission successfully unlocked. The teacher has been granted permission to edit and resubmit.'
+        message: 'Grade submission successfully unlocked. Permission has been granted to the teacher to edit and resubmit.'
       };
     } catch (error) {
       await client.query('ROLLBACK');
