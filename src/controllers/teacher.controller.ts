@@ -111,8 +111,13 @@ class TeacherController {
   async getGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { courseId } = req.params;
+      const { academicYear, semester } = req.query;
 
-      const grades = await teacherService.getGradesByCourse(courseId);
+      const grades = await teacherService.getGradesByCourse(
+        courseId,
+        academicYear as string,
+        semester !== undefined ? Number(semester) : undefined
+      );
 
       res.json({
         success: true,
@@ -383,14 +388,19 @@ class TeacherController {
       }
 
       const teacherUserId = req.user!.id;
-      const { courseId, submissionType } = req.body;
+      const { courseId, submissionType, academicYear, semester } = req.body;
 
       if (!courseId || !submissionType) {
         res.status(400).json({ success: false, message: 'courseId and submissionType are required' });
         return;
       }
 
-      const submission = await teacherService.submitCourseGrades(teacherUserId, courseId, submissionType);
+      const submission = await teacherService.submitCourseGrades(
+        teacherUserId,
+        courseId,
+        submissionType,
+        { academicYear, semester: semester !== undefined ? Number(semester) : undefined }
+      );
 
       res.status(201).json({
         success: true,

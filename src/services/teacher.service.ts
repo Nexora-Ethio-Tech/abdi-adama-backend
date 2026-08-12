@@ -303,7 +303,19 @@ class TeacherService {
   }
 
   // Get grades by course
-  async getGradesByCourse(courseId: string) {
+  async getGradesByCourse(courseId: string, academicYear?: string, semester?: number) {
+    const conditions = ['g.course_id = $1'];
+    const params: any[] = [courseId];
+
+    if (academicYear) {
+      conditions.push(`g.academic_year = $${params.length + 1}`);
+      params.push(academicYear);
+    }
+    if (semester !== undefined) {
+      conditions.push(`g.semester = $${params.length + 1}`);
+      params.push(semester);
+    }
+
     const result = await pool.query(
       `SELECT 
         g.*,
@@ -315,14 +327,17 @@ class TeacherService {
             SELECT 1 FROM grade_submissions gs
             WHERE gs.course_id = g.course_id
               AND gs.submission_type = g.type
+              AND gs.academic_year = g.academic_year
+              AND gs.semester = g.semester
+              AND gs.is_locked = true
           )
         ) AS is_submitted
       FROM grades g
       JOIN students s ON g.student_id = s.id
       JOIN users u ON s.user_id = u.id
-      WHERE g.course_id = $1
+      WHERE ${conditions.join(' AND ')}
       ORDER BY u.name, g.created_at DESC`,
-      [courseId]
+      params
     );
 
     return result.rows;
@@ -1255,8 +1270,13 @@ class TeacherService {
   }
 
   // Submit all grades for a course and lock them (alias of finalize workflow)
-  async submitCourseGrades(teacherUserId: string, courseId: string, submissionType: string) {
-    return this.finalizeGradeSubmission(teacherUserId, courseId, submissionType);
+  async submitCourseGrades(teacherUserId: string, courseId: string, submissionType: string, options?: {
+    academicYear?: string;
+    semester?: number;
+    sectionId?: string;
+    subjectId?: string;
+  }) {
+    return this.finalizeGradeSubmission(teacherUserId, courseId, submissionType, options);
   }
 
   // REFINED WORKFLOW: Save Draft (editable, partial submission)
