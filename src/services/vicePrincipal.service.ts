@@ -779,12 +779,15 @@ class VicePrincipalService {
           COALESCE(gs.semester, 1) as semester,
           gs.submitted_at,
           COALESCE(gs.is_locked, FALSE) as is_locked,
-          COALESCE(gs.submission_stage, CASE WHEN gs.is_locked THEN 'submitted' ELSE 'saved' END) as submission_stage
+          COALESCE(gs.submission_stage, CASE WHEN gs.is_locked THEN 'submitted' ELSE 'saved' END) as submission_stage,
+          COALESCE(NULLIF(cl.grade, ''), NULLIF(cl.name, ''), CASE WHEN c.code LIKE '%Grade%' THEN split_part(c.code, '-', 2) ELSE '' END) as grade_level,
+          COALESCE(NULLIF(cl.section, ''), CASE WHEN c.code LIKE '%Section%' THEN split_part(c.code, '-', 3) ELSE '' END) as section_name
          FROM grade_submissions gs
          LEFT JOIN courses c ON gs.course_id = c.id
+         LEFT JOIN classes cl ON c.class_id = cl.id
          LEFT JOIN teachers t ON gs.teacher_id = t.id OR gs.submitted_by = t.user_id
          LEFT JOIN users u ON t.user_id = u.id OR gs.submitted_by = u.id
-         WHERE (t.branch_id = $1 OR u.branch_id = $1)
+         WHERE (t.branch_id = $1 OR u.branch_id = $1 OR cl.branch_id = $1)
 
          UNION ALL
 
@@ -800,11 +803,14 @@ class VicePrincipalService {
           1 as semester,
           NULL::timestamp as submitted_at,
           FALSE as is_locked,
-          'not_submitted' as submission_stage
+          'not_submitted' as submission_stage,
+          COALESCE(NULLIF(cl.grade, ''), NULLIF(cl.name, ''), CASE WHEN c.code LIKE '%Grade%' THEN split_part(c.code, '-', 2) ELSE '' END) as grade_level,
+          COALESCE(NULLIF(cl.section, ''), CASE WHEN c.code LIKE '%Section%' THEN split_part(c.code, '-', 3) ELSE '' END) as section_name
          FROM courses c
+         LEFT JOIN classes cl ON c.class_id = cl.id
          LEFT JOIN teachers t ON c.teacher_id = t.id
          LEFT JOIN users u ON t.user_id = u.id
-         WHERE (t.branch_id = $1 OR u.branch_id = $1)
+         WHERE (t.branch_id = $1 OR u.branch_id = $1 OR cl.branch_id = $1)
            AND c.id NOT IN (SELECT course_id FROM grade_submissions WHERE course_id IS NOT NULL)
 
          ORDER BY submitted_at DESC NULLS LAST, course_name ASC`,
@@ -826,9 +832,12 @@ class VicePrincipalService {
           COALESCE(gs.semester, 1) as semester,
           gs.submitted_at,
           COALESCE(gs.is_locked, FALSE) as is_locked,
-          COALESCE(gs.submission_stage, CASE WHEN gs.is_locked THEN 'submitted' ELSE 'saved' END) as submission_stage
+          COALESCE(gs.submission_stage, CASE WHEN gs.is_locked THEN 'submitted' ELSE 'saved' END) as submission_stage,
+          COALESCE(NULLIF(cl.grade, ''), NULLIF(cl.name, ''), CASE WHEN c.code LIKE '%Grade%' THEN split_part(c.code, '-', 2) ELSE '' END) as grade_level,
+          COALESCE(NULLIF(cl.section, ''), CASE WHEN c.code LIKE '%Section%' THEN split_part(c.code, '-', 3) ELSE '' END) as section_name
          FROM grade_submissions gs
          LEFT JOIN courses c ON gs.course_id = c.id
+         LEFT JOIN classes cl ON c.class_id = cl.id
          LEFT JOIN teachers t ON gs.teacher_id = t.id OR gs.submitted_by = t.user_id
          LEFT JOIN users u ON t.user_id = u.id OR gs.submitted_by = u.id
 
@@ -846,8 +855,11 @@ class VicePrincipalService {
           1 as semester,
           NULL::timestamp as submitted_at,
           FALSE as is_locked,
-          'not_submitted' as submission_stage
+          'not_submitted' as submission_stage,
+          COALESCE(NULLIF(cl.grade, ''), NULLIF(cl.name, ''), CASE WHEN c.code LIKE '%Grade%' THEN split_part(c.code, '-', 2) ELSE '' END) as grade_level,
+          COALESCE(NULLIF(cl.section, ''), CASE WHEN c.code LIKE '%Section%' THEN split_part(c.code, '-', 3) ELSE '' END) as section_name
          FROM courses c
+         LEFT JOIN classes cl ON c.class_id = cl.id
          LEFT JOIN teachers t ON c.teacher_id = t.id
          LEFT JOIN users u ON t.user_id = u.id
          WHERE c.id NOT IN (SELECT course_id FROM grade_submissions WHERE course_id IS NOT NULL)
