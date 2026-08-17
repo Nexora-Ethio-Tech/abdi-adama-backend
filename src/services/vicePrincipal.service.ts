@@ -764,47 +764,97 @@ class VicePrincipalService {
 
   // Get all grade submissions in a branch (including unsubmitted courses/teachers)
   async getGradeSubmissions(branchId?: string) {
-    let result = await pool.query(
-      `SELECT 
-        gs.id::text as id,
-        gs.course_id,
-        COALESCE(gs.teacher_id, '') as teacher_id,
-        COALESCE(c.name, 'Course ' || gs.course_id) as course_name,
-        COALESCE(c.code, 'N/A') as course_code,
-        COALESCE(u.name, 'Teacher') as teacher_name,
-        COALESCE(gs.submission_type, 'Regular') as submission_type,
-        COALESCE(gs.academic_year, '2025/2026') as academic_year,
-        COALESCE(gs.semester, 1) as semester,
-        gs.submitted_at,
-        COALESCE(gs.is_locked, FALSE) as is_locked,
-        COALESCE(gs.submission_stage, CASE WHEN gs.is_locked THEN 'submitted' ELSE 'saved' END) as submission_stage
-       FROM grade_submissions gs
-       LEFT JOIN courses c ON gs.course_id = c.id
-       LEFT JOIN teachers t ON gs.teacher_id = t.id OR gs.submitted_by = t.user_id
-       LEFT JOIN users u ON t.user_id = u.id OR gs.submitted_by = u.id
+    let result;
+    if (branchId) {
+      result = await pool.query(
+        `SELECT 
+          gs.id::text as id,
+          gs.course_id::text as course_id,
+          COALESCE(gs.teacher_id::text, '') as teacher_id,
+          COALESCE(c.name, 'Course ' || gs.course_id::text) as course_name,
+          COALESCE(c.code, 'N/A') as course_code,
+          COALESCE(u.name, 'Teacher') as teacher_name,
+          COALESCE(gs.submission_type, 'Regular') as submission_type,
+          COALESCE(gs.academic_year, '2025/2026') as academic_year,
+          COALESCE(gs.semester, 1) as semester,
+          gs.submitted_at,
+          COALESCE(gs.is_locked, FALSE) as is_locked,
+          COALESCE(gs.submission_stage, CASE WHEN gs.is_locked THEN 'submitted' ELSE 'saved' END) as submission_stage
+         FROM grade_submissions gs
+         LEFT JOIN courses c ON gs.course_id = c.id
+         LEFT JOIN teachers t ON gs.teacher_id = t.id OR gs.submitted_by = t.user_id
+         LEFT JOIN users u ON t.user_id = u.id OR gs.submitted_by = u.id
+         WHERE (t.branch_id = $1 OR u.branch_id = $1)
 
-       UNION ALL
+         UNION ALL
 
-       SELECT 
-        'unsubmitted-' || c.id::text as id,
-        c.id as course_id,
-        COALESCE(t.id, '') as teacher_id,
-        c.name as course_name,
-        c.code as course_code,
-        COALESCE(u.name, 'Unassigned Teacher') as teacher_name,
-        'Regular' as submission_type,
-        '2025/2026' as academic_year,
-        1 as semester,
-        NULL::timestamp as submitted_at,
-        FALSE as is_locked,
-        'not_submitted' as submission_stage
-       FROM courses c
-       LEFT JOIN teachers t ON c.teacher_id = t.id
-       LEFT JOIN users u ON t.user_id = u.id
-       WHERE c.id NOT IN (SELECT course_id FROM grade_submissions WHERE course_id IS NOT NULL)
+         SELECT 
+          'unsubmitted-' || c.id::text as id,
+          c.id::text as course_id,
+          COALESCE(t.id::text, '') as teacher_id,
+          c.name as course_name,
+          c.code as course_code,
+          COALESCE(u.name, 'Unassigned Teacher') as teacher_name,
+          'Regular' as submission_type,
+          '2025/2026' as academic_year,
+          1 as semester,
+          NULL::timestamp as submitted_at,
+          FALSE as is_locked,
+          'not_submitted' as submission_stage
+         FROM courses c
+         LEFT JOIN teachers t ON c.teacher_id = t.id
+         LEFT JOIN users u ON t.user_id = u.id
+         WHERE (t.branch_id = $1 OR u.branch_id = $1)
+           AND c.id NOT IN (SELECT course_id FROM grade_submissions WHERE course_id IS NOT NULL)
 
-       ORDER BY submitted_at DESC NULLS LAST, course_name ASC`
-    );
+         ORDER BY submitted_at DESC NULLS LAST, course_name ASC`,
+        [branchId]
+      );
+    }
+
+    if (!result || result.rows.length === 0) {
+      result = await pool.query(
+        `SELECT 
+          gs.id::text as id,
+          gs.course_id::text as course_id,
+          COALESCE(gs.teacher_id::text, '') as teacher_id,
+          COALESCE(c.name, 'Course ' || gs.course_id::text) as course_name,
+          COALESCE(c.code, 'N/A') as course_code,
+          COALESCE(u.name, 'Teacher') as teacher_name,
+          COALESCE(gs.submission_type, 'Regular') as submission_type,
+          COALESCE(gs.academic_year, '2025/2026') as academic_year,
+          COALESCE(gs.semester, 1) as semester,
+          gs.submitted_at,
+          COALESCE(gs.is_locked, FALSE) as is_locked,
+          COALESCE(gs.submission_stage, CASE WHEN gs.is_locked THEN 'submitted' ELSE 'saved' END) as submission_stage
+         FROM grade_submissions gs
+         LEFT JOIN courses c ON gs.course_id = c.id
+         LEFT JOIN teachers t ON gs.teacher_id = t.id OR gs.submitted_by = t.user_id
+         LEFT JOIN users u ON t.user_id = u.id OR gs.submitted_by = u.id
+
+         UNION ALL
+
+         SELECT 
+          'unsubmitted-' || c.id::text as id,
+          c.id::text as course_id,
+          COALESCE(t.id::text, '') as teacher_id,
+          c.name as course_name,
+          c.code as course_code,
+          COALESCE(u.name, 'Unassigned Teacher') as teacher_name,
+          'Regular' as submission_type,
+          '2025/2026' as academic_year,
+          1 as semester,
+          NULL::timestamp as submitted_at,
+          FALSE as is_locked,
+          'not_submitted' as submission_stage
+         FROM courses c
+         LEFT JOIN teachers t ON c.teacher_id = t.id
+         LEFT JOIN users u ON t.user_id = u.id
+         WHERE c.id NOT IN (SELECT course_id FROM grade_submissions WHERE course_id IS NOT NULL)
+
+         ORDER BY submitted_at DESC NULLS LAST, course_name ASC`
+      );
+    }
 
     return result.rows;
   }
