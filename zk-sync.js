@@ -21,7 +21,7 @@ const ZK_DEVICE_IP = process.env.ZK_DEVICE_IP || '192.168.1.201';   // Your devi
 const ZK_DEVICE_PORT = parseInt(process.env.ZK_DEVICE_PORT || '4370', 10);
 const ZK_PASSWORD = parseInt(process.env.ZK_PASSWORD || '0', 10);                  // Change if you set a device password
 
-const API_URL = process.env.API_URL || 'http://localhost:5000/api/machine/attendance';
+const API_URL = process.env.API_URL || 'https://abdi-adama.com/api/machine/attendance';
 const API_KEY = process.env.API_KEY || 'abdi_adama_zk_secure_key_2026';
 
 // ── State: track the last synced log index to avoid resending ──

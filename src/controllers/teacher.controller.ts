@@ -563,6 +563,107 @@ class TeacherController {
     }
   }
 
+  // ─── Annual Plans Controllers ─────────────────────────────────────────────
+
+  // Submit annual lesson plan
+  async submitAnnualPlan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherId = req.user!.id;
+      const planData = req.body;
+
+      const plan = await teacherService.submitAnnualPlan(teacherId, planData);
+
+      res.status(201).json({
+        success: true,
+        data: plan,
+        message: 'Annual lesson plan submitted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get teacher's annual plans
+  async getMyAnnualPlans(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherId = req.user!.id;
+      const { status } = req.query;
+
+      const plans = await teacherService.getTeacherAnnualPlans(teacherId, status as string);
+
+      res.json({
+        success: true,
+        data: plans
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Update annual lesson plan
+  async updateAnnualPlan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const teacherId = req.user!.id;
+      const planData = req.body;
+
+      const plan = await teacherService.updateAnnualPlan(id, teacherId, planData);
+
+      res.json({
+        success: true,
+        data: plan,
+        message: 'Annual lesson plan updated successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get department annual plans for review (as department head)
+  async getDeptAnnualPlans(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const { status } = req.query;
+
+      const plans = await teacherService.getDeptAnnualPlans(teacherUserId, status as string);
+
+      res.json({
+        success: true,
+        data: plans
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Review an annual lesson plan
+  async reviewDeptAnnualPlan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const { id } = req.params;
+      const { status, feedback, rating } = req.body;
+
+      if (!status) {
+        res.status(400).json({ success: false, message: 'status is required' });
+        return;
+      }
+
+      const plan = await teacherService.reviewDeptAnnualPlan(teacherUserId, id, {
+        status,
+        feedback,
+        rating
+      });
+
+      res.json({
+        success: true,
+        data: plan,
+        message: 'Annual lesson plan reviewed successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // ─── Exam Grade & Subject Management ───────────────────────────────────────
 
   async getAllGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
