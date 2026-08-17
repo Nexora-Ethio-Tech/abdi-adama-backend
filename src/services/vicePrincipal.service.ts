@@ -762,16 +762,33 @@ class VicePrincipalService {
     }));
   }
 
-  // Get all grade submissions in a branch
+  // Get all grade submissions in a branch (including unsubmitted courses/teachers)
   async getGradeSubmissions(branchId: string) {
     const result = await pool.query(
-      `SELECT gs.*, c.name as course_name, c.code as course_code, u.name as teacher_name
-       FROM grade_submissions gs
-       JOIN courses c ON gs.course_id = c.id
-       JOIN teachers t ON gs.teacher_id = t.id
-       JOIN users u ON t.user_id = u.id
-       WHERE t.branch_id = $1
-       ORDER BY gs.academic_year DESC, gs.semester DESC, gs.submitted_at DESC`,
+      `SELECT 
+        COALESCE(gs.id, 'unsubmitted-' || c.id) as id,
+        c.id as course_id,
+        COALESCE(t.id, '') as teacher_id,
+        c.name as course_name,
+        c.code as course_code,
+        COALESCE(u.name, 'Unassigned Teacher') as teacher_name,
+        COALESCE(gs.submission_type, 'Regular') as submission_type,
+        COALESCE(gs.academic_year, '2025/2026') as academic_year,
+        COALESCE(gs.semester, 1) as semester,
+        gs.submitted_at as submitted_at,
+        COALESCE(gs.is_locked, FALSE) as is_locked,
+        CASE 
+          WHEN gs.id IS NULL THEN 'not_submitted'
+          WHEN gs.is_locked = TRUE OR gs.submission_stage IN ('finalized', 'submitted') THEN 'submitted'
+          ELSE 'unlocked'
+        END as submission_stage
+       FROM courses c
+       JOIN classes cl ON c.class_id = cl.id
+       LEFT JOIN teachers t ON c.teacher_id = t.id
+       LEFT JOIN users u ON t.user_id = u.id
+       LEFT JOIN grade_submissions gs ON gs.course_id = c.id
+       WHERE (cl.branch_id = $1 OR t.branch_id = $1 OR u.branch_id = $1)
+       ORDER BY gs.submitted_at DESC NULLS LAST, c.name ASC`,
       [branchId]
     );
     return result.rows;
