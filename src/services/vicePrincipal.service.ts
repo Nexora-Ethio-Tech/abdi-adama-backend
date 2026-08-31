@@ -4,7 +4,7 @@ import {
   getCurrentAcademicPeriod,
   getGradeUnlockWindowDays,
 } from '../shared/gradeSubmissionPolicy';
-import { getCurrentECYear, getCurrentSemester, formatSemester, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
+import { formatSemester, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
 import { getEthiopianNow } from './schoolAdmin.service';
 
 class VicePrincipalService {
@@ -1961,127 +1961,6 @@ class VicePrincipalService {
     return result.rows[0];
   }
 
-  /**
-   * Unlock a grade submission to allow the teacher to edit and resubmit grades.
-   * SECURITY RULES ENFORCED:
-   * 1. Must be the current active academic period (active year & active semester).
-   * 2. Must be within 30 days (1 month) of the submission date (submitted_at).
-   */
-  async unlockGradeSubmission(
-    vpUserId: string,
-    data: {
-      courseId: string;
-      submissionType: string;
-      academicYear?: string;
-      semester?: number;
-    }
-  ) {
-    const vpResult = await pool.query(
-      `SELECT u.branch_id FROM users u WHERE u.id = $1 AND u.role = 'vice-principal'`,
-      [vpUserId]
-    );
-    if (vpResult.rows.length === 0) {
-      throw new Error('Vice Principal user not found');
-    }
-    const branchId = vpResult.rows[0].branch_id;
-
-    const currentECYear = getCurrentECYear();
-    const activeAcademicYear = `${currentECYear + 7}/${currentECYear + 8}`;
-    const activeSemester = getCurrentSemester();
-
-    const targetYear = data.academicYear || activeAcademicYear;
-    const targetSemester = data.semester !== undefined ? Number(data.semester) : activeSemester;
-
-    // SECURITY CHECK 1: Active Semester & Year Only
-    if (targetYear !== activeAcademicYear || targetSemester !== activeSemester) {
-      throw new Error('Grade submission unlock is only permitted for the current active academic period.');
-    }
-
-    // Fetch submission record
-    const subResult = await pool.query(
-      `SELECT gs.*, t.branch_id
-       FROM grade_submissions gs
-       JOIN teachers t ON gs.teacher_id = t.id
-       WHERE gs.course_id = $1
-         AND gs.submission_type = $2
-         AND gs.academic_year = $3
-         AND gs.semester = $4
-         AND t.branch_id = $5`,
-      [data.courseId, data.submissionType, targetYear, targetSemester, branchId]
-    );
-
-    if (subResult.rows.length === 0) {
-      throw new Error('Grade submission record not found for this course and academic period.');
-    }
-
-    const submission = subResult.rows[0];
-
-    // SECURITY CHECK 2: 30-Day Window
-    const submittedAt = new Date(submission.submitted_at).getTime();
-    const now = Date.now();
-    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-
-    if (now - submittedAt > THIRTY_DAYS_MS) {
-      throw new Error('Unlock window expired: Grade submissions older than 30 days cannot be unlocked for editing for security and audit integrity.');
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // 1. Release lock on grade_submissions (stage set to 'saved' to pass CHECK constraint)
-      await client.query(
-        `UPDATE grade_submissions
-         SET is_locked = false,
-             submission_stage = 'saved',
-             updated_at = NOW()
-         WHERE id = $1`,
-        [submission.id]
-      );
-
-      // 2. Remove lock from grade_submission_locks if it exists
-      await client.query(
-        `DELETE FROM grade_submission_locks
-         WHERE course_id = $1
-           AND grading_component = $2
-           AND academic_year = $3
-           AND semester = $4`,
-        [data.courseId, data.submissionType, targetYear, targetSemester]
-      );
-
-      // 3. Remove finalization entry if it exists
-      await client.query(
-        `DELETE FROM grade_submission_finalizations
-         WHERE grade_submission_id = $1`,
-        [submission.id]
-      );
-
-      // 4. Release finalized/submitted state on individual grades
-      await client.query(
-        `UPDATE grades
-         SET is_submitted = false,
-             is_finalized = false,
-             status = 'draft'
-         WHERE course_id = $1
-           AND type = $2
-           AND academic_year = $3
-           AND semester = $4`,
-        [data.courseId, data.submissionType, targetYear, targetSemester]
-      );
-
-      await client.query('COMMIT');
-
-      return {
-        success: true,
-        message: 'Grade submission successfully unlocked. Permission has been granted to the teacher to edit and resubmit.'
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
 }
 
 export default new VicePrincipalService();

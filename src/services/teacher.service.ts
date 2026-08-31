@@ -346,18 +346,13 @@ class TeacherService {
               AND gs.academic_year = g.academic_year
               AND gs.semester = g.semester
               AND gs.is_locked = true
-              AND gs.academic_year = g.academic_year
-              AND gs.semester = g.semester
-              AND gs.is_locked = true
           )
         ) AS is_submitted
       FROM grades g
       JOIN students s ON g.student_id = s.id
       JOIN users u ON s.user_id = u.id
       WHERE ${conditions.join(' AND ')}
-      WHERE ${conditions.join(' AND ')}
       ORDER BY u.name, g.created_at DESC`,
-      params
       params
     );
 
