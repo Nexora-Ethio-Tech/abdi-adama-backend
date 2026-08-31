@@ -1097,13 +1097,13 @@ class SuperAdminService {
     );
 
     const settings: Record<string, string> = {
-      smtp_host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      smtp_port: process.env.SMTP_PORT || '587',
-      smtp_user: process.env.SMTP_USER || 'abdiadamaschooloffice@gmail.com',
-      smtp_from: process.env.SMTP_FROM || 'abdiadamaschooloffice@gmail.com',
+      smtp_host: process.env.SMTP_HOST || '',
+      smtp_port: process.env.SMTP_PORT || '',
+      smtp_user: process.env.SMTP_USER || '',
+      smtp_from: process.env.SMTP_FROM || '',
     };
     for (const row of result.rows) {
-      settings[row.key] = row.value;
+      if (!settings[row.key]) settings[row.key] = row.value;
     }
     return settings;
   }
@@ -1113,13 +1113,12 @@ class SuperAdminService {
       smtp_host?: string;
       smtp_port?: string;
       smtp_user?: string;
-      smtp_pass?: string;
       smtp_from?: string;
     },
     userId: string,
     userName: string
   ) {
-    const ALLOWED_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from'];
+    const ALLOWED_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_from'];
     const updated: string[] = [];
 
     for (const key of ALLOWED_KEYS) {
@@ -1140,12 +1139,10 @@ class SuperAdminService {
         [key, value, userId]
       );
 
-      const auditValue = key === 'smtp_pass' ? '••••••••' : value;
-      const auditOld = key === 'smtp_pass' ? '••••••••' : oldValue;
       await pool.query(
         `INSERT INTO email_config_audit (config_key, old_value, new_value, changed_by, changed_by_name)
          VALUES ($1, $2, $3, $4, $5)`,
-        [key, auditOld, auditValue, userId, userName]
+        [key, oldValue, value, userId, userName]
       );
 
       const envKey = key === 'smtp_from' ? 'SMTP_FROM' : key.toUpperCase();

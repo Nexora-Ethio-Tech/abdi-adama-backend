@@ -1,6 +1,8 @@
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { Client } from 'pg';
+import { requireEnvironmentValue } from '../utils/secureConfig';
 
 const BASE_DIR = path.resolve(__dirname, '../../database');
 const DATABASE_DIRS = [BASE_DIR, path.join(BASE_DIR, 'migrations')];
@@ -117,11 +119,11 @@ async function main() {
   const expectedTables = Object.keys(expectedTableCols).sort();
 
   const client = new Client({
-    host: 'localhost',
-    port: 5432,
-    database: 'abdiadam_school_db',
-    user: 'postgres',
-    password: '12341234',
+    host: requireEnvironmentValue('DB_HOST'),
+    port: Number(process.env.DB_PORT) || 5432,
+    database: requireEnvironmentValue('DB_NAME'),
+    user: requireEnvironmentValue('DB_USER'),
+    password: requireEnvironmentValue('DB_PASSWORD'),
   });
   await client.connect();
 

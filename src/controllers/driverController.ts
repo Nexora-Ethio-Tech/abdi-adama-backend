@@ -1,5 +1,4 @@
 import { Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
 import pool from '../config/db';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { sendSuccess, sendError, getPagination } from '../shared/responseUtils';
@@ -7,6 +6,7 @@ import { getNextSaturday } from '../shared/dateUtils';
 import { broadcast, addClient, removeClient } from '../shared/sseManager';
 import { performAllCleanups } from '../shared/cleanupUtils';
 import * as notificationService from '../services/notificationService';
+import { verifyAccessToken } from '../utils/jwt';
 
 /**
  * GET /api/driver/manifest  (also aliased at /api/transport/manifest)
@@ -251,9 +251,7 @@ export const deleteNotice = async (req: AuthRequest, res: Response) => {
  * SSE stream endpoint. Client connects here to receive real-time notice updates (deletions, new posts).
  * Supports token via query parameter (for EventSource API) or Authorization header.
  */
-export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
-  const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
-
+export const subscribeToNotifications = async (req: AuthRequest, res: Response) => {
   // Extract token from query parameter or Authorization header
   let token: string | undefined = req.query.token as string | undefined;
 
@@ -267,16 +265,16 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Verify and decode token
-  jwt.verify(token, JWT_SECRET, async (err: any, user: any) => {
-    if (err) {
-      res.status(401).json({ message: 'Invalid or expired token' });
+  try {
+    const user: any = verifyAccessToken(token);
+    const branchId = user.branch_id || user.branchId;
+    const role = user.role;
+    const identityId = user.identity_id || user.digital_id || user.digitalId || user.user_id || user.userId;
+
+    if (!branchId || !role || !identityId) {
+      res.status(401).json({ message: 'Authentication token is missing required identity context' });
       return;
     }
-
-    const branchId = user?.branch_id || '1';
-    const role = user?.role || 'Guest';
-    const identityId = user?.identity_id || user?.userId || 'unknown';
 
     // Get child identities for parents (for filtering logistics notices to assigned children)
     let childIdentityIds: string[] | undefined = undefined;
@@ -313,7 +311,9 @@ export const subscribeToNotifications = (req: AuthRequest, res: Response) => {
     res.on('error', () => {
       removeClient(res);
     });
-  });
+  } catch (_error) {
+    res.status(401).json({ message: 'Invalid or expired token' });
+  }
 };
 
 
@@ -507,4 +507,3 @@ export const getSchoolAnnouncements = async (req: AuthRequest, res: Response) =>
     return sendError(res, 'Failed to fetch school announcements.', 500, err.message);
   }
 };
-

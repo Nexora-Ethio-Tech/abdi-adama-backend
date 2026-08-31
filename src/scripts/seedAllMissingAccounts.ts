@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import pool from '../config/database';
-import { hashPassword } from '../utils/password';
+import { generate4DigitPIN, hashPassword } from '../utils/password';
 
 dotenv.config();
 
@@ -18,42 +18,50 @@ async function seedAllMissingAccounts() {
         const branchId = branchRes.rows[0].id;
         console.log(`Using branch: ${branchId}\n`);
 
+        const issuedPins = new Set<string>();
+        const createUniquePin = () => {
+            let pin = generate4DigitPIN();
+            while (issuedPins.has(pin)) pin = generate4DigitPIN();
+            issuedPins.add(pin);
+            return pin;
+        };
+
         // Finance Staff
         const financeStaff = [
-            { digital_id: 'FIN-MB-0001', email: 'fin-mb-0001@abdiadama.school', name: 'Finance Officer 1', password: '2986' },
-            { digital_id: 'FIN-MB-0002', email: 'fin-mb-0002@abdiadama.school', name: 'Finance Officer 2', password: '9792' }
+            { digital_id: 'FIN-MB-0001', email: 'fin-mb-0001@abdiadama.school', name: 'Finance Officer 1', password: createUniquePin() },
+            { digital_id: 'FIN-MB-0002', email: 'fin-mb-0002@abdiadama.school', name: 'Finance Officer 2', password: createUniquePin() }
         ];
 
         // Teachers
         const teachers = [
-            { digital_id: 'TCH-MB-0001', email: 'tch-mb-0001@abdiadama.school', name: 'Teacher 1', password: '5741' },
-            { digital_id: 'TCH-MB-0002', email: 'tch-mb-0002@abdiadama.school', name: 'Teacher 2', password: '8293' }
+            { digital_id: 'TCH-MB-0001', email: 'tch-mb-0001@abdiadama.school', name: 'Teacher 1', password: createUniquePin() },
+            { digital_id: 'TCH-MB-0002', email: 'tch-mb-0002@abdiadama.school', name: 'Teacher 2', password: createUniquePin() }
         ];
 
         // Drivers
         const drivers = [
-            { digital_id: 'DRV-MB-0001', email: 'drv-mb-0001@abdiadama.school', name: 'Driver 1', password: '2843' },
-            { digital_id: 'DRV-MB-0002', email: 'drv-mb-0002@abdiadama.school', name: 'Driver 2', password: '3074' }
+            { digital_id: 'DRV-MB-0001', email: 'drv-mb-0001@abdiadama.school', name: 'Driver 1', password: createUniquePin() },
+            { digital_id: 'DRV-MB-0002', email: 'drv-mb-0002@abdiadama.school', name: 'Driver 2', password: createUniquePin() }
         ];
 
         // Librarian
         const librarians = [
-            { digital_id: 'LIB-MB-0001', email: 'lib-mb-0001@abdiadama.school', name: 'Librarian', password: '9464' }
+            { digital_id: 'LIB-MB-0001', email: 'lib-mb-0001@abdiadama.school', name: 'Librarian', password: createUniquePin() }
         ];
 
         // Clinic Admin
         const clinicStaff = [
-            { digital_id: 'CLN-MB-0001', email: 'cln-mb-0001@abdiadama.school', name: 'Clinic Admin', password: '4927' }
+            { digital_id: 'CLN-MB-0001', email: 'cln-mb-0001@abdiadama.school', name: 'Clinic Admin', password: createUniquePin() }
         ];
 
         // Students
         const students = [
-            { digital_id: 'STD-MB-0001', email: 'student10-1@abdiadama.school', name: 'Student 10-A', grade: '10', password: '1972' },
-            { digital_id: 'STD-MB-0002', email: 'student10-2@abdiadama.school', name: 'Student 10-B', grade: '10', password: '6473' },
-            { digital_id: 'STD-MB-0003', email: 'student10-3@abdiadama.school', name: 'Student 10-C', grade: '10', password: '2475' },
-            { digital_id: 'STD-MB-0004', email: 'student7-1@abdiadama.school', name: 'Student 7-A', grade: '7', password: '9931' },
-            { digital_id: 'STD-MB-0005', email: 'student7-2@abdiadama.school', name: 'Student 7-B', grade: '7', password: '3174' },
-            { digital_id: 'STD-MB-0006', email: 'student7-3@abdiadama.school', name: 'Student 7-C', grade: '7', password: '1167' }
+            { digital_id: 'STD-MB-0001', email: 'student10-1@abdiadama.school', name: 'Student 10-A', grade: '10', password: createUniquePin() },
+            { digital_id: 'STD-MB-0002', email: 'student10-2@abdiadama.school', name: 'Student 10-B', grade: '10', password: createUniquePin() },
+            { digital_id: 'STD-MB-0003', email: 'student10-3@abdiadama.school', name: 'Student 10-C', grade: '10', password: createUniquePin() },
+            { digital_id: 'STD-MB-0004', email: 'student7-1@abdiadama.school', name: 'Student 7-A', grade: '7', password: createUniquePin() },
+            { digital_id: 'STD-MB-0005', email: 'student7-2@abdiadama.school', name: 'Student 7-B', grade: '7', password: createUniquePin() },
+            { digital_id: 'STD-MB-0006', email: 'student7-3@abdiadama.school', name: 'Student 7-C', grade: '7', password: createUniquePin() }
         ];
 
         // Helper function to create or update user

@@ -1,28 +1,29 @@
 import request from 'supertest';
-import app from '../app';
+import type { Express } from 'express';
+import {
+  assertSafeIntegrationTestEnvironment,
+  getIntegrationTestCredentials,
+  integrationTestsEnabled,
+} from '../testUtils/integrationTestGuard';
 
-describe('Staff Document Upload & Re-upload APIs', () => {
+const describeIntegration = integrationTestsEnabled() ? describe : describe.skip;
+
+describeIntegration('Staff Document Upload & Re-upload APIs', () => {
+  let app: Express;
   let schoolAdminToken: string;
 
-  const schoolAdminCreds = {
-    email: '65plante@gmail.com',
-    password: 'SchoolAdmin@2026'
-  };
-
   beforeAll(async () => {
-    try {
-      const adminRes = await request(app).post('/api/auth/login').send(schoolAdminCreds);
-      if (adminRes.status === 200) {
-        schoolAdminToken = adminRes.body.data.accessToken;
-      }
-    } catch (_) {
-      // Token stays undefined if login fails
+    assertSafeIntegrationTestEnvironment();
+    app = require('../app').default;
+    const schoolAdminCreds = getIntegrationTestCredentials('TEST_SCHOOL_ADMIN');
+    const adminRes = await request(app).post('/api/auth/login').send(schoolAdminCreds);
+    if (adminRes.status !== 200 || !adminRes.body.data?.accessToken) {
+      throw new Error(`Integration-test login failed for school admin with status ${adminRes.status}`);
     }
+    schoolAdminToken = adminRes.body.data.accessToken;
   });
 
   it('should reject staff registration if document file is missing', async () => {
-    if (!schoolAdminToken) return;
-
     const res = await request(app)
       .post('/api/school-admin/register-user')
       .set('Authorization', `Bearer ${schoolAdminToken}`)
@@ -48,8 +49,6 @@ describe('Staff Document Upload & Re-upload APIs', () => {
   });
 
   it('should successfully register a staff member when document is provided', async () => {
-    if (!schoolAdminToken) return;
-
     const mockFileBuffer = Buffer.from('mock pdf content');
 
     const res = await request(app)

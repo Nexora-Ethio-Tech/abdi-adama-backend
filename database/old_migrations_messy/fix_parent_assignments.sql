@@ -25,31 +25,26 @@ DECLARE
   v_par_0001_id  UUID;
   v_par_0006_id  UUID;
 
-  -- PIN hashes (bcrypt of 4-digit PINs)
-  -- PAR-MB-0001 PIN: 4721 → we'll store a bcrypt hash
-  -- PAR-MB-0006 PIN: 8364
-  -- For students, we'll use default PIN: 0000
-  -- We'll use pgcrypto to hash; if unavailable, use a placeholder
-  v_hash_4721  TEXT;
-  v_hash_8364  TEXT;
-  v_hash_0000  TEXT;
+  -- PINs must be supplied by the operator for this archived migration:
+  -- SET app.seed_parent_0001_pin = '...';
+  -- SET app.seed_parent_0006_pin = '...';
+  -- SET app.seed_student_pin = '...';
+  v_hash_parent_0001  TEXT;
+  v_hash_parent_0006  TEXT;
+  v_hash_student      TEXT;
 BEGIN
   -- ============================================================
   -- STEP 1: Hash the PINs using pgcrypto (if available)
   -- ============================================================
-  BEGIN
-    v_hash_4721 := crypt('4721', gen_salt('bf', 10));
-    v_hash_8364 := crypt('8364', gen_salt('bf', 10));
-    v_hash_0000 := crypt('0000', gen_salt('bf', 10));
-  EXCEPTION WHEN undefined_function THEN
-    -- pgcrypto not available; use a known bcrypt hash of these PINs
-    -- These are bcrypt($2b$10$...) hashes generated externally
-    -- We'll mark them so the user knows to reset after
-    v_hash_4721 := '$2b$10$placeholder_4721_RESET_REQUIRED_xxxxxxxxxxxxxxxxxxxxxxxxx';
-    v_hash_8364 := '$2b$10$placeholder_8364_RESET_REQUIRED_xxxxxxxxxxxxxxxxxxxxxxxxx';
-    v_hash_0000 := '$2b$10$placeholder_0000_RESET_REQUIRED_xxxxxxxxxxxxxxxxxxxxxxxxx';
-    RAISE NOTICE 'pgcrypto unavailable – placeholder hashes used. Please reset PINs via the admin panel.';
-  END;
+  IF NULLIF(current_setting('app.seed_parent_0001_pin', TRUE), '') IS NULL
+     OR NULLIF(current_setting('app.seed_parent_0006_pin', TRUE), '') IS NULL
+     OR NULLIF(current_setting('app.seed_student_pin', TRUE), '') IS NULL THEN
+    RAISE EXCEPTION 'Runtime seed PIN settings are required; no source-code defaults are available';
+  END IF;
+
+  v_hash_parent_0001 := crypt(current_setting('app.seed_parent_0001_pin'), gen_salt('bf', 10));
+  v_hash_parent_0006 := crypt(current_setting('app.seed_parent_0006_pin'), gen_salt('bf', 10));
+  v_hash_student := crypt(current_setting('app.seed_student_pin'), gen_salt('bf', 10));
 
   -- ============================================================
   -- STEP 2: Create or update PAR-MB-0001
@@ -64,7 +59,7 @@ BEGIN
       'par-mb-0001',
       'Parent MB 0001',
       'par-mb-0001@abdiadama.school',
-      v_hash_4721,
+      v_hash_parent_0001,
       'parent',
       v_main_branch_id,
       'Approved',
@@ -75,7 +70,7 @@ BEGIN
     -- Update email and password to match user's spec
     UPDATE users
     SET email = 'par-mb-0001@abdiadama.school',
-        password_hash = v_hash_4721,
+        password_hash = v_hash_parent_0001,
         status = 'Approved',
         branch_id = v_main_branch_id,
         updated_at = NOW()
@@ -104,7 +99,7 @@ BEGIN
       'par-mb-0006',
       'Parent MB 0006',
       'par-mb-0006@abdiadama.school',
-      v_hash_8364,
+      v_hash_parent_0006,
       'parent',
       v_main_branch_id,
       'Approved',
@@ -114,7 +109,7 @@ BEGIN
   ELSE
     UPDATE users
     SET email = 'par-mb-0006@abdiadama.school',
-        password_hash = v_hash_8364,
+        password_hash = v_hash_parent_0006,
         status = 'Approved',
         branch_id = v_main_branch_id,
         updated_at = NOW()
@@ -139,7 +134,7 @@ BEGIN
   IF v_std_0007_user_id IS NULL THEN
     INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)
     VALUES ('STD-MB-0007','std-mb-0007','Student MB 0007','std-mb-0007@abdiadama.school',
-            v_hash_0000,'student',v_main_branch_id,'Approved',TRUE)
+            v_hash_student,'student',v_main_branch_id,'Approved',TRUE)
     RETURNING id INTO v_std_0007_user_id;
     INSERT INTO students (user_id, branch_id, grade, status) VALUES (v_std_0007_user_id, v_main_branch_id, 'Grade 5', 'Active');
     RAISE NOTICE 'Created STD-MB-0007: %', v_std_0007_user_id;
@@ -151,7 +146,7 @@ BEGIN
   IF v_std_0010_user_id IS NULL THEN
     INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)
     VALUES ('STD-MB-0010','std-mb-0010','Student MB 0010','std-mb-0010@abdiadama.school',
-            v_hash_0000,'student',v_main_branch_id,'Approved',TRUE)
+            v_hash_student,'student',v_main_branch_id,'Approved',TRUE)
     RETURNING id INTO v_std_0010_user_id;
     INSERT INTO students (user_id, branch_id, grade, status) VALUES (v_std_0010_user_id, v_main_branch_id, 'Grade 6', 'Active');
     RAISE NOTICE 'Created STD-MB-0010: %', v_std_0010_user_id;
@@ -163,7 +158,7 @@ BEGIN
   IF v_std_0011_user_id IS NULL THEN
     INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)
     VALUES ('STD-MB-0011','std-mb-0011','Student MB 0011','std-mb-0011@abdiadama.school',
-            v_hash_0000,'student',v_main_branch_id,'Approved',TRUE)
+            v_hash_student,'student',v_main_branch_id,'Approved',TRUE)
     RETURNING id INTO v_std_0011_user_id;
     INSERT INTO students (user_id, branch_id, grade, status) VALUES (v_std_0011_user_id, v_main_branch_id, 'Grade 7', 'Active');
     RAISE NOTICE 'Created STD-MB-0011: %', v_std_0011_user_id;

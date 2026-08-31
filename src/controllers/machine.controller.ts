@@ -1,6 +1,26 @@
 import { Request, Response, NextFunction } from 'express';
 import pool from '../config/database';
 import { gregorianToEthiopian } from '../shared/ethiopianCalendar';
+import { safeSecretMatches } from '../utils/secureConfig';
+
+function authorizeMachineRequest(req: Request, res: Response): boolean {
+  const expectedKey = process.env.MACHINE_API_KEY;
+  const suppliedHeader = req.headers['x-api-key'];
+  const suppliedKey = Array.isArray(suppliedHeader) ? suppliedHeader[0] : suppliedHeader;
+
+  if (!expectedKey) {
+    console.error('[MACHINE] MACHINE_API_KEY is not configured');
+    res.status(503).json({ success: false, message: 'Machine integration is not configured' });
+    return false;
+  }
+
+  if (!safeSecretMatches(expectedKey, suppliedKey)) {
+    res.status(401).json({ success: false, message: 'Unauthorized' });
+    return false;
+  }
+
+  return true;
+}
 
 /** Format a standard HH:MM AM/PM string, converted to Ethiopian Clock (subtract 6 hours) */
 function formatTime12Hour(hour: number, minute: number): string {
@@ -46,12 +66,7 @@ function computeStatus(row: {
 class MachineController {
   async syncAttendance(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const apiKey = req.headers['x-api-key'];
-      const expectedKey = process.env.MACHINE_API_KEY || 'abdi_adama_zk_secure_key_2026';
-      if (apiKey !== expectedKey) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      if (!authorizeMachineRequest(req, res)) return;
 
       const { logs } = req.body; // Array of { zkDeviceId: string, timestamp: string, type?: number }
       if (!Array.isArray(logs) || logs.length === 0) {
@@ -205,12 +220,7 @@ class MachineController {
 
   async getPendingSMS(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const apiKey = req.headers['x-api-key'];
-      const expectedKey = process.env.MACHINE_API_KEY || 'abdi_adama_zk_secure_key_2026';
-      if (apiKey !== expectedKey) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      if (!authorizeMachineRequest(req, res)) return;
 
       const result = await pool.query(
         `SELECT id, parent_phone, message 
@@ -227,12 +237,7 @@ class MachineController {
 
   async updateSMSStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const apiKey = req.headers['x-api-key'];
-      const expectedKey = process.env.MACHINE_API_KEY || 'abdi_adama_zk_secure_key_2026';
-      if (apiKey !== expectedKey) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      if (!authorizeMachineRequest(req, res)) return;
 
       const { id, status } = req.body;
       if (!id || !status || !['sent', 'failed'].includes(status)) {

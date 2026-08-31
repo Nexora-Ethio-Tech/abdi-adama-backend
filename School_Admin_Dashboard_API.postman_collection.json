@@ -14,6 +14,16 @@
       "key": "accessToken",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "schoolAdminEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "schoolAdminPassword",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -32,7 +42,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"65plante@gmail.com\",\n  \"password\": \"SchoolAdmin@2026\"\n}"
+              "raw": "{\n  \"email\": \"{{schoolAdminEmail}}\",\n  \"password\": \"{{schoolAdminPassword}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/auth/login",

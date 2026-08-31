@@ -1,15 +1,3 @@
-DO $$ 
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.users WHERE role = 'super-admin') THEN
-    INSERT INTO public.users (
-      name, email, password_hash, role, digital_id, status
-    ) VALUES (
-      'SUPER-ADMIN', 
-      'abdiadamaschooloffice@gmail.com', 
-      '$2a$12$OPPdSZBzk56MXIHrYhTo0eYX8KHCOQD8kotlmMqpqpqcslOwlpU/a', 
-      'super-admin', 
-      'SA-001',
-      'Approved'
-    );
-  END IF;
-END $$;
+-- Privileged-account seeding was intentionally removed from automatic
+-- migrations. Run `npm run seed:superadmin` with the documented SEED_* runtime
+-- environment variables when bootstrapping a new, trusted database.

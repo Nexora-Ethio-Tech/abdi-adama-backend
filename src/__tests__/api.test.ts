@@ -1,7 +1,15 @@
 import request from 'supertest';
-import app from '../app';
+import type { Express } from 'express';
+import {
+  assertSafeIntegrationTestEnvironment,
+  getIntegrationTestCredentials,
+  integrationTestsEnabled,
+} from '../testUtils/integrationTestGuard';
 
-describe('Abdi Adama Backend API - Comprehensive Tests', () => {
+const describeIntegration = integrationTestsEnabled() ? describe : describe.skip;
+
+describeIntegration('Abdi Adama Backend API - Comprehensive Tests', () => {
+  let app: Express;
   let superAdminToken: string;
   let schoolAdminToken: string;
   let vicePrincipalToken: string;
@@ -10,57 +18,40 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
   let classId: string;
   let teacherId: string;
 
-  // Test credentials from seeded data
-  const superAdminCreds = {
-    email: 'abdiadamaschooloffice@gmail.com',
-    password: 'SuperAdmin@2026'
-  };
-
-  const schoolAdminCreds = {
-    email: '65plante@gmail.com',
-    password: 'SchoolAdmin@2026'
-  };
-
-  const vicePrincipalCreds = {
-    email: 'valerioero@gmail.com',
-    password: 'VicePrincipal@2026'
-  };
-
-  const auditorCreds = {
-    email: 'hailegit35@gmail.com',
-    password: 'Auditor@2026'
-  };
+  let superAdminCreds: { email: string; password: string };
+  let schoolAdminCreds: { email: string; password: string };
+  let vicePrincipalCreds: { email: string; password: string };
+  let auditorCreds: { email: string; password: string };
 
   // Acquire all tokens before any test runs
   beforeAll(async () => {
-    try {
-      const saRes = await request(app).post('/api/auth/login').send(superAdminCreds);
-      if (saRes.status === 200) {
-        superAdminToken = saRes.body.data.accessToken;
-      }
-    } catch (_) { /* token stays undefined */ }
+    assertSafeIntegrationTestEnvironment();
+    app = require('../app').default;
 
-    try {
-      const adminRes = await request(app).post('/api/auth/login').send(schoolAdminCreds);
-      if (adminRes.status === 200) {
-        schoolAdminToken = adminRes.body.data.accessToken;
-        branchId = adminRes.body.data.user?.branch_id;
-      }
-    } catch (_) { /* token stays undefined */ }
+    superAdminCreds = getIntegrationTestCredentials('TEST_SUPER_ADMIN');
+    schoolAdminCreds = getIntegrationTestCredentials('TEST_SCHOOL_ADMIN');
+    vicePrincipalCreds = getIntegrationTestCredentials('TEST_VICE_PRINCIPAL');
+    auditorCreds = getIntegrationTestCredentials('TEST_AUDITOR');
 
-    try {
-      const vpRes = await request(app).post('/api/auth/login').send(vicePrincipalCreds);
-      if (vpRes.status === 200) {
-        vicePrincipalToken = vpRes.body.data.accessToken;
+    const login = async (credentials: { email: string; password: string }, role: string) => {
+      const response = await request(app).post('/api/auth/login').send(credentials);
+      if (response.status !== 200 || !response.body.data?.accessToken) {
+        throw new Error(`Integration-test login failed for ${role} with status ${response.status}`);
       }
-    } catch (_) { /* token stays undefined */ }
+      return response.body.data;
+    };
 
-    try {
-      const audRes = await request(app).post('/api/auth/login').send(auditorCreds);
-      if (audRes.status === 200) {
-        auditorToken = audRes.body.data.accessToken;
-      }
-    } catch (_) { /* token stays undefined */ }
+    const superAdmin = await login(superAdminCreds, 'super admin');
+    const schoolAdmin = await login(schoolAdminCreds, 'school admin');
+    const vicePrincipal = await login(vicePrincipalCreds, 'vice principal');
+    const auditor = await login(auditorCreds, 'auditor');
+
+    superAdminToken = superAdmin.accessToken;
+    schoolAdminToken = schoolAdmin.accessToken;
+    vicePrincipalToken = vicePrincipal.accessToken;
+    auditorToken = auditor.accessToken;
+    branchId = schoolAdmin.user?.branch_id || schoolAdmin.user?.branchId;
+    if (!branchId) throw new Error('Integration-test school admin must belong to a branch');
   });
 
   describe('1. Health Check', () => {
@@ -87,8 +78,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
         .post('/api/auth/login')
         .send(schoolAdminCreds);
 
-      // Accept 200 (credentials match) or 401 (different PIN in DB) — token acquired in beforeAll
-      expect([200, 401]).toContain(res.status);
+      expect(res.status).toBe(200);
     });
 
     it('should login Vice Principal', async () => {
@@ -96,8 +86,7 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
         .post('/api/auth/login')
         .send(vicePrincipalCreds);
 
-      // Accept 200 (credentials match) or 401 (different PIN in DB)
-      expect([200, 401]).toContain(res.status);
+      expect(res.status).toBe(200);
     });
 
     it('should login Auditor', async () => {
@@ -105,12 +94,10 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
         .post('/api/auth/login')
         .send(auditorCreds);
 
-      // Accept 200 (credentials match) or 401 (different PIN in DB)
-      expect([200, 401]).toContain(res.status);
+      expect(res.status).toBe(200);
     });
 
     it('should get current user', async () => {
-      if (!superAdminToken) return;
       const res = await request(app)
         .get('/api/auth/me')
         .set('Authorization', `Bearer ${superAdminToken}`);
@@ -130,7 +117,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('3. Super Admin - Branch Management', () => {
     it('should get all branches', async () => {
-      if (!superAdminToken) return;
       const res = await request(app)
         .get('/api/super-admin/branches')
         .set('Authorization', `Bearer ${superAdminToken}`);
@@ -140,7 +126,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get system report', async () => {
-      if (!superAdminToken) return;
       const res = await request(app)
         .get('/api/super-admin/reports/system')
         .set('Authorization', `Bearer ${superAdminToken}`);
@@ -150,7 +135,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get dashboard', async () => {
-      if (!superAdminToken) return;
       const res = await request(app)
         .get('/api/super-admin/dashboard')
         .set('Authorization', `Bearer ${superAdminToken}`);
@@ -162,7 +146,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('4. Super Admin - User Management', () => {
     it('should create School Admin via Super Admin', async () => {
-      if (!superAdminToken || !branchId) return;
       const res = await request(app)
         .post('/api/super-admin/create-school-admin')
         .set('Authorization', `Bearer ${superAdminToken}`)
@@ -177,7 +160,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get all users', async () => {
-      if (!superAdminToken) return;
       const res = await request(app)
         .get('/api/super-admin/users')
         .set('Authorization', `Bearer ${superAdminToken}`);
@@ -189,7 +171,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('5. School Admin - User Registration', () => {
     it('should register a teacher', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .post('/api/school-admin/register-user')
         .set('Authorization', `Bearer ${schoolAdminToken}`)
@@ -205,7 +186,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should register a student', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .post('/api/school-admin/register-user')
         .set('Authorization', `Bearer ${schoolAdminToken}`)
@@ -221,7 +201,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should register a finance clerk', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .post('/api/school-admin/register-user')
         .set('Authorization', `Bearer ${schoolAdminToken}`)
@@ -236,7 +215,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get branch users', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .get('/api/school-admin/users')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
@@ -248,7 +226,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('6. School Admin - Class Management', () => {
     it('should create a class', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .post('/api/school-admin/classes')
         .set('Authorization', `Bearer ${schoolAdminToken}`)
@@ -264,7 +241,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get all classes', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .get('/api/school-admin/classes')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
@@ -274,7 +250,8 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should assign teacher to class', async () => {
-      if (!schoolAdminToken || !teacherId || !classId) return;
+      expect(teacherId).toBeDefined();
+      expect(classId).toBeDefined();
 
       const res = await request(app)
         .post(`/api/school-admin/classes/${classId}/assign-teacher`)
@@ -288,7 +265,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('8. School Admin - Dashboard', () => {
     it('should get dashboard', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .get('/api/school-admin/dashboard')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
@@ -300,7 +276,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('9. Teacher Module', () => {
     it('should get teacher dashboard', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .get('/api/teacher/dashboard')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
@@ -309,7 +284,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get teacher schedule', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .get('/api/teacher/schedule')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
@@ -320,7 +294,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('10. Finance Clerk Module', () => {
     it('should get finance dashboard', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .get('/api/finance-clerk/dashboard')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
@@ -329,7 +302,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get all payments', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .get('/api/finance-clerk/payments')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
@@ -341,7 +313,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('11. Vice Principal Module', () => {
     it('should get VP dashboard', async () => {
-      if (!vicePrincipalToken) return;
       const res = await request(app)
         .get('/api/vice-principal/dashboard')
         .set('Authorization', `Bearer ${vicePrincipalToken}`);
@@ -350,7 +321,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get absence queue', async () => {
-      if (!vicePrincipalToken) return;
       const res = await request(app)
         .get('/api/vice-principal/absence-queue')
         .set('Authorization', `Bearer ${vicePrincipalToken}`);
@@ -360,7 +330,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get pending lesson plans', async () => {
-      if (!vicePrincipalToken) return;
       const res = await request(app)
         .get('/api/vice-principal/lesson-plans/pending')
         .set('Authorization', `Bearer ${vicePrincipalToken}`);
@@ -372,7 +341,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('12. Auditor Module', () => {
     it('should get auditor dashboard', async () => {
-      if (!auditorToken) return;
       const res = await request(app)
         .get('/api/auditor/dashboard')
         .set('Authorization', `Bearer ${auditorToken}`);
@@ -381,7 +349,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get all payments (read-only)', async () => {
-      if (!auditorToken) return;
       const res = await request(app)
         .get('/api/auditor/payments')
         .set('Authorization', `Bearer ${auditorToken}`);
@@ -391,7 +358,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get financial report for auditor', async () => {
-      if (!auditorToken) return;
       const today = new Date();
       const start = new Date(today);
       start.setDate(start.getDate() - 30);
@@ -411,7 +377,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should get fee reduction requests', async () => {
-      if (!auditorToken) return;
       const res = await request(app)
         .get('/api/auditor/fee-reductions')
         .set('Authorization', `Bearer ${auditorToken}`);
@@ -423,7 +388,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('13. Authorization Tests', () => {
     it('should reject School Admin accessing Super Admin routes', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .get('/api/super-admin/users')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
@@ -432,7 +396,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should reject Teacher accessing Finance Clerk routes', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .get('/api/finance-clerk/payments')
         .set('Authorization', `Bearer ${schoolAdminToken}`);
@@ -448,7 +411,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
 
   describe('14. Validation Tests', () => {
     it('should reject invalid email format', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .post('/api/school-admin/register-user')
         .set('Authorization', `Bearer ${schoolAdminToken}`)
@@ -462,7 +424,6 @@ describe('Abdi Adama Backend API - Comprehensive Tests', () => {
     });
 
     it('should reject inva lid role', async () => {
-      if (!schoolAdminToken) return;
       const res = await request(app)
         .post('/api/school-admin/register-user')
         .set('Authorization', `Bearer ${schoolAdminToken}`)

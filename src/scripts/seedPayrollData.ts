@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import pool from '../config/database';
-import { hashPassword } from '../utils/password';
+import { generateRandomPassword, hashPassword } from '../utils/password';
 
 dotenv.config();
 
@@ -19,7 +19,7 @@ async function main() {
     console.log(`Using branch ID: ${branchId}`);
 
     // 2. Fetch Super Admin ID
-    const superAdminRes = await client.query("SELECT id FROM users WHERE email = 'abdiadamaschooloffice@gmail.com' LIMIT 1");
+    const superAdminRes = await client.query("SELECT id FROM users WHERE role = 'super-admin' ORDER BY created_at ASC LIMIT 1");
     if (superAdminRes.rows.length === 0) {
       throw new Error("Super Admin user not found. Please run superadmin seeding first.");
     }
@@ -28,10 +28,11 @@ async function main() {
 
     // 3. Ensure a Finance Clerk exists
     const financeClerkEmail = 'finance@test.com';
+    const financeClerkPassword = process.env.SEED_FINANCE_CLERK_PASSWORD || generateRandomPassword();
     const financeClerkRes = await client.query("SELECT id FROM users WHERE email = $1 LIMIT 1", [financeClerkEmail]);
     let financeClerkId;
     if (financeClerkRes.rows.length === 0) {
-      const passwordHash = await hashPassword('Finance@2026');
+      const passwordHash = await hashPassword(financeClerkPassword);
       const insertClerkRes = await client.query(
         `INSERT INTO users (digital_id, username, name, email, password_hash, role, branch_id, status, is_active)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -39,7 +40,8 @@ async function main() {
         ['FIN-MB-001', 'financeclerk', 'Yonas Alemayehu', financeClerkEmail, passwordHash, 'finance-clerk', branchId, 'Approved', true]
       );
       financeClerkId = insertClerkRes.rows[0].id;
-      console.log(`✅ Created Finance Clerk user: ${financeClerkEmail} (Password: Finance@2026)`);
+      console.log(`✅ Created Finance Clerk user: ${financeClerkEmail}`);
+      console.log(`   Temporary password: ${financeClerkPassword}`);
     } else {
       financeClerkId = financeClerkRes.rows[0].id;
       console.log(`✅ Finance Clerk user already exists: ${financeClerkEmail}`);
@@ -165,7 +167,7 @@ async function main() {
     console.log('\n🎉 Seeding of Payroll and Loan data completed successfully!');
     console.log('---------------------------------------------------------');
     console.log('Login credentials for testing:');
-    console.log(`  - Finance Clerk: ${financeClerkEmail} / Finance@2026`);
+    console.log(`  - Finance Clerk: ${financeClerkEmail}${financeClerkRes.rows.length === 0 ? ` / ${financeClerkPassword}` : ' / (existing password)'}`);
     console.log(`  - Teacher One (with 2 absences): dean@test.com / (existing password)`);
     console.log(`  - Teacher Two (with active loan): teacher2@test.com / (existing password)`);
     console.log('---------------------------------------------------------');

@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
+import { requireEnvironmentValue } from '../utils/secureConfig';
 
 // Resolve .env from the backend root — works with ts-node (cwd = backend/) or compiled output
 const envPath = path.resolve(process.cwd(), '.env');
@@ -8,9 +9,9 @@ dotenv.config({ path: envPath });
 
 // Print connection info upfront so you can confirm BEFORE any DB work happens
 console.log(`[backfill] Loading .env from : ${envPath}`);
-console.log(`[backfill] DB_HOST           = ${process.env.DB_HOST || '(not set — defaults to localhost)'}`);
-console.log(`[backfill] DB_USER           = ${process.env.DB_USER || '(not set — defaults to postgres)'}`);
-console.log(`[backfill] DB_NAME           = ${process.env.DB_NAME || '(not set — defaults to abdiadam_school_db)'}`);
+console.log(`[backfill] DB_HOST           = ${process.env.DB_HOST || '(not set)'}`);
+console.log(`[backfill] DB_USER           = ${process.env.DB_USER || '(not set)'}`);
+console.log(`[backfill] DB_NAME           = ${process.env.DB_NAME || '(not set)'}`);
 console.log('');
 console.log('⚠️  This script must be run ON the cPanel server (via Terminal/SSH).');
 console.log('   On the server, localhost = the production PostgreSQL database.');
@@ -19,11 +20,11 @@ console.log('');
 
 async function main() {
   const pool = new Pool({
-    host:     process.env.DB_HOST     || 'localhost',
+    host:     requireEnvironmentValue('DB_HOST'),
     port:     parseInt(process.env.DB_PORT || '5432'),
-    database: process.env.DB_NAME     || 'abdiadam_school_db',
-    user:     process.env.DB_USER     || 'postgres',
-    password: process.env.DB_PASSWORD,
+    database: requireEnvironmentValue('DB_NAME'),
+    user:     requireEnvironmentValue('DB_USER'),
+    password: requireEnvironmentValue('DB_PASSWORD'),
     ssl:      process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
   });
 

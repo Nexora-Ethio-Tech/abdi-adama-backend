@@ -444,7 +444,7 @@ class SuperAdminController {
       res.json({
         success: true,
         data: settings,
-        note: 'smtp_pass is write-only and never returned for security reasons.'
+        note: 'SMTP_PASS is managed only through the server environment and is never returned.'
       });
     } catch (error) {
       next(error);

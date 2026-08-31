@@ -4,6 +4,7 @@ import pool from '../config/database';
 import { hashPassword } from '../utils/password';
 import logger from '../utils/logger';
 import { UserRole, UserStatus } from '../types';
+import { requireEnvironmentValue } from '../utils/secureConfig';
 
 dotenv.config();
 
@@ -19,13 +20,13 @@ interface InitialAccount {
   status: UserStatus;
 }
 
-const INITIAL_ACCOUNTS: InitialAccount[] = [
+const buildInitialAccounts = (): InitialAccount[] => [
   {
     digitalId: 'SA-001',
     username: 'superadmin',
     name: 'Super Administrator',
-    email: 'abdiadamaschooloffice@gmail.com',
-    password: 'SuperAdmin@2026',
+    email: requireEnvironmentValue('SEED_SUPER_ADMIN_EMAIL'),
+    password: requireEnvironmentValue('SEED_SUPER_ADMIN_PASSWORD'),
     role: UserRole.SUPER_ADMIN,
     branchId: null,
     status: UserStatus.APPROVED
@@ -34,8 +35,8 @@ const INITIAL_ACCOUNTS: InitialAccount[] = [
     digitalId: 'ADM-MB-001',
     username: 'schooladmin',
     name: 'School Administrator',
-    email: '65plante@gmail.com',
-    password: 'SchoolAdmin@2026',
+    email: requireEnvironmentValue('SEED_SCHOOL_ADMIN_EMAIL'),
+    password: requireEnvironmentValue('SEED_SCHOOL_ADMIN_PASSWORD'),
     role: UserRole.SCHOOL_ADMIN,
     branchName: 'Main Branch',
     status: UserStatus.APPROVED
@@ -44,8 +45,8 @@ const INITIAL_ACCOUNTS: InitialAccount[] = [
     digitalId: 'VP-MB-001',
     username: 'viceprincipal',
     name: 'Vice Principal',
-    email: 'valerioero@gmail.com',
-    password: 'VicePrincipal@2026',
+    email: requireEnvironmentValue('SEED_VICE_PRINCIPAL_EMAIL'),
+    password: requireEnvironmentValue('SEED_VICE_PRINCIPAL_PASSWORD'),
     role: UserRole.VICE_PRINCIPAL,
     branchName: 'Main Branch',
     status: UserStatus.APPROVED
@@ -54,8 +55,8 @@ const INITIAL_ACCOUNTS: InitialAccount[] = [
     digitalId: 'AUD-MB-001',
     username: 'auditor',
     name: 'System Auditor',
-    email: 'hailegit35@gmail.com',
-    password: 'Auditor@2026',
+    email: requireEnvironmentValue('SEED_AUDITOR_EMAIL'),
+    password: requireEnvironmentValue('SEED_AUDITOR_PASSWORD'),
     role: UserRole.AUDITOR,
     branchName: 'Main Branch',
     status: UserStatus.APPROVED
@@ -63,6 +64,7 @@ const INITIAL_ACCOUNTS: InitialAccount[] = [
 ];
 
 async function seedSuperAdmin(): Promise<void> {
+  const initialAccounts = buildInitialAccounts();
   const client: PoolClient = await pool.connect();
   
   try {
@@ -70,7 +72,7 @@ async function seedSuperAdmin(): Promise<void> {
 
     await client.query('BEGIN');
 
-    for (const account of INITIAL_ACCOUNTS) {
+    for (const account of initialAccounts) {
       const existingUser = await client.query(
         'SELECT id, email FROM users WHERE email = $1',
         [account.email]
@@ -121,7 +123,6 @@ async function seedSuperAdmin(): Promise<void> {
 
       logger.info(`✅ Created user: ${result.rows[0].email} (${result.rows[0].role})`);
       logger.info(`   Digital ID: ${result.rows[0].digital_id}`);
-      logger.info(`   Password: ${account.password}`);
     }
 
     await client.query('COMMIT');
@@ -129,17 +130,16 @@ async function seedSuperAdmin(): Promise<void> {
     logger.info('');
     logger.info('🎉 Super Admin seeding completed successfully!');
     logger.info('');
-    logger.info('📋 Login Credentials:');
+    logger.info('📋 Seeded Accounts:');
     logger.info('═══════════════════════════════════════════════════════════');
-    INITIAL_ACCOUNTS.forEach(account => {
+    initialAccounts.forEach(account => {
       logger.info(`${account.role.toUpperCase()}`);
       logger.info(`  Email: ${account.email}`);
-      logger.info(`  Password: ${account.password}`);
       logger.info(`  Digital ID: ${account.digitalId}`);
       logger.info('───────────────────────────────────────────────────────────');
     });
     logger.info('');
-    logger.info('⚠️  IMPORTANT: Change these passwords after first login!');
+    logger.info('Passwords were read from the environment and are not printed.');
     logger.info('');
 
     process.exit(0);

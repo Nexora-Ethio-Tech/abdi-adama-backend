@@ -53,7 +53,7 @@ The API implements complete workflows for **11 distinct user roles**, each mappe
 
 2. **Environment Configuration**
    ```bash
-   cp .env.example .env
+   cp env.example .env
    # Edit .env and supply your local database credentials
    ```
 
@@ -64,16 +64,11 @@ The API implements complete workflows for **11 distinct user roles**, each mappe
    ```
 
 4. **Seed System-Wide Admin Accounts**
-   Create initial admin accounts for testing and bootstrap operations:
+   Set the eight `SEED_*` email/password variables shown in `env.example`, then create the initial admin accounts:
    ```bash
    npm run seed:superadmin
    ```
-   This seeds the following root accounts:
-   * **Super Admin**: `abdiadamaschooloffice@gmail.com`
-   * **School Admin**: `65plante@gmail.com`
-   * **Vice Principal**: `valerioero@gmail.com`
-   * **Auditor**: `hailegit35@gmail.com`
-   * *Seeded admin passwords default to: `SuperAdmin@2026`, `SchoolAdmin@2026`, `VicePrincipal@2026`, and `Auditor@2026`.*
+   The seed fails if any credential is missing and never prints passwords. Automatic privileged-account seeding is disabled.
 
 5. **Start Development Environment**
    ```bash
@@ -91,7 +86,7 @@ The backend implements a secure, **two-tier authentication strategy** to match t
 * **Admin Roles** (*Super Admin, School Admin, Vice Principal, Auditor*):
   * **Policy**: Complex Passwords enforced via strict Joi validations.
   * **Rules**: Minimum 8 characters, at least 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special symbol.
-  * **Example**: `AbdiAdama@Server@`
+  * **Example**: `ExampleOnly!ChangeMe42`
 * **Operational Roles** (*Teacher, Student, Parent, Finance Clerk, Librarian, Clinic Admin, Driver*):
   * **Policy**: Lightweight, high-accessibility 4-Digit Numeric PINs.
   * **Rules**: Standard PIN code between `1000` and `9999`.
@@ -520,11 +515,21 @@ DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=abdiadam_school_db
 DB_USER=abdiadam_super-admin
-DB_PASSWORD=AbdiAdama@Server@
+DB_PASSWORD=replace_with_a_unique_database_password
 DB_SSL=false
 
 JWT_SECRET=your_long_secure_jwt_key_min_32_characters
 JWT_REFRESH_SECRET=your_long_secure_refresh_key_min_32_characters
+
+# Required for attendance-device and SMS polling endpoints.
+MACHINE_API_KEY=replace_with_a_long_random_machine_key
+
+# Required before email delivery is enabled.
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=school@example.com
+SMTP_PASS=replace_with_provider_app_password
+SMTP_FROM=School IMS <school@example.com>
 
 FRONTEND_URL=https://app.abdi-adama.com
 
@@ -532,6 +537,8 @@ FRONTEND_URL=https://app.abdi-adama.com
 # Defaults to 60 when omitted or invalid.
 GRADE_SUBMISSION_UNLOCK_DAYS=60
 ```
+
+Do not commit real values. After deploying this security change, rotate any SMTP, machine API, database, or seeded-account credential that previously appeared in source or Git history.
 
 ### Production PM2 Commands
 Activate your server's Node virtual environment, then start the compiled backend with PM2:
@@ -553,11 +560,30 @@ pm2 logs abdi-adama-api
 
 ## 🧪 API Testing Guide
 
+### Integration-test safety
+
+Normal `npm test` runs isolated unit tests and skips database-writing integration suites. To run those suites, use a disposable database and explicitly provide:
+
+```env
+TEST_DATABASE_HOST_ALLOWLIST=127.0.0.1
+TEST_DATABASE_NAME_ALLOWLIST=abdi_adama_test
+TEST_SUPER_ADMIN_EMAIL=super-admin@example.test
+TEST_SUPER_ADMIN_PASSWORD=provide_at_runtime
+TEST_SCHOOL_ADMIN_EMAIL=school-admin@example.test
+TEST_SCHOOL_ADMIN_PASSWORD=provide_at_runtime
+TEST_VICE_PRINCIPAL_EMAIL=vice-principal@example.test
+TEST_VICE_PRINCIPAL_PASSWORD=provide_at_runtime
+TEST_AUDITOR_EMAIL=auditor@example.test
+TEST_AUDITOR_PASSWORD=provide_at_runtime
+```
+
+Then run `npm run test:integration`. The command refuses a database whose exact host or name is not in those allowlists.
+
 ### 1. Test Login (Operational User)
 ```bash
 curl -X POST https://api.abdi-adama.com/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"student@abdi-adama.com","password":"1234"}'
+  -d '{"email":"student@example.test","password":"YOUR_STUDENT_PIN"}'
 ```
 
 ### 2. Query Student Timetable (Enforced Role check)

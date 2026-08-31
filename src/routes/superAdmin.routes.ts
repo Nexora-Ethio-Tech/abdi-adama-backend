@@ -57,8 +57,8 @@ const systemSettingsSchema = Joi.object({
 const smtpSettingsSchema = Joi.object({
   smtp_host: Joi.string().hostname().required().example('smtp.gmail.com'),
   smtp_port: Joi.number().integer().min(1).max(65535).required().example(587),
-  smtp_user: Joi.string().email().required().example('abdiadamaschooloffice@gmail.com'),
-  smtp_from: Joi.string().required().example('Abdi Adama School IMS <abdiadamaschooloffice@gmail.com>').custom((value, helpers) => {
+  smtp_user: Joi.string().email().required().example('school@example.com'),
+  smtp_from: Joi.string().required().example('School IMS <school@example.com>').custom((value, helpers) => {
     const emailOnly = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const displayNameWithEmail = /^.+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/;
     if (emailOnly.test(value) || displayNameWithEmail.test(value)) {
@@ -66,7 +66,6 @@ const smtpSettingsSchema = Joi.object({
     }
     return helpers.error('any.invalid');
   }, 'SMTP from address validation'),
-  smtp_pass: Joi.string().allow('').optional().example('gdgg eify uzec fhox'),
 });
 
 const createUserSchema = Joi.object({

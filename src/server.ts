@@ -15,7 +15,6 @@ async function ensureSchemaExtensions(): Promise<void> {
 
   const migrationFiles = [
     '1stcomplete_schemafulldb_dumped.sql',
-    '2ndmigration_super_admin_seed.sql',
     '3rd_online_exams_and_ratings.sql',
     '4thfix_schedule_varchar_limits.sql',
     '5th_fix_varchar10_limits.sql',
@@ -88,15 +87,15 @@ async function bootstrap(): Promise<void> {
 
     await ensureSchemaExtensions();
 
-    // Ensure email_config has sensible placeholders so the Super Admin UI shows values
-    async function ensureEmailConfigDefaults() {
+    // Persist only explicitly supplied SMTP settings. Credentials are never
+    // invented by the application or copied from source-code fallbacks.
+    async function persistConfiguredEmailSettings() {
       try {
-        const defaults: Record<string, string> = {
-          smtp_host: process.env.SMTP_HOST || 'smtp.gmail.com',
-          smtp_port: process.env.SMTP_PORT || '587',
-          smtp_user: process.env.SMTP_USER || 'abdiadamaschooloffice@gmail.com',
-          smtp_from: process.env.SMTP_FROM || 'abdiadamaschooloffice@gmail.com',
-          smtp_pass: process.env.SMTP_PASS || 'gdgg eify uzec fhox',
+        const configuredValues: Record<string, string | undefined> = {
+          smtp_host: process.env.SMTP_HOST,
+          smtp_port: process.env.SMTP_PORT,
+          smtp_user: process.env.SMTP_USER,
+          smtp_from: process.env.SMTP_FROM,
         };
 
         const userResult = await pool.query<{ id: string }>(
@@ -104,47 +103,52 @@ async function bootstrap(): Promise<void> {
         );
         const systemUserId = userResult.rows[0]?.id ?? null;
 
-        for (const [key, value] of Object.entries(defaults)) {
-          // Check if it exists or needs to be inserted/updated.
-          // Also clean up any legacy placeholder password 'SuperAdmin@2026' if present.
+        for (const [key, value] of Object.entries(configuredValues)) {
+          if (!value) continue;
+
           await pool.query(
             `INSERT INTO public.email_config (key, value, updated_by, updated_at)
                VALUES ($1, $2, $3, NOW())
                ON CONFLICT (key) DO UPDATE
                SET value = EXCLUDED.value
-               WHERE email_config.value IS NULL 
-                  OR email_config.value = '' 
-                  OR (email_config.key = 'smtp_pass' AND email_config.value = 'SuperAdmin@2026')`,
+               WHERE email_config.value IS NULL OR email_config.value = ''`,
             [key, value, systemUserId]
           );
         }
-        logger.info('Email config defaults ensured');
+
+        if (process.env.SMTP_PASS) {
+          const removedPassword = await pool.query(
+            `DELETE FROM public.email_config WHERE key = 'smtp_pass'`
+          );
+          if (removedPassword.rowCount) {
+            logger.info('[EMAIL] Removed legacy database-stored SMTP password');
+          }
+        }
+        logger.info('[EMAIL] Explicit SMTP environment settings persisted');
       } catch (err: any) {
-        logger.warn(`Could not ensure email config defaults: ${err.message}`);
+        logger.warn(`[EMAIL] Could not persist SMTP environment settings: ${err.message}`);
       }
     }
 
-    await ensureEmailConfigDefaults();
+    await persistConfiguredEmailSettings();
 
     // Load saved SMTP config from DB into process.env so the email transporter
     // picks up the correct credentials immediately on first use after startup.
     try {
       const smtpRows = await pool.query(
-        `SELECT key, value FROM public.email_config WHERE key IN ('smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from')`
+        `SELECT key, value FROM public.email_config WHERE key IN ('smtp_host','smtp_port','smtp_user','smtp_from')`
       );
       for (const row of smtpRows.rows) {
         if (row.value) {
           const envKey = row.key === 'smtp_from' ? 'SMTP_FROM' : (row.key as string).toUpperCase();
-          process.env[envKey] = row.value;
+          if (!process.env[envKey]) process.env[envKey] = row.value;
         }
       }
-      // Ensure sensible fallbacks are always present even if DB rows are absent
-      if (!process.env.SMTP_HOST) process.env.SMTP_HOST = 'smtp.gmail.com';
-      if (!process.env.SMTP_PORT) process.env.SMTP_PORT = '587';
-      if (!process.env.SMTP_USER) process.env.SMTP_USER = 'abdiadamaschooloffice@gmail.com';
-      if (!process.env.SMTP_FROM) process.env.SMTP_FROM = 'abdiadamaschooloffice@gmail.com';
-      if (!process.env.SMTP_PASS) process.env.SMTP_PASS = 'gdgg eify uzec fhox';
-      logger.info('[EMAIL] SMTP env vars loaded from DB config');
+      if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+        logger.info('[EMAIL] SMTP configuration loaded');
+      } else {
+        logger.warn('[EMAIL] SMTP is disabled until SMTP_HOST, SMTP_USER and SMTP_PASS are configured');
+      }
     } catch (err: any) {
       logger.warn(`[EMAIL] Could not load SMTP config from DB: ${err.message}`);
     }

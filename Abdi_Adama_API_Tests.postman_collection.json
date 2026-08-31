@@ -59,6 +59,51 @@
       "key": "studentId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "superAdminEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "superAdminPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "schoolAdminEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "schoolAdminPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vicePrincipalEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vicePrincipalPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "auditorEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "auditorPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "newAdminPassword",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -88,7 +133,7 @@
             "header": [{"key": "Content-Type", "value": "application/json"}],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"abdiadamaschooloffice@gmail.com\",\n  \"password\": \"SuperAdmin@2026\"\n}"
+              "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/auth/login",
@@ -118,7 +163,7 @@
             "header": [{"key": "Content-Type", "value": "application/json"}],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"65plante@gmail.com\",\n  \"password\": \"SchoolAdmin@2026\"\n}"
+              "raw": "{\n  \"email\": \"{{schoolAdminEmail}}\",\n  \"password\": \"{{schoolAdminPassword}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/auth/login",
@@ -147,7 +192,7 @@
             "header": [{"key": "Content-Type", "value": "application/json"}],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"valerioero@gmail.com\",\n  \"password\": \"VicePrincipal@2026\"\n}"
+              "raw": "{\n  \"email\": \"{{vicePrincipalEmail}}\",\n  \"password\": \"{{vicePrincipalPassword}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/auth/login",
@@ -176,7 +221,7 @@
             "header": [{"key": "Content-Type", "value": "application/json"}],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"hailegit35@gmail.com\",\n  \"password\": \"Auditor@2026\"\n}"
+              "raw": "{\n  \"email\": \"{{auditorEmail}}\",\n  \"password\": \"{{auditorPassword}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/auth/login",
@@ -207,7 +252,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"currentPassword\": \"SuperAdmin@2026\",\n  \"newPassword\": \"NewPassword@2026\"\n}"
+              "raw": "{\n  \"currentPassword\": \"{{superAdminPassword}}\",\n  \"newPassword\": \"{{newAdminPassword}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/auth/change-password",

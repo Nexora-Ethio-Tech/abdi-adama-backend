@@ -19,10 +19,21 @@ const axios = require('axios');
 // ── Configuration ─────────────────────────────────────────────
 const ZK_DEVICE_IP = process.env.ZK_DEVICE_IP || '192.168.1.201';   // Your device's IP address
 const ZK_DEVICE_PORT = parseInt(process.env.ZK_DEVICE_PORT || '4370', 10);
-const ZK_PASSWORD = parseInt(process.env.ZK_PASSWORD || '0', 10);                  // Change if you set a device password
+const ZK_PASSWORD_VALUE = process.env.ZK_PASSWORD;
+if (ZK_PASSWORD_VALUE === undefined || ZK_PASSWORD_VALUE === '') {
+  throw new Error('ZK_PASSWORD is required (use 0 only when the device is configured without a password)');
+}
+const ZK_PASSWORD = parseInt(ZK_PASSWORD_VALUE, 10);
+if (Number.isNaN(ZK_PASSWORD)) {
+  throw new Error('ZK_PASSWORD must be numeric');
+}
 
 const API_URL = process.env.API_URL || 'https://abdi-adama.com/api/machine/attendance';
-const API_KEY = process.env.API_KEY || 'abdi_adama_zk_secure_key_2026';
+const API_KEY = process.env.MACHINE_API_KEY;
+
+if (!API_KEY) {
+  throw new Error('MACHINE_API_KEY is required');
+}
 
 // ── State: track the last synced log index to avoid resending ──
 let lastSyncedIndex = 0;

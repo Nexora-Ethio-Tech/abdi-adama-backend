@@ -57,8 +57,6 @@ const STUDENTS = [
   { email: 'student7-3@abdiadama.school', name: 'Student 7-C', grade: '7' }
 ];
 
-const DEFAULT_PASSWORD = 'Welcome@2026';
-
 const generateUsername = (email: string) => email.split('@')[0];
 
 async function getOrCreateBranch(client: PoolClient) {

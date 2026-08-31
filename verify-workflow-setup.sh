@@ -9,6 +9,11 @@ echo ""
 echo "This script will verify everything is set up correctly"
 echo ""
 
+if [[ -z "${DB_HOST:-}" || -z "${DB_NAME:-}" || -z "${DB_USER:-}" || -z "${DB_PASSWORD:-}" ]]; then
+  echo "DB_HOST, DB_NAME, DB_USER and DB_PASSWORD must be supplied through the environment."
+  exit 1
+fi
+
 # Color codes
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -22,11 +27,11 @@ cd backend
 node -e "
 const { Pool } = require('pg');
 const pool = new Pool({
-  host: 'localhost',
-  port: 5432,
-  database: 'abdiadam_school_db',
-  user: 'postgres',
-  password: 'Haile'
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT) || 5432,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD
 });
 
 (async () => {
@@ -59,11 +64,11 @@ echo -e "${YELLOW}[2/5] Checking if applications with 'awaiting-payment' status 
 node -e "
 const { Pool } = require('pg');
 const pool = new Pool({
-  host: 'localhost',
-  port: 5432,
-  database: 'abdiadam_school_db',
-  user: 'postgres',
-  password: 'Haile'
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT) || 5432,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD
 });
 
 (async () => {
@@ -93,11 +98,11 @@ echo -e "${YELLOW}[3/5] Checking if Admin and Finance Clerk users exist...${NC}"
 node -e "
 const { Pool } = require('pg');
 const pool = new Pool({
-  host: 'localhost',
-  port: 5432,
-  database: 'abdiadam_school_db',
-  user: 'postgres',
-  password: 'Haile'
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT) || 5432,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD
 });
 
 (async () => {

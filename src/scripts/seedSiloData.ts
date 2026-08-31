@@ -1,7 +1,9 @@
 import pool from '../config/database';
 import { hashPassword } from '../utils/password';
+import { requireEnvironmentValue } from '../utils/secureConfig';
 
 async function seedSiloData() {
+  const studentPassword = requireEnvironmentValue('SEED_SILO_STUDENT_PASSWORD');
   const client = await pool.connect();
   try {
     console.log('🌱 Starting Silo Database Seeding...');
@@ -38,7 +40,7 @@ async function seedSiloData() {
       `, [student.user_id, student.digital_id, student.name, student.grade]);
 
       // Also ensure they have a matching record in silo_users for completeness
-      const pwHash = await hashPassword('1234');
+      const pwHash = await hashPassword(studentPassword);
       await client.query(`
         INSERT INTO silo_users (identity_id, role, password_hash, is_active)
         VALUES ($1, 'Student', $2, TRUE)

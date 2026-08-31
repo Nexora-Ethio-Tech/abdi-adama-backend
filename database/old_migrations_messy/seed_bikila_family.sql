@@ -9,12 +9,18 @@
 --   Family links: Mr. Bikila is linked to both children
 --   Academic grades for EC 2017 / 2024-2025 for both students
 --
--- PIN for all accounts: 1234 (bcrypt hash of "1234" with 10 rounds)
--- Replace the hash below with the output of:
---   node -e "const b=require('bcrypt'); b.hash('1234',10).then(h=>console.log(h))"
+-- This archived seed requires a runtime PIN:
+--   SET app.seed_bikila_pin = '...';
 -- =============================================================================
 
 BEGIN;
+
+DO $$
+BEGIN
+  IF NULLIF(current_setting('app.seed_bikila_pin', TRUE), '') IS NULL THEN
+    RAISE EXCEPTION 'app.seed_bikila_pin must be set for this archived seed';
+  END IF;
+END $$;
 
 -- ΓöÇΓöÇΓöÇ Step 1: Insert Identities ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
@@ -26,7 +32,7 @@ VALUES
 ON CONFLICT (school_id) DO NOTHING;
 
 -- ΓöÇΓöÇΓöÇ Step 2: Insert User accounts ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
--- bcrypt hash of "1234" (10 rounds). Replace with live hash for production.
+-- Hash the operator-supplied PIN at execution time.
 
 INSERT INTO silo_users (id, identity_id, role, password_hash, is_active)
 VALUES
@@ -34,21 +40,21 @@ VALUES
   ('b1000000-0000-0000-0000-000000000001',
    'a1000000-0000-0000-0000-000000000001',
    'Parent',
-   '$2b$10$YourBcryptHashFor1234HereReplaceMe1111111111111111111',
+   crypt(current_setting('app.seed_bikila_pin'), gen_salt('bf', 10)),
    TRUE),
 
   -- Abebe Bikila ΓåÆ Student
   ('b2000000-0000-0000-0000-000000000002',
    'a2000000-0000-0000-0000-000000000002',
    'Student',
-   '$2b$10$YourBcryptHashFor1234HereReplaceMe1111111111111111111',
+   crypt(current_setting('app.seed_bikila_pin'), gen_salt('bf', 10)),
    TRUE),
 
   -- Sara Bikila ΓåÆ Student
   ('b3000000-0000-0000-0000-000000000003',
    'a3000000-0000-0000-0000-000000000003',
    'Student',
-   '$2b$10$YourBcryptHashFor1234HereReplaceMe1111111111111111111',
+   crypt(current_setting('app.seed_bikila_pin'), gen_salt('bf', 10)),
    TRUE)
 ON CONFLICT (identity_id, role) DO NOTHING;
 
@@ -86,13 +92,5 @@ ON CONFLICT DO NOTHING;
 COMMIT;
 
 -- =============================================================================
--- NOTE: After inserting, generate a real bcrypt hash and UPDATE the rows:
---
---   UPDATE silo_users
---   SET password_hash = '$2b$10$<real-hash-here>'
---   WHERE identity_id IN (
---     'a1000000-0000-0000-0000-000000000001',
---     'a2000000-0000-0000-0000-000000000002',
---     'a3000000-0000-0000-0000-000000000003'
---   );
+-- NOTE: pgcrypto is required for crypt()/gen_salt().
 -- =============================================================================

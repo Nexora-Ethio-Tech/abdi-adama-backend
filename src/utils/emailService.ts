@@ -6,15 +6,23 @@ import logger from './logger';
 let _transporter: nodemailer.Transporter | null = null;
 
 function getTransporter(): nodemailer.Transporter {
+  const host = process.env.SMTP_HOST?.trim();
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS;
+
+  if (!host || !user || !pass) {
+    throw new Error('SMTP is not configured. SMTP_HOST, SMTP_USER and SMTP_PASS are required.');
+  }
+
   if (!_transporter) {
     _transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
+      host,
       port: Number(process.env.SMTP_PORT) || 587,
       secure: false, // true for port 465, false for 587
       requireTLS: true,
       auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        user,
+        pass,
       },
       tls: {
         rejectUnauthorized: false
