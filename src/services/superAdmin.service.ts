@@ -800,6 +800,15 @@ class SuperAdminService {
     return result.rows[0].value === 'true';
   }
 
+  async isGradeSubmissionOpen(): Promise<boolean> {
+    const result = await pool.query(
+      `SELECT value FROM system_settings WHERE key = 'grade_submission_open'`
+    );
+    // Default to open (true) if the setting has never been set
+    if (result.rows.length === 0) return true;
+    return result.rows[0].value !== 'false';
+  }
+
   // ─── Branch fee structure ───────────────────────────────────────────────
 
   async getBranchGradeFees(branchId?: string) {

@@ -211,10 +211,16 @@ class VicePrincipalService {
    * Returns all branch staff members with their biometric attendance status for a given date.
    * Excludes students and parents. Used by Vice Principal for dashboard monitoring and proxy suggestions.
    */
-  async getStaffAttendance(branchId: string, date: string) {
+  async getStaffAttendance(branchId: string, startDate?: string, endDate?: string) {
     const ethNow = getEthiopianNow();
-    const targetDate = date || ethNow.dateStr;
-    const gregDateStr = ethiopianToGregorianIso(targetDate);
+
+    // Fallback to today's Ethiopian date if no start date is provided
+    const targetStart = startDate || ethNow.dateStr;
+    // If no end date is provided, treat it as a single date query
+    const targetEnd = endDate || targetStart;
+
+    // We only need the Gregorian start date for the single-date ISODOW/calendar calculations
+    const gregStartStr = ethiopianToGregorianIso(targetStart);
 
     const result = await pool.query(
       `SELECT
@@ -242,34 +248,43 @@ class VicePrincipalService {
           ) AS department,
           t.subjects,
           COALESCE(t.classes_count, 0)::int AS classes_count,
+          CASE 
+            WHEN $2::date = $3::date THEN COALESCE(ea.date::text, $2::text)
+            ELSE ea.date::text 
+          END                              AS attendance_date,
           CASE
-            WHEN EXTRACT(ISODOW FROM $5::date) IN (6, 7) THEN 'Weekend'
-            WHEN EXISTS (
-              SELECT 1 FROM school_calendar sc
-              WHERE $5::date BETWEEN sc.start_date AND sc.end_date
-                AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
-                AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
-            ) THEN 'Holiday'
-            ELSE 'Pending'
+            WHEN $2::date = $3::date THEN
+              CASE
+                WHEN EXTRACT(ISODOW FROM $6::date) IN (6, 7) THEN 'Weekend'
+                WHEN EXISTS (
+                  SELECT 1 FROM school_calendar sc
+                  WHERE $6::date BETWEEN sc.start_date AND sc.end_date
+                    AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
+                    AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
+                ) THEN 'Holiday'
+                ELSE 'Pending'
+              END
+            ELSE 'Range'
           END                              AS day_off_type,
           -- Effective status: staff auto-absent when past 02:20 AM Ethiopian time with no punch
           -- AND it is a teaching day (not a weekend, holiday, or school break)
           CASE
             WHEN ea.status IS NOT NULL THEN ea.status
             WHEN ea.id IS NULL
+              AND $2::date = $3::date
               AND u.role::text IN ('teacher', 'vice-principal')
               -- Not a weekend (based on Gregorian calendar)
-              AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+              AND EXTRACT(ISODOW FROM $6::date) NOT IN (6, 7)
               -- Not a holiday or break in the school calendar (based on Gregorian calendar)
               AND NOT EXISTS (
                 SELECT 1 FROM school_calendar sc
-                WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                WHERE $6::date BETWEEN sc.start_date AND sc.end_date
                   AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
                   AND sc.day_type IN ('holiday', 'summer_break', 'semester_break', 'exam_day', 'half_day')
               )
               AND (
-                $2::date < $3::date
-                OR ($2::date = $3::date AND $4::time > TIME '02:20:00')
+                $2::date < $4::date
+                OR ($2::date = $4::date AND $5::time > TIME '02:20:00')
               )
             THEN 'absent'
             ELSE NULL
@@ -289,7 +304,7 @@ class VicePrincipalService {
        LEFT JOIN branches b ON b.id = u.branch_id
        LEFT JOIN teachers t ON t.user_id = u.id
        LEFT JOIN employee_attendance ea
-              ON ea.user_id = u.id AND ea.date = $2::date
+              ON ea.user_id = u.id AND ea.date BETWEEN $2::date AND $3::date
        WHERE u.branch_id = $1
          AND u.role NOT IN ('student', 'parent', 'super-admin')
          AND u.status = 'Approved'
@@ -298,15 +313,15 @@ class VicePrincipalService {
          CASE
            WHEN COALESCE(ea.status,
              CASE
-               WHEN ea.id IS NULL AND u.role::text IN ('teacher', 'vice-principal')
-                 AND EXTRACT(ISODOW FROM $5::date) NOT IN (6, 7)
+               WHEN ea.id IS NULL AND $2::date = $3::date AND u.role::text IN ('teacher', 'vice-principal')
+                 AND EXTRACT(ISODOW FROM $6::date) NOT IN (6, 7)
                  AND NOT EXISTS (
                    SELECT 1 FROM school_calendar sc
-                   WHERE $5::date BETWEEN sc.start_date AND sc.end_date
+                   WHERE $6::date BETWEEN sc.start_date AND sc.end_date
                      AND (sc.branch_id = u.branch_id OR sc.branch_id IS NULL)
                      AND sc.day_type IN ('holiday', 'summer_break', 'semester_break')
                  )
-                 AND ($2::date < $3::date OR ($2::date = $3::date AND $4::time > TIME '02:20:00'))
+                 AND ($2::date < $4::date OR ($2::date = $4::date AND $5::time > TIME '02:20:00'))
                THEN 'absent' ELSE 'zzz' END
            ) = 'absent'   THEN 1
            WHEN COALESCE(ea.status,'zzz') = 'late'     THEN 2
@@ -314,8 +329,9 @@ class VicePrincipalService {
            WHEN COALESCE(ea.status,'zzz') = 'present'  THEN 4
            ELSE 5
          END,
-         u.name`,
-      [branchId, targetDate, ethNow.dateStr, ethNow.time24, gregDateStr]
+         u.name,
+         ea.date DESC`,
+      [branchId, targetStart, targetEnd, ethNow.dateStr, ethNow.time24, gregStartStr]
     );
 
     return result.rows;
@@ -1696,7 +1712,7 @@ class VicePrincipalService {
 
     // Fetch schedules for the weekday of gregDateStr
     const dayOfWeekName = new Date(gregDateStr as string).toLocaleDateString('en-US', { weekday: 'long' });
-    
+
     const schedulesResult = await pool.query(
       `SELECT 
         s.id,
@@ -1943,6 +1959,128 @@ class VicePrincipalService {
       throw new Error('Proxy assignment not found');
     }
     return result.rows[0];
+  }
+
+  /**
+   * Unlock a grade submission to allow the teacher to edit and resubmit grades.
+   * SECURITY RULES ENFORCED:
+   * 1. Must be the current active academic period (active year & active semester).
+   * 2. Must be within 30 days (1 month) of the submission date (submitted_at).
+   */
+  async unlockGradeSubmission(
+    vpUserId: string,
+    data: {
+      courseId: string;
+      submissionType: string;
+      academicYear?: string;
+      semester?: number;
+    }
+  ) {
+    const vpResult = await pool.query(
+      `SELECT u.branch_id FROM users u WHERE u.id = $1 AND u.role = 'vice-principal'`,
+      [vpUserId]
+    );
+    if (vpResult.rows.length === 0) {
+      throw new Error('Vice Principal user not found');
+    }
+    const branchId = vpResult.rows[0].branch_id;
+
+    const currentECYear = getCurrentECYear();
+    const activeAcademicYear = `${currentECYear + 7}/${currentECYear + 8}`;
+    const activeSemester = getCurrentSemester();
+
+    const targetYear = data.academicYear || activeAcademicYear;
+    const targetSemester = data.semester !== undefined ? Number(data.semester) : activeSemester;
+
+    // SECURITY CHECK 1: Active Semester & Year Only
+    if (targetYear !== activeAcademicYear || targetSemester !== activeSemester) {
+      throw new Error('Grade submission unlock is only permitted for the current active academic period.');
+    }
+
+    // Fetch submission record
+    const subResult = await pool.query(
+      `SELECT gs.*, t.branch_id
+       FROM grade_submissions gs
+       JOIN teachers t ON gs.teacher_id = t.id
+       WHERE gs.course_id = $1
+         AND gs.submission_type = $2
+         AND gs.academic_year = $3
+         AND gs.semester = $4
+         AND t.branch_id = $5`,
+      [data.courseId, data.submissionType, targetYear, targetSemester, branchId]
+    );
+
+    if (subResult.rows.length === 0) {
+      throw new Error('Grade submission record not found for this course and academic period.');
+    }
+
+    const submission = subResult.rows[0];
+
+    // SECURITY CHECK 2: 30-Day Window
+    const submittedAt = new Date(submission.submitted_at).getTime();
+    const now = Date.now();
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+    if (now - submittedAt > THIRTY_DAYS_MS) {
+      throw new Error('Unlock window expired: Grade submissions older than 30 days cannot be unlocked for editing for security and audit integrity.');
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Release lock on grade_submissions (stage set to 'saved' to pass CHECK constraint)
+      await client.query(
+        `UPDATE grade_submissions
+         SET is_locked = false,
+             submission_stage = 'saved',
+             updated_at = NOW()
+         WHERE id = $1`,
+        [submission.id]
+      );
+
+      // 2. Remove lock from grade_submission_locks if it exists
+      await client.query(
+        `DELETE FROM grade_submission_locks
+         WHERE course_id = $1
+           AND grading_component = $2
+           AND academic_year = $3
+           AND semester = $4`,
+        [data.courseId, data.submissionType, targetYear, targetSemester]
+      );
+
+      // 3. Remove finalization entry if it exists
+      await client.query(
+        `DELETE FROM grade_submission_finalizations
+         WHERE grade_submission_id = $1`,
+        [submission.id]
+      );
+
+      // 4. Release finalized/submitted state on individual grades
+      await client.query(
+        `UPDATE grades
+         SET is_submitted = false,
+             is_finalized = false,
+             status = 'draft'
+         WHERE course_id = $1
+           AND type = $2
+           AND academic_year = $3
+           AND semester = $4`,
+        [data.courseId, data.submissionType, targetYear, targetSemester]
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        success: true,
+        message: 'Grade submission successfully unlocked. Permission has been granted to the teacher to edit and resubmit.'
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

@@ -115,15 +115,23 @@ router.post('/weekly-plans', validate(weeklyPlanSchema), teacherController.submi
 router.get('/weekly-plans', teacherController.getMyPlans);
 router.post('/weekly-plans/:id', validate(weeklyPlanSchema), teacherController.updatePlan);
 
+// Annual plans & department heads review
+router.post('/annual-plans', teacherController.submitAnnualPlan);
+router.get('/annual-plans', teacherController.getMyAnnualPlans);
+router.post('/annual-plans/:id', teacherController.updateAnnualPlan);
+
 const reviewDeptPlanSchema = Joi.object({
   status: Joi.string().valid('Approved', 'Revision Required').required(),
   feedback: Joi.string().allow('', null).optional(),
-  rating: Joi.number().integer().min(1).max(3).optional()
+  rating: Joi.number().integer().min(1).max(5).optional()
 });
 
 // Department tasks review (for department heads)
 router.get('/dept-plans', teacherController.getDeptPlans);
 router.post('/dept-plans/:id/review', validate(reviewDeptPlanSchema), teacherController.reviewDeptPlan);
+
+router.get('/dept-annual-plans', teacherController.getDeptAnnualPlans);
+router.post('/dept-annual-plans/:id/review', validate(reviewDeptPlanSchema), teacherController.reviewDeptAnnualPlan);
 
 router.post('/communication-logs', validate(communicationLogSchema), teacherController.submitCommunicationLog);
 router.get('/communication-logs/week/:weekEnding', teacherController.getCommunicationLogsByWeek);

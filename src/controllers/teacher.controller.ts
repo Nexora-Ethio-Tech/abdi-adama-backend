@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import teacherService from '../services/teacher.service';
+import superAdminService from '../services/superAdmin.service';
 import { performAllCleanups } from '../shared/cleanupUtils';
 
 class TeacherController {
@@ -42,6 +43,16 @@ class TeacherController {
   // Enter grades
   async enterGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      // ── Grade Submission Window guard ─────────────────────────────────────
+      const submissionOpen = await superAdminService.isGradeSubmissionOpen();
+      if (!submissionOpen) {
+        res.status(403).json({
+          success: false,
+          message: 'Grade submission is currently closed. Please contact your Vice Principal for permission.'
+        });
+        return;
+      }
+
       const teacherUserId = req.user!.id;
       const { studentId, courseId, type, score, total, weight, academicYear, semester } = req.body;
 
@@ -70,6 +81,16 @@ class TeacherController {
   // Bulk enter grades
   async bulkEnterGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      // ── Grade Submission Window guard ─────────────────────────────────────
+      const submissionOpen = await superAdminService.isGradeSubmissionOpen();
+      if (!submissionOpen) {
+        res.status(403).json({
+          success: false,
+          message: 'Grade submission is currently closed. Please contact your Vice Principal for permission.'
+        });
+        return;
+      }
+
       const teacherId = req.user!.id;
       const { courseId, grades, academicYear, semester } = req.body;
 
@@ -358,6 +379,16 @@ class TeacherController {
   // Submit grades for a course
   async submitCourseGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      // ── Grade Submission Window guard ─────────────────────────────────────
+      const submissionOpen = await superAdminService.isGradeSubmissionOpen();
+      if (!submissionOpen) {
+        res.status(403).json({
+          success: false,
+          message: 'Grade submission is currently closed. Please contact your Vice Principal for permission.'
+        });
+        return;
+      }
+
       const teacherUserId = req.user!.id;
       const { courseId, submissionType, academicYear, semester } = req.body;
 
@@ -431,6 +462,16 @@ class TeacherController {
   // Finalizes submission: grades locked, visible to VP, not editable
   async finalizeGradeSubmission(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      // ── Grade Submission Window guard ─────────────────────────────────────
+      const submissionOpen = await superAdminService.isGradeSubmissionOpen();
+      if (!submissionOpen) {
+        res.status(403).json({
+          success: false,
+          message: 'Grade submission is currently closed. Please contact your Vice Principal for permission.'
+        });
+        return;
+      }
+
       const teacherUserId = req.user!.id;
       const { courseId, submissionType, academicYear, semester, sectionId, subjectId } = req.body;
 
@@ -518,6 +559,107 @@ class TeacherController {
         success: true,
         data: plan,
         message: 'Lesson plan reviewed successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // ─── Annual Plans Controllers ─────────────────────────────────────────────
+
+  // Submit annual lesson plan
+  async submitAnnualPlan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherId = req.user!.id;
+      const planData = req.body;
+
+      const plan = await teacherService.submitAnnualPlan(teacherId, planData);
+
+      res.status(201).json({
+        success: true,
+        data: plan,
+        message: 'Annual lesson plan submitted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get teacher's annual plans
+  async getMyAnnualPlans(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherId = req.user!.id;
+      const { status } = req.query;
+
+      const plans = await teacherService.getTeacherAnnualPlans(teacherId, status as string);
+
+      res.json({
+        success: true,
+        data: plans
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Update annual lesson plan
+  async updateAnnualPlan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const teacherId = req.user!.id;
+      const planData = req.body;
+
+      const plan = await teacherService.updateAnnualPlan(id, teacherId, planData);
+
+      res.json({
+        success: true,
+        data: plan,
+        message: 'Annual lesson plan updated successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get department annual plans for review (as department head)
+  async getDeptAnnualPlans(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const { status } = req.query;
+
+      const plans = await teacherService.getDeptAnnualPlans(teacherUserId, status as string);
+
+      res.json({
+        success: true,
+        data: plans
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Review an annual lesson plan
+  async reviewDeptAnnualPlan(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const teacherUserId = req.user!.id;
+      const { id } = req.params;
+      const { status, feedback, rating } = req.body;
+
+      if (!status) {
+        res.status(400).json({ success: false, message: 'status is required' });
+        return;
+      }
+
+      const plan = await teacherService.reviewDeptAnnualPlan(teacherUserId, id, {
+        status,
+        feedback,
+        rating
+      });
+
+      res.json({
+        success: true,
+        data: plan,
+        message: 'Annual lesson plan reviewed successfully'
       });
     } catch (error) {
       next(error);

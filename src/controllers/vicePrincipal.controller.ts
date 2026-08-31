@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import vicePrincipalService from '../services/vicePrincipal.service';
+import superAdminService from '../services/superAdmin.service';
 import teacherOfWeekService from '../services/teacherOfWeek.service';
 import { smsService } from '../services/sms.service';
 
@@ -122,6 +123,32 @@ class VicePrincipalController {
     }
   }
 
+  // Grade Submission Window Toggle
+  async toggleGradeSubmission(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { open } = req.body;
+      const userId = req.user!.id;
+
+      if (typeof open !== 'boolean') {
+        res.status(400).json({ success: false, message: 'open must be a boolean' });
+        return;
+      }
+
+      const settings = await superAdminService.updateSystemSettings(
+        { grade_submission_open: open ? 'true' : 'false' },
+        userId
+      );
+
+      res.json({
+        success: true,
+        data: settings,
+        message: `Grade submission is now ${open ? 'open' : 'closed'}`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Teacher Monitoring
   async getBranchTeachers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -143,9 +170,18 @@ class VicePrincipalController {
   async getStaffAttendance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const { date } = req.query;
 
-      const attendance = await vicePrincipalService.getStaffAttendance(branchId!, date as string);
+      // Extract startDate and endDate if provided, fallback to standard 'date' if not
+      const { date, startDate, endDate } = req.query;
+
+      const targetStart = (startDate as string) || (date as string);
+      const targetEnd = (endDate as string) || (date as string);
+
+      const attendance = await vicePrincipalService.getStaffAttendance(
+        branchId!,
+        targetStart,
+        targetEnd
+      );
 
       res.json({
         success: true,
@@ -716,6 +752,32 @@ class VicePrincipalController {
         success: true,
         message: 'Proxy assignment removed successfully'
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async unlockGradeSubmission(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const vpUserId = req.user!.id;
+      const { courseId, submissionType, academicYear, semester } = req.body;
+
+      if (!courseId || !submissionType) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'courseId and submissionType are required' }
+        });
+        return;
+      }
+
+      const result = await vicePrincipalService.unlockGradeSubmission(vpUserId, {
+        courseId,
+        submissionType,
+        academicYear,
+        semester
+      });
+
+      res.json(result);
     } catch (error) {
       next(error);
     }

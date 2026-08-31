@@ -346,13 +346,18 @@ class TeacherService {
               AND gs.academic_year = g.academic_year
               AND gs.semester = g.semester
               AND gs.is_locked = true
+              AND gs.academic_year = g.academic_year
+              AND gs.semester = g.semester
+              AND gs.is_locked = true
           )
         ) AS is_submitted
       FROM grades g
       JOIN students s ON g.student_id = s.id
       JOIN users u ON s.user_id = u.id
       WHERE ${conditions.join(' AND ')}
+      WHERE ${conditions.join(' AND ')}
       ORDER BY u.name, g.created_at DESC`,
+      params
       params
     );
 
@@ -1900,6 +1905,256 @@ class TeacherService {
       console.error('Error fetching teacher announcements:', error);
       throw error;
     }
+  }
+
+  /**
+   * Submit Annual Plan
+   */
+  async submitAnnualPlan(teacherUserId: string, planData: any) {
+    const teacherResult = await pool.query(
+      `SELECT t.id, u.branch_id FROM teachers t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.user_id = $1`,
+      [teacherUserId]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      throw new Error('Teacher not found');
+    }
+
+    const { id: dbTeacherId, branch_id: branchId } = teacherResult.rows[0];
+
+    const resolvedDeptHeadId = await this.resolveDeptHeadId(
+      planData.subject || null,
+      planData.courseId || null,
+      branchId
+    );
+    const finalDeptHeadId = planData.deptHeadId || resolvedDeptHeadId;
+
+    const result = await pool.query(
+      `INSERT INTO annual_plans
+       (teacher_id, dept_head_id, course_id, academic_year, subject, grade,
+        working_days_year, periods_year, periods_week, duration_period, items, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING *`,
+      [
+        dbTeacherId,
+        finalDeptHeadId,
+        planData.courseId || null,
+        planData.academicYear || '2018 E.C.',
+        planData.subject || 'Subject',
+        planData.grade || 'Grade',
+        planData.workingDaysYear || 180,
+        planData.periodsYear || 160,
+        planData.periodsWeek || 4,
+        planData.durationPeriod || '45 minutes',
+        JSON.stringify(planData.items || []),
+        planData.status || 'Pending'
+      ]
+    );
+
+    return result.rows[0];
+  }
+
+  /**
+   * Get Teacher Annual Plans
+   */
+  async getTeacherAnnualPlans(teacherUserId: string, status?: string) {
+    const teacherResult = await pool.query(
+      'SELECT id FROM teachers WHERE user_id = $1',
+      [teacherUserId]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      throw new Error('Teacher not found');
+    }
+
+    let query = `
+      SELECT ap.*, u.name as reviewed_by_name
+      FROM annual_plans ap
+      LEFT JOIN teachers t ON ap.reviewed_by = t.id
+      LEFT JOIN users u ON t.user_id = u.id
+      WHERE ap.teacher_id = $1
+    `;
+
+    const params: any[] = [teacherResult.rows[0].id];
+
+    if (status) {
+      query += ' AND ap.status = $2';
+      params.push(status);
+    }
+
+    query += ' ORDER BY ap.created_at DESC';
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  /**
+   * Update Annual Plan
+   */
+  async updateAnnualPlan(planId: string, teacherUserId: string, planData: any) {
+    const teacherResult = await pool.query(
+      `SELECT t.id, u.branch_id FROM teachers t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.user_id = $1`,
+      [teacherUserId]
+    );
+
+    if (teacherResult.rows.length === 0) {
+      throw new Error('Teacher not found');
+    }
+
+    const { id: dbTeacherId, branch_id: branchId } = teacherResult.rows[0];
+
+    const checkResult = await pool.query(
+      'SELECT status FROM annual_plans WHERE id = $1 AND teacher_id = $2',
+      [planId, dbTeacherId]
+    );
+
+    if (checkResult.rows.length === 0) {
+      throw new Error('Annual plan not found or access denied');
+    }
+
+    if (checkResult.rows[0].status !== 'Draft' && checkResult.rows[0].status !== 'Revision Required') {
+      throw new Error('Can only update plans in Draft or Revision Required status');
+    }
+
+    const resolvedDeptHeadId = await this.resolveDeptHeadId(
+      planData.subject || null,
+      planData.courseId || null,
+      branchId
+    );
+    const finalDeptHeadId = planData.deptHeadId || resolvedDeptHeadId;
+    const isResubmitting = planData.status === 'Pending';
+
+    const result = await pool.query(
+      `UPDATE annual_plans SET
+       academic_year = $1, subject = $2, grade = $3,
+       working_days_year = $4, periods_year = $5, periods_week = $6, duration_period = $7,
+       items = $8, status = $9, course_id = $10, dept_head_id = $11,
+       feedback = CASE WHEN $12 = true THEN NULL ELSE feedback END,
+       rating = CASE WHEN $12 = true THEN NULL ELSE rating END,
+       updated_at = NOW()
+       WHERE id = $13
+       RETURNING *`,
+      [
+        planData.academicYear || '2018 E.C.',
+        planData.subject || 'Subject',
+        planData.grade || 'Grade',
+        planData.workingDaysYear || 180,
+        planData.periodsYear || 160,
+        planData.periodsWeek || 4,
+        planData.durationPeriod || '45 minutes',
+        JSON.stringify(planData.items || []),
+        planData.status || 'Pending',
+        planData.courseId || null,
+        finalDeptHeadId,
+        isResubmitting,
+        planId
+      ]
+    );
+
+    return result.rows[0];
+  }
+
+  /**
+   * Get Dept Annual Plans for Department Head
+   */
+  async getDeptAnnualPlans(deptHeadUserId: string, status?: string) {
+    const teacherResult = await pool.query(
+      `SELECT
+         t.id,
+         t.is_dean,
+         (t.is_dean = true OR u.staff_profile->'promotion'->'roles' ? 'headOfDepartment') as is_hod,
+         u.branch_id,
+         COALESCE(u.staff_profile->'promotion'->'headOfDepartment'->'subjects', u.staff_profile->'promotion'->'subjects') AS hod_subjects
+       FROM public.teachers t
+       JOIN public.users u ON t.user_id = u.id
+       WHERE t.user_id = $1`,
+      [deptHeadUserId]
+    );
+
+    if (teacherResult.rows.length === 0) return [];
+    const { id: teacherId, is_hod: isHod, branch_id: branchId, hod_subjects } = teacherResult.rows[0];
+    if (!isHod) return [];
+
+    const subjects: string[] = Array.isArray(hod_subjects) ? hod_subjects.map((s: string) => s.toLowerCase()) : [];
+
+    let query = `
+      SELECT DISTINCT ON (ap.id)
+        ap.*,
+        u.name AS teacher_name,
+        u.email AS teacher_email,
+        u.digital_id AS teacher_digital_id,
+        COALESCE(c.name, ap.subject) AS course_name,
+        COALESCE(cl.name, ap.grade) AS class_name
+      FROM public.annual_plans ap
+      JOIN public.teachers t ON ap.teacher_id = t.id
+      JOIN public.users u ON t.user_id = u.id
+      LEFT JOIN public.courses c ON ap.course_id = c.id
+      LEFT JOIN public.classes cl ON c.class_id = cl.id
+      WHERE u.branch_id = $1
+        AND ap.teacher_id != $2
+        AND (ap.dept_head_id IS NULL OR ap.dept_head_id = $2)
+    `;
+
+    const params: any[] = [branchId, teacherId];
+    if (subjects.length > 0) {
+      params.push(subjects);
+      query += ` AND LOWER(COALESCE(c.name, ap.subject, '')) = ANY($${params.length}::text[])`;
+    }
+
+    if (status) {
+      params.push(status);
+      query += ` AND ap.status = $${params.length}`;
+    }
+
+    query += ' ORDER BY ap.id, ap.created_at DESC';
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  /**
+   * Review Dept Annual Plan
+   */
+  async reviewDeptAnnualPlan(deptHeadUserId: string, planId: string, reviewData: { status: string; feedback?: string; rating?: number }) {
+    const teacherResult = await pool.query(
+      `SELECT
+         t.id,
+         (t.is_dean = true OR u.staff_profile->'promotion'->'roles' ? 'headOfDepartment') as is_hod,
+         u.branch_id
+       FROM public.teachers t
+       JOIN public.users u ON t.user_id = u.id
+       WHERE t.user_id = $1`,
+      [deptHeadUserId]
+    );
+
+    if (teacherResult.rows.length === 0 || !teacherResult.rows[0].is_hod) {
+      throw new Error('Access denied: Only department heads can review annual plans');
+    }
+
+    const { id: teacherId } = teacherResult.rows[0];
+
+    const result = await pool.query(
+      `UPDATE public.annual_plans SET
+       status = $1,
+       feedback = $2,
+       rating = $3,
+       reviewed_by = $4,
+       reviewed_at = NOW(),
+       dept_head_id = COALESCE(dept_head_id, $4),
+       updated_at = NOW()
+       WHERE id = $5
+       RETURNING *`,
+      [reviewData.status, reviewData.feedback || null, reviewData.rating || null, teacherId, planId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('Annual plan not found');
+    }
+
+    return result.rows[0];
   }
 }
 

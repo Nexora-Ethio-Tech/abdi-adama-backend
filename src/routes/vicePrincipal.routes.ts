@@ -55,12 +55,16 @@ router.post('/weekly-plans/:id/review', validate(reviewPlanSchema), vicePrincipa
 router.get('/grade-locks', vicePrincipalController.getGradeLocks);
 router.post('/grade-locks', validate(gradeLockSchema), vicePrincipalController.toggleGradeLock);
 
-// Grade submissions reviews
+// Grade Submission Window (open/close for all teachers in branch)
+router.post('/grade-submission-settings', validate(gradeSubmissionSchema), vicePrincipalController.toggleGradeSubmission);
+
+// Grade submissions reviews & unlock
 router.get('/grade-submissions', vicePrincipalController.getGradeSubmissions);
 router.get('/grade-submission-policy', vicePrincipalController.getGradeSubmissionPolicy);
 router.post('/grade-submission-settings', validate(gradeSubmissionSettingsSchema), vicePrincipalController.setGradeSubmissionOpen);
 router.post('/unlock-grade-submission', validate(unlockGradeSubmissionSchema), vicePrincipalController.unlockGradeSubmission);
 router.get('/grades/:courseId/:submissionType', vicePrincipalController.getSubmittedGrades);
+router.post('/unlock-grade-submission', vicePrincipalController.unlockGradeSubmission);
 
 // Grade Management
 router.get('/grade-management/sections', vicePrincipalController.getGradesAndSections);

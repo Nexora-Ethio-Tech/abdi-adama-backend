@@ -49,6 +49,7 @@ const systemSettingsSchema = Joi.object({
   address: Joi.string().allow('').optional(),
   grades_locked: Joi.string().valid('true', 'false').optional(),
   registration_open: Joi.string().valid('true', 'false').optional(),
+  grade_submission_open: Joi.string().valid('true', 'false').optional(),
   active_academic_year_id: Joi.alternatives().try(Joi.string().uuid(), Joi.string().valid(''), Joi.valid(null)).optional(),
 });
 
