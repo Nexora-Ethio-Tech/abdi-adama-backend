@@ -65,7 +65,7 @@ class TeacherController {
         total,
         weight,
         academicYear,
-        semester: semester !== undefined ? Number(semester) : undefined,
+        semester: Number(semester),
       });
 
       res.status(201).json({
@@ -96,7 +96,7 @@ class TeacherController {
 
       const result = await teacherService.bulkEnterGrades(teacherId, courseId, grades, {
         academicYear,
-        semester: semester !== undefined ? Number(semester) : undefined,
+        semester: Number(semester),
       });
 
       res.status(201).json({
@@ -402,7 +402,7 @@ class TeacherController {
         teacherUserId,
         courseId,
         submissionType,
-        { academicYear, semester: semester !== undefined ? Number(semester) : undefined }
+        { academicYear, semester: Number(semester) }
       );
 
       res.status(201).json({
@@ -446,7 +446,7 @@ class TeacherController {
         teacherUserId,
         courseId,
         submissionType,
-        { academicYear, semester, sectionId, subjectId }
+        { academicYear, semester: Number(semester), sectionId, subjectId }
       );
 
       res.status(200).json({
@@ -485,7 +485,7 @@ class TeacherController {
         teacherUserId,
         courseId,
         submissionType,
-        { academicYear, semester, sectionId, subjectId }
+        { academicYear, semester: Number(semester), sectionId, subjectId }
       );
 
       res.status(200).json({

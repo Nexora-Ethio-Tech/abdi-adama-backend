@@ -1,5 +1,5 @@
 import pool from '../config/database';
-import { getCurrentAcademicPeriod } from '../shared/gradeSubmissionPolicy';
+import { requireGradeAcademicPeriod } from '../shared/gradeSubmissionPolicy';
 import logger from '../utils/logger';
 
 type Queryable = { query: typeof pool.query };
@@ -266,12 +266,10 @@ class TeacherService {
     score: number;
     total: number;
     weight?: string;
-    academicYear?: string;
-    semester?: number;
+    academicYear: string;
+    semester: number;
   }) {
-    const currentPeriod = getCurrentAcademicPeriod();
-    const academicYear = data.academicYear || currentPeriod.academicYear;
-    const semester = data.semester ?? currentPeriod.semester;
+    const { academicYear, semester } = requireGradeAcademicPeriod(data.academicYear, data.semester);
 
     const client = await pool.connect();
     try {
@@ -322,7 +320,11 @@ class TeacherService {
     score: number;
     total: number;
     weight?: string;
-  }>, options?: { academicYear?: string; semester?: number }) {
+  }>, options: { academicYear: string; semester: number }) {
+    const { academicYear, semester } = requireGradeAcademicPeriod(
+      options?.academicYear,
+      options?.semester
+    );
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -356,9 +358,6 @@ class TeacherService {
       }
 
       // Check if grades are locked for this course and type (already submitted) within the academic period
-      const currentPeriod = getCurrentAcademicPeriod();
-      const academicYear = options?.academicYear || currentPeriod.academicYear;
-      const semester = options?.semester ?? currentPeriod.semester;
       const uniqueTypes = Array.from(new Set(grades.map(g => g.type)));
       for (const type of uniqueTypes) {
         await this.assertGradeNotLocked(client, course.teacherId, courseId, type, academicYear, semester);
@@ -1364,9 +1363,9 @@ class TeacherService {
   }
 
   // Submit all grades for a course and lock them (alias of finalize workflow)
-  async submitCourseGrades(teacherUserId: string, courseId: string, submissionType: string, options?: {
-    academicYear?: string;
-    semester?: number;
+  async submitCourseGrades(teacherUserId: string, courseId: string, submissionType: string, options: {
+    academicYear: string;
+    semester: number;
   }) {
     return this.finalizeGradeSubmission(teacherUserId, courseId, submissionType, options);
   }
@@ -1374,22 +1373,22 @@ class TeacherService {
   // REFINED WORKFLOW: Save Draft (editable, partial submission)
   // Draft grades visible to: Teacher, Student, Parent (NOT VP)
   // Draft grades remain editable until finalized for that specific academic period
-  async saveDraftGrades(teacherUserId: string, courseId: string, submissionType: string, options?: {
-    academicYear?: string;
-    semester?: number;
+  async saveDraftGrades(teacherUserId: string, courseId: string, submissionType: string, options: {
+    academicYear: string;
+    semester: number;
     sectionId?: string;
     subjectId?: string;
   }) {
+    const { academicYear, semester } = requireGradeAcademicPeriod(
+      options?.academicYear,
+      options?.semester
+    );
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       const course = await this.getOwnedCourseContext(client, teacherUserId, courseId);
       const teacherId = course.teacherId;
-
-      const currentPeriod = getCurrentAcademicPeriod();
-      const academicYear = options?.academicYear || currentPeriod.academicYear;
-      const semester = options?.semester ?? currentPeriod.semester;
 
       // 3. Check if grades are finalized for THIS SPECIFIC academic period
       // Finalized grades cannot be edited. But teachers can still work on future periods.
@@ -1449,12 +1448,16 @@ class TeacherService {
   // Finalized grades visible to: Teacher, Student, Parent, VP Principal
   // Once finalized, grades are locked and cannot be edited by the teacher
   // Only the specific academic period is locked; future periods remain editable
-  async finalizeGradeSubmission(teacherUserId: string, courseId: string, submissionType: string, options?: {
-    academicYear?: string;
-    semester?: number;
+  async finalizeGradeSubmission(teacherUserId: string, courseId: string, submissionType: string, options: {
+    academicYear: string;
+    semester: number;
     sectionId?: string;
     subjectId?: string;
   }) {
+    const { academicYear, semester } = requireGradeAcademicPeriod(
+      options?.academicYear,
+      options?.semester
+    );
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1462,11 +1465,6 @@ class TeacherService {
       const course = await this.getOwnedCourseContext(client, teacherUserId, courseId);
       const teacherId = course.teacherId;
       const branchId = course.teacherBranchId;
-
-      // 3. Extract academic year and semester
-      const currentPeriod = getCurrentAcademicPeriod();
-      const academicYear = options?.academicYear || currentPeriod.academicYear;
-      const semester = options?.semester ?? currentPeriod.semester;
 
       // 4. Check if already finalized for this specific academic period
       const alreadyFinalized = await client.query(

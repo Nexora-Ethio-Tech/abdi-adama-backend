@@ -94,6 +94,36 @@ async function ensureSchemaExtensions(): Promise<void> {
   if (missingColumns.length > 0) {
     throw new Error(`Required annual_plans columns are missing: ${missingColumns.join(', ')}`);
   }
+
+  const requiredGradePeriodConstraints = [
+    'grades_academic_year_valid',
+    'grades_semester_valid',
+    'grade_submissions_academic_year_valid',
+    'grade_submissions_semester_valid',
+    'grade_submission_locks_academic_year_valid',
+    'grade_submission_locks_semester_valid',
+    'grade_submission_finalizations_academic_year_valid',
+    'grade_submission_finalizations_semester_valid',
+  ];
+  const gradePeriodConstraints = await pool.query<{ conname: string }>(
+    `SELECT conname
+     FROM pg_constraint
+     WHERE connamespace = 'public'::regnamespace
+       AND conname = ANY($1::text[])`,
+    [requiredGradePeriodConstraints]
+  );
+  const existingGradePeriodConstraints = new Set(
+    gradePeriodConstraints.rows.map(row => row.conname)
+  );
+  const missingGradePeriodConstraints = requiredGradePeriodConstraints.filter(
+    constraint => !existingGradePeriodConstraints.has(constraint)
+  );
+
+  if (missingGradePeriodConstraints.length > 0) {
+    throw new Error(
+      `Required grade academic-period constraints are missing: ${missingGradePeriodConstraints.join(', ')}`
+    );
+  }
 }
 
 async function bootstrap(): Promise<void> {

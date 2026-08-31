@@ -6,6 +6,11 @@ import { roleGuard } from '../middleware/roleGuard';
 import { validate } from '../middleware/validator';
 import { UserRole } from '../types';
 import Joi from 'joi';
+import {
+  bulkEnterGradesSchema,
+  enterGradeSchema,
+  gradeSubmissionSchema,
+} from '../shared/teacherGradeSchemas';
 
 const router = Router();
 
@@ -20,32 +25,6 @@ const markAttendanceSchema = Joi.object({
     Joi.object({
       studentId: Joi.string().uuid().required(),
       status: Joi.string().valid('present', 'absent', 'excused').required()
-    })
-  ).min(1).required()
-});
-
-const enterGradeSchema = Joi.object({
-  studentId: Joi.string().uuid().required(),
-  courseId: Joi.string().uuid().required(),
-  type: Joi.string().required(),
-  score: Joi.number().min(0).required(),
-  total: Joi.number().positive().required(),
-  weight: Joi.string().allow(''),
-  academicYear: Joi.string().allow('', null).optional(),
-  semester: Joi.number().integer().valid(1, 2).optional()
-});
-
-const bulkEnterGradesSchema = Joi.object({
-  courseId: Joi.string().uuid().required(),
-  academicYear: Joi.string().allow('', null).optional(),
-  semester: Joi.number().integer().valid(1, 2).optional(),
-  grades: Joi.array().items(
-    Joi.object({
-      studentId: Joi.string().uuid().required(),
-      type: Joi.string().required(),
-      score: Joi.number().min(0).required(),
-      total: Joi.number().positive().required(),
-      weight: Joi.string().allow('').optional()
     })
   ).min(1).required()
 });
@@ -95,9 +74,9 @@ router.post('/attendance', validate(markAttendanceSchema), teacherController.mar
 router.get('/attendance/:classId', teacherController.getAttendance);
 
 // Grade locking & submissions - REFINED WORKFLOW
-router.post('/grades/submit-course', teacherController.submitCourseGrades);
-router.post('/grades/save-draft', teacherController.saveDraftGrades);
-router.post('/grades/finalize-submission', teacherController.finalizeGradeSubmission);
+router.post('/grades/submit-course', validate(gradeSubmissionSchema), teacherController.submitCourseGrades);
+router.post('/grades/save-draft', validate(gradeSubmissionSchema), teacherController.saveDraftGrades);
+router.post('/grades/finalize-submission', validate(gradeSubmissionSchema), teacherController.finalizeGradeSubmission);
 router.get('/grade-submissions', teacherController.getGradeSubmissions);
 
 router.post('/grades', validate(enterGradeSchema), teacherController.enterGrades);

@@ -11,6 +11,30 @@ export interface GradeSubmissionUnlockInput extends AcademicPeriod {
   submittedAt: Date | string;
 }
 
+export const ACADEMIC_YEAR_PATTERN = /^\d{4}\/\d{4}$/;
+
+export const isValidAcademicYear = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !ACADEMIC_YEAR_PATTERN.test(value)) return false;
+  const [startYear, endYear] = value.split('/').map(Number);
+  return endYear === startYear + 1;
+};
+
+export const requireGradeAcademicPeriod = (
+  academicYear: unknown,
+  semester: unknown
+): AcademicPeriod => {
+  if (!isValidAcademicYear(academicYear) || !Number.isInteger(semester) || (semester !== 1 && semester !== 2)) {
+    const error = new Error(
+      'A valid academicYear (YYYY/YYYY consecutive years) and semester (1 or 2) are required.'
+    ) as Error & { statusCode: number; code: string };
+    error.statusCode = 400;
+    error.code = 'INVALID_ACADEMIC_PERIOD';
+    throw error;
+  }
+
+  return { academicYear, semester };
+};
+
 const getAddisAbabaDateParts = (date: Date) => {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Addis_Ababa',
@@ -64,4 +88,3 @@ export const canUnlockGradeSubmission = (
   const ageMs = now.getTime() - submittedAt;
   return Number.isFinite(submittedAt) && ageMs >= 0 && ageMs <= unlockWindowDays * DAY_MS;
 };
-

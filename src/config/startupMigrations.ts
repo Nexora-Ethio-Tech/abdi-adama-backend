@@ -42,6 +42,7 @@ export const STARTUP_MIGRATION_FILES = [
   '42nd_create_sms_logs_table.sql',
   '43rd_assessment_scoped_grade_locks.sql',
   '44th_create_annual_plans_table.sql',
+  '45th_enforce_grade_academic_periods.sql',
 ] as const;
 
 export const getMigrationSequence = (fileName: string): number | null => {

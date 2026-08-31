@@ -3,6 +3,8 @@ import {
   canUnlockGradeSubmission,
   getCurrentAcademicPeriod,
   getGradeUnlockWindowDays,
+  isValidAcademicYear,
+  requireGradeAcademicPeriod,
 } from '../shared/gradeSubmissionPolicy';
 
 describe('grade submission policy', () => {
@@ -41,6 +43,33 @@ describe('grade submission policy', () => {
     });
   });
 
+  it('accepts only consecutive academic years in exact YYYY/YYYY format', () => {
+    expect(isValidAcademicYear('2025/2026')).toBe(true);
+    expect(isValidAcademicYear('2025/2027')).toBe(false);
+    expect(isValidAcademicYear('2025-2026')).toBe(false);
+    expect(isValidAcademicYear(' 2025/2026 ')).toBe(false);
+    expect(isValidAcademicYear(undefined)).toBe(false);
+  });
+
+  it('requires an explicit academic year and numeric semester for grade mutations', () => {
+    expect(requireGradeAcademicPeriod('2025/2026', 2)).toEqual({
+      academicYear: '2025/2026',
+      semester: 2,
+    });
+
+    for (const [academicYear, semester] of [
+      [undefined, 2],
+      ['2025/2027', 2],
+      ['2025/2026', undefined],
+      ['2025/2026', '2'],
+      ['2025/2026', 3],
+    ] as Array<[unknown, unknown]>) {
+      expect(() => requireGradeAcademicPeriod(academicYear, semester)).toThrow(
+        expect.objectContaining({ statusCode: 400, code: 'INVALID_ACADEMIC_PERIOD' })
+      );
+    }
+  });
+
   it('allows only active-period submissions no older than the configured window', () => {
     const now = new Date('2026-08-31T09:00:00Z');
     const base = { academicYear: '2025/2026', semester: 2 as const };
@@ -51,4 +80,3 @@ describe('grade submission policy', () => {
     expect(canUnlockGradeSubmission({ academicYear: '2024/2025', semester: 2, submittedAt: '2026-08-30T09:00:00Z' }, now, 60)).toBe(false);
   });
 });
-

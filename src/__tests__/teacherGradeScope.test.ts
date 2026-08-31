@@ -133,7 +133,8 @@ describe('teacher grade assessment scoping', () => {
     await expect(teacherService.bulkEnterGrades(
       teacherUserId,
       courseId,
-      [{ studentId, type: 'quiz', score: 8, total: 10 }]
+      [{ studentId, type: 'quiz', score: 8, total: 10 }],
+      { academicYear: '2025/2026', semester: 2 }
     )).rejects.toMatchObject({ statusCode: 403, code: 'GRADE_ACCESS_DENIED' });
 
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO grades'))).toBe(false);
@@ -151,6 +152,8 @@ describe('teacher grade assessment scoping', () => {
       type: 'quiz',
       score: 8,
       total: 10,
+      academicYear: '2025/2026',
+      semester: 2,
     })).rejects.toMatchObject({ statusCode: 403, code: 'GRADE_ACCESS_DENIED' });
 
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO grades'))).toBe(false);
