@@ -1,7 +1,149 @@
 import pool from '../config/database';
 import { getCurrentAcademicPeriod } from '../shared/gradeSubmissionPolicy';
+import logger from '../utils/logger';
+
+type Queryable = { query: typeof pool.query };
+
+interface OwnedCourseContext {
+  teacherId: string;
+  teacherBranchId: string;
+  classId: string;
+}
 
 class TeacherService {
+  private denyGradeAccess(message: string, context: Record<string, unknown>): never {
+    logger.warn('Teacher grade access denied', context);
+    const error = new Error(message) as Error & { statusCode: number; code: string };
+    error.statusCode = 403;
+    error.code = 'GRADE_ACCESS_DENIED';
+    throw error;
+  }
+
+  private async getOwnedCourseContext(
+    client: Queryable,
+    teacherUserId: string,
+    courseId: string
+  ): Promise<OwnedCourseContext> {
+    const result = await client.query(
+      `SELECT
+         t.id AS teacher_id,
+         t.branch_id AS teacher_branch_id,
+         c.class_id,
+         cl.branch_id AS class_branch_id
+       FROM teachers t
+       JOIN courses c ON c.teacher_id = t.id
+       JOIN classes cl ON cl.id = c.class_id
+       WHERE t.user_id = $1 AND c.id = $2
+       LIMIT 1
+       FOR SHARE OF t, c, cl`,
+      [teacherUserId, courseId]
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      this.denyGradeAccess('You can only access grades for courses you teach', {
+        teacherUserId,
+        courseId,
+        reason: 'course_not_owned'
+      });
+    }
+
+    if (!row.class_id || !row.teacher_branch_id || row.teacher_branch_id !== row.class_branch_id) {
+      this.denyGradeAccess('This course is not assigned to your branch and class', {
+        teacherUserId,
+        courseId,
+        teacherBranchId: row.teacher_branch_id,
+        classBranchId: row.class_branch_id,
+        reason: 'course_branch_mismatch'
+      });
+    }
+
+    return {
+      teacherId: row.teacher_id,
+      teacherBranchId: row.teacher_branch_id,
+      classId: row.class_id
+    };
+  }
+
+  private async assertStudentsInCourseRoster(
+    client: Queryable,
+    teacherUserId: string,
+    courseId: string,
+    classId: string,
+    studentIds: string[]
+  ): Promise<Array<{ id: string; grade: string; branch_id: string }>> {
+    const uniqueStudentIds = Array.from(new Set(studentIds));
+    const result = await client.query(
+      `SELECT DISTINCT s.id, s.grade, s.branch_id
+       FROM students s
+       JOIN classes c ON c.id = $2
+       WHERE s.id = ANY($1::uuid[])
+         AND s.branch_id = c.branch_id
+         AND (
+           s.section_id = c.id
+           OR (
+             s.section_id IS NULL
+             AND c.section IS NULL
+             AND (s.grade = c.name OR s.grade = c.grade)
+           )
+         )`,
+      [uniqueStudentIds, classId]
+    );
+
+    const enrolledIds = new Set(result.rows.map((row: { id: string }) => row.id));
+    const rejectedStudentIds = uniqueStudentIds.filter((studentId) => !enrolledIds.has(studentId));
+    if (rejectedStudentIds.length > 0) {
+      this.denyGradeAccess('One or more students are not enrolled in this course class', {
+        teacherUserId,
+        courseId,
+        classId,
+        rejectedStudentIds,
+        reason: 'student_not_in_course_roster'
+      });
+    }
+
+    return result.rows;
+  }
+
+  private async getOwnedRosterGrade(
+    client: Queryable,
+    teacherUserId: string,
+    gradeId: string
+  ) {
+    const result = await client.query(
+      `SELECT g.*, s.grade AS grade_level, s.branch_id, t.id AS teacher_id
+       FROM grades g
+       JOIN students s ON g.student_id = s.id
+       JOIN courses c ON g.course_id = c.id
+       JOIN teachers t ON c.teacher_id = t.id
+       JOIN classes cl ON c.class_id = cl.id
+       WHERE g.id = $1
+         AND t.user_id = $2
+         AND t.branch_id = cl.branch_id
+         AND s.branch_id = cl.branch_id
+         AND (
+           s.section_id = cl.id
+           OR (
+             s.section_id IS NULL
+             AND cl.section IS NULL
+             AND (s.grade = cl.name OR s.grade = cl.grade)
+           )
+         )
+       LIMIT 1`,
+      [gradeId, teacherUserId]
+    );
+
+    if (!result.rows[0]) {
+      this.denyGradeAccess('You can only change grades for students enrolled in courses you teach', {
+        teacherUserId,
+        gradeId,
+        reason: 'grade_not_owned_or_student_not_in_roster'
+      });
+    }
+
+    return result.rows[0];
+  }
+
   private async assertGradesNotGloballyLocked(client: { query: typeof pool.query }) {
     const globalLockResult = await client.query(
       `SELECT value FROM system_settings WHERE key = 'grades_locked'`
@@ -117,7 +259,7 @@ class TeacherService {
 
   // Enter grade (single student)
   async enterGrade(data: {
-    teacherUserId?: string;
+    teacherUserId: string;
     studentId: string;
     courseId: string;
     type: string;
@@ -135,28 +277,18 @@ class TeacherService {
     try {
       await client.query('BEGIN');
 
-      // If a teacher is entering grades, validate ownership and lock status
-      if (data.teacherUserId) {
-        const teacherResult = await client.query(
-          'SELECT id FROM teachers WHERE user_id = $1',
-          [data.teacherUserId]
-        );
-        if (teacherResult.rows.length === 0) throw new Error('Teacher not found');
-        const teacherId = teacherResult.rows[0].id;
+      const course = await this.getOwnedCourseContext(client, data.teacherUserId, data.courseId);
+      await this.assertStudentsInCourseRoster(
+        client,
+        data.teacherUserId,
+        data.courseId,
+        course.classId,
+        [data.studentId]
+      );
 
-        const courseResult = await client.query(
-          'SELECT teacher_id FROM courses WHERE id = $1',
-          [data.courseId]
-        );
-        if (courseResult.rows.length === 0) throw new Error('Course not found');
-        if (courseResult.rows[0].teacher_id !== teacherId) {
-          throw new Error('You can only enter grades for courses you teach');
-        }
-
-        await this.assertGradesNotGloballyLocked(client);
-        await this.assertGradeSubmissionOpen(client);
-        await this.assertGradeNotLocked(client, teacherId, data.courseId, data.type, academicYear, semester);
-      }
+      await this.assertGradesNotGloballyLocked(client);
+      await this.assertGradeSubmissionOpen(client);
+      await this.assertGradeNotLocked(client, course.teacherId, data.courseId, data.type, academicYear, semester);
 
       const result = await client.query(
         `INSERT INTO grades (student_id, course_id, type, score, total, weight, academic_year, semester, status, is_submitted, is_finalized)
@@ -195,46 +327,23 @@ class TeacherService {
     try {
       await client.query('BEGIN');
 
-      // Get teacher record
-      const teacherResult = await client.query(
-        'SELECT id, branch_id FROM teachers WHERE user_id = $1',
-        [teacherId]
-      );
+      const course = await this.getOwnedCourseContext(client, teacherId, courseId);
 
-      if (teacherResult.rows.length === 0) {
-        throw new Error('Teacher not found');
-      }
-
-      const teacher = teacherResult.rows[0];
-
-      // Verify teacher owns this course
-      const courseResult = await client.query(
-        'SELECT teacher_id FROM courses WHERE id = $1',
-        [courseId]
-      );
-
-      if (courseResult.rows.length === 0) {
-        throw new Error('Course not found');
-      }
-
-      if (courseResult.rows[0].teacher_id !== teacher.id) {
-        throw new Error('You can only enter grades for courses you teach');
-      }
-
-      // Get all students' grade levels to check locks
+      // Verify every submitted student is in this course's class and branch.
       const studentIds = grades.map(g => g.studentId);
-      const studentsResult = await client.query(
-        `SELECT DISTINCT s.grade, s.branch_id 
-         FROM students s 
-         WHERE s.id = ANY($1::uuid[])`,
-        [studentIds]
+      const rosterStudents = await this.assertStudentsInCourseRoster(
+        client,
+        teacherId,
+        courseId,
+        course.classId,
+        studentIds
       );
 
       await this.assertGradesNotGloballyLocked(client);
       await this.assertGradeSubmissionOpen(client);
 
       // Check if any grade level is locked
-      for (const student of studentsResult.rows) {
+      for (const student of rosterStudents) {
         const lockResult = await client.query(
           `SELECT is_locked FROM grade_locks 
            WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
@@ -252,19 +361,26 @@ class TeacherService {
       const semester = options?.semester ?? currentPeriod.semester;
       const uniqueTypes = Array.from(new Set(grades.map(g => g.type)));
       for (const type of uniqueTypes) {
-        await this.assertGradeNotLocked(client, teacher.id, courseId, type, academicYear, semester);
+        await this.assertGradeNotLocked(client, course.teacherId, courseId, type, academicYear, semester);
       }
 
       // Protect only the assessment components present in this request. A finalized
       // quiz or mid-exam must not prevent the teacher from saving the final exam.
       const finalizedCheckResult = await client.query(
-        `SELECT DISTINCT type FROM grades
-         WHERE course_id = $1 
-           AND academic_year = $2 
-           AND semester = $3 
-           AND type = ANY($4::text[])
-           AND is_finalized = true`,
-        [courseId, academicYear, semester, uniqueTypes]
+        `SELECT DISTINCT g.type FROM grades g
+         JOIN students s ON s.id = g.student_id
+         JOIN classes c ON c.id = $5
+         WHERE g.course_id = $1
+           AND g.academic_year = $2
+           AND g.semester = $3
+           AND g.type = ANY($4::text[])
+           AND g.is_finalized = true
+           AND s.branch_id = c.branch_id
+           AND (
+             s.section_id = c.id
+             OR (s.section_id IS NULL AND c.section IS NULL AND (s.grade = c.name OR s.grade = c.grade))
+           )`,
+        [courseId, academicYear, semester, uniqueTypes, course.classId]
       );
 
       if (finalizedCheckResult.rows.length > 0) {
@@ -319,9 +435,15 @@ class TeacherService {
   }
 
   // Get grades by course
-  async getGradesByCourse(courseId: string, academicYear?: string, semester?: number) {
-    const conditions = ['g.course_id = $1'];
-    const params: Array<string | number> = [courseId];
+  async getGradesByCourse(teacherUserId: string, courseId: string, academicYear?: string, semester?: number) {
+    await this.getOwnedCourseContext(pool, teacherUserId, courseId);
+
+    const conditions = [
+      'g.course_id = $1',
+      't.user_id = $2',
+      't.branch_id = cl.branch_id'
+    ];
+    const params: Array<string | number> = [courseId, teacherUserId];
 
     if (academicYear) {
       params.push(academicYear);
@@ -351,7 +473,19 @@ class TeacherService {
       FROM grades g
       JOIN students s ON g.student_id = s.id
       JOIN users u ON s.user_id = u.id
+      JOIN courses c ON g.course_id = c.id
+      JOIN classes cl ON c.class_id = cl.id
+      JOIN teachers t ON c.teacher_id = t.id
       WHERE ${conditions.join(' AND ')}
+        AND s.branch_id = cl.branch_id
+        AND (
+          s.section_id = cl.id
+          OR (
+            s.section_id IS NULL
+            AND cl.section IS NULL
+            AND (s.grade = cl.name OR s.grade = cl.grade)
+          )
+        )
       ORDER BY u.name, g.created_at DESC`,
       params
     );
@@ -370,21 +504,7 @@ class TeacherService {
     try {
       await client.query('BEGIN');
 
-      // Get grade with student and course info
-      const gradeResult = await client.query(
-        `SELECT g.*, s.grade as grade_level, s.branch_id, c.teacher_id
-         FROM grades g
-         JOIN students s ON g.student_id = s.id
-         JOIN courses c ON g.course_id = c.id
-         WHERE g.id = $1`,
-        [gradeId]
-      );
-
-      if (gradeResult.rows.length === 0) {
-        throw new Error('Grade not found');
-      }
-
-      const grade = gradeResult.rows[0];
+      const grade = await this.getOwnedRosterGrade(client, teacherId, gradeId);
 
       // Check if grade is finalized (locked from editing)
       if (grade.is_finalized) {
@@ -394,21 +514,6 @@ class TeacherService {
       // Legacy check for is_submitted
       if (grade.is_submitted) {
         throw new Error('This grade has been submitted and locked, and cannot be updated.');
-      }
-
-      // Get teacher record
-      const teacherResult = await client.query(
-        'SELECT id FROM teachers WHERE user_id = $1',
-        [teacherId]
-      );
-
-      if (teacherResult.rows.length === 0) {
-        throw new Error('Teacher not found');
-      }
-
-      // Verify teacher owns this course
-      if (grade.teacher_id !== teacherResult.rows[0].id) {
-        throw new Error('You can only update grades for courses you teach');
       }
 
       await this.assertGradesNotGloballyLocked(client);
@@ -454,39 +559,10 @@ class TeacherService {
     try {
       await client.query('BEGIN');
 
-      // Get grade with student and course info
-      const gradeResult = await client.query(
-        `SELECT g.*, s.grade as grade_level, s.branch_id, c.teacher_id
-         FROM grades g
-         JOIN students s ON g.student_id = s.id
-         JOIN courses c ON g.course_id = c.id
-         WHERE g.id = $1`,
-        [gradeId]
-      );
-
-      if (gradeResult.rows.length === 0) {
-        throw new Error('Grade not found');
-      }
-
-      const grade = gradeResult.rows[0];
+      const grade = await this.getOwnedRosterGrade(client, teacherId, gradeId);
 
       if (grade.is_submitted) {
         throw new Error('This grade has been submitted and locked, and cannot be deleted.');
-      }
-
-      // Get teacher record
-      const teacherResult = await client.query(
-        'SELECT id FROM teachers WHERE user_id = $1',
-        [teacherId]
-      );
-
-      if (teacherResult.rows.length === 0) {
-        throw new Error('Teacher not found');
-      }
-
-      // Verify teacher owns this course
-      if (grade.teacher_id !== teacherResult.rows[0].id) {
-        throw new Error('You can only delete grades for courses you teach');
       }
 
       await this.assertGradesNotGloballyLocked(client);
@@ -1308,31 +1384,8 @@ class TeacherService {
     try {
       await client.query('BEGIN');
 
-      // 1. Get teacher record
-      const teacherResult = await client.query(
-        'SELECT id, branch_id FROM teachers WHERE user_id = $1',
-        [teacherUserId]
-      );
-
-      if (teacherResult.rows.length === 0) {
-        throw new Error('Teacher not found');
-      }
-      const teacherId = teacherResult.rows[0].id;
-      const branchId = teacherResult.rows[0].branch_id;
-
-      // 2. Verify teacher owns this course
-      const courseResult = await client.query(
-        'SELECT teacher_id FROM courses WHERE id = $1',
-        [courseId]
-      );
-
-      if (courseResult.rows.length === 0) {
-        throw new Error('Course not found');
-      }
-
-      if (courseResult.rows[0].teacher_id !== teacherId) {
-        throw new Error('You can only save grades for courses you teach');
-      }
+      const course = await this.getOwnedCourseContext(client, teacherUserId, courseId);
+      const teacherId = course.teacherId;
 
       const currentPeriod = getCurrentAcademicPeriod();
       const academicYear = options?.academicYear || currentPeriod.academicYear;
@@ -1341,14 +1394,21 @@ class TeacherService {
       // 3. Check if grades are finalized for THIS SPECIFIC academic period
       // Finalized grades cannot be edited. But teachers can still work on future periods.
       const finalizedCheck = await client.query(
-        `SELECT 1 FROM grades 
-         WHERE course_id = $1 
-           AND type = $2 
-           AND academic_year = $3 
-           AND semester = $4 
-           AND is_finalized = true 
+        `SELECT 1 FROM grades g
+         JOIN students s ON s.id = g.student_id
+         JOIN classes c ON c.id = $5
+         WHERE g.course_id = $1
+           AND g.type = $2
+           AND g.academic_year = $3
+           AND g.semester = $4
+           AND g.is_finalized = true
+           AND s.branch_id = c.branch_id
+           AND (
+             s.section_id = c.id
+             OR (s.section_id IS NULL AND c.section IS NULL AND (s.grade = c.name OR s.grade = c.grade))
+           )
          LIMIT 1`,
-        [courseId, submissionType, academicYear, semester]
+        [courseId, submissionType, academicYear, semester, course.classId]
       );
 
       if (finalizedCheck.rows.length > 0) {
@@ -1399,31 +1459,9 @@ class TeacherService {
     try {
       await client.query('BEGIN');
 
-      // 1. Get teacher record
-      const teacherResult = await client.query(
-        'SELECT id, branch_id FROM teachers WHERE user_id = $1',
-        [teacherUserId]
-      );
-
-      if (teacherResult.rows.length === 0) {
-        throw new Error('Teacher not found');
-      }
-      const teacherId = teacherResult.rows[0].id;
-      const branchId = teacherResult.rows[0].branch_id;
-
-      // 2. Verify teacher owns this course
-      const courseResult = await client.query(
-        'SELECT teacher_id FROM courses WHERE id = $1',
-        [courseId]
-      );
-
-      if (courseResult.rows.length === 0) {
-        throw new Error('Course not found');
-      }
-
-      if (courseResult.rows[0].teacher_id !== teacherId) {
-        throw new Error('You can only finalize grades for courses you teach');
-      }
+      const course = await this.getOwnedCourseContext(client, teacherUserId, courseId);
+      const teacherId = course.teacherId;
+      const branchId = course.teacherBranchId;
 
       // 3. Extract academic year and semester
       const currentPeriod = getCurrentAcademicPeriod();
@@ -1432,14 +1470,21 @@ class TeacherService {
 
       // 4. Check if already finalized for this specific academic period
       const alreadyFinalized = await client.query(
-        `SELECT 1 FROM grades 
-         WHERE course_id = $1 
-           AND type = $2 
-           AND academic_year = $3 
-           AND semester = $4 
-           AND is_finalized = true 
+        `SELECT 1 FROM grades g
+         JOIN students s ON s.id = g.student_id
+         JOIN classes c ON c.id = $5
+         WHERE g.course_id = $1
+           AND g.type = $2
+           AND g.academic_year = $3
+           AND g.semester = $4
+           AND g.is_finalized = true
+           AND s.branch_id = c.branch_id
+           AND (
+             s.section_id = c.id
+             OR (s.section_id IS NULL AND c.section IS NULL AND (s.grade = c.name OR s.grade = c.grade))
+           )
          LIMIT 1`,
-        [courseId, submissionType, academicYear, semester]
+        [courseId, submissionType, academicYear, semester, course.classId]
       );
 
       if (alreadyFinalized.rows.length > 0) {
@@ -1451,14 +1496,22 @@ class TeacherService {
 
       // 5. Mark all draft/submitted grades as finalized FOR THIS SPECIFIC PERIOD
       const updateResult = await client.query(
-        `UPDATE grades 
+        `UPDATE grades g
          SET is_submitted = true, is_finalized = true, submitted_at = NOW(), submitted_by = $1, status = 'finalized'
-         WHERE course_id = $2 
-           AND type = $3 
-           AND academic_year = $4 
-           AND semester = $5
-         RETURNING id`,
-        [teacherUserId, courseId, submissionType, academicYear, semester]
+         FROM students s, classes c
+         WHERE g.course_id = $2
+           AND g.type = $3
+           AND g.academic_year = $4
+           AND g.semester = $5
+           AND s.id = g.student_id
+           AND c.id = $6
+           AND s.branch_id = c.branch_id
+           AND (
+             s.section_id = c.id
+             OR (s.section_id IS NULL AND c.section IS NULL AND (s.grade = c.name OR s.grade = c.grade))
+           )
+         RETURNING g.id`,
+        [teacherUserId, courseId, submissionType, academicYear, semester, course.classId]
       );
 
       const updatedCount = updateResult.rowCount;

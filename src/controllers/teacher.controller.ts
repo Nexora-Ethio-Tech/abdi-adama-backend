@@ -116,6 +116,7 @@ class TeacherController {
       const { academicYear, semester } = req.query;
 
       const grades = await teacherService.getGradesByCourse(
+        req.user!.id,
         courseId,
         academicYear as string | undefined,
         semester !== undefined ? Number(semester) : undefined
