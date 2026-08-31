@@ -6,76 +6,93 @@ import logger from './utils/logger';
 import ensureScheduleSchema from './scripts/ensureScheduleSchema';
 import financeClerkService from './services/financeClerk.service';
 import { gregorianToEthiopian } from './shared/ethiopianCalendar';
+import fs from 'fs';
+import path from 'path';
+import {
+  STARTUP_MIGRATION_FILES,
+  validateStartupMigrationManifest,
+} from './config/startupMigrations';
 
 const PORT = process.env.PORT || 5000;
 
 async function ensureSchemaExtensions(): Promise<void> {
-  const fs = require('fs');
-  const path = require('path');
+  validateStartupMigrationManifest();
+  const migrationFiles = STARTUP_MIGRATION_FILES.map(fileName => ({
+    fileName,
+    filePath: path.join(__dirname, '../database/newmigrations', fileName),
+  }));
 
-  const migrationFiles = [
-    '1stcomplete_schemafulldb_dumped.sql',
-    '3rd_online_exams_and_ratings.sql',
-    '4thfix_schedule_varchar_limits.sql',
-    '5th_fix_varchar10_limits.sql',
-    '6th_fix_user_deletion_constraints.sql',
-    '7th_rename_last_grade_to_last_grade_completed.sql',
-    '8th_fix_student_deletion_constraints.sql',
-    '9th_add_profile_image.sql',
-    '10th_add_actual_paid_to_payroll_items.sql',
-    '11th_add_period_number_to_schedules.sql',
-    '12th_online_exams_schema.sql',
-    '13th_online_exams_anti_cheat.sql',
-    '14th_online_exams_unique_constraint.sql',
-    '15th_fix_unique_constraints.sql',
-    '16th_online_exams_auto_grading.sql',
-    '17th_submit_workflow.sql',
-    '18th_grade_submissions_unique.sql',
-    '19th_add_rating_excellent_to_communication_logs.sql',
-    '20th_add_audience_to_notices.sql',
-    '21st_add_category_to_notices.sql',
-    '22nd_add_overall_rating_score_to_teachers.sql',
-    '23rd_library_loans_enhancement.sql',
-    '24th_fix_weekly_plans_deletion.sql',
-    '25th_create_zk_device_id_seq.sql',
-    '26th_create_fee_deductions_table.sql',
-    '27th_teacher_ratings_constraints.sql',
-    '28th_add_online_exams_password.sql',
-    '29th_add_bus_start_date_to_students.sql',
-    '30th_remove_courses_code_unique_constraint.sql',
-    '31st_employee_attendance_zkteco_columns.sql',
-    '32nd_create_school_calendar_table.sql',
-    '33rd_add_event_id_to_school_calendar.sql',
-    '34th_add_end_date_to_events.sql',
-    '35th_create_public_posts_table.sql',
-    '36th_update_students_status_default.sql',
-    '37th_add_document_columns_to_users.sql',
-    '38th_performance_indexes.sql',
-    '39th_create_teacher_proxy_assignments.sql',
-    '40th_add_graduation_year_to_students.sql',
-    '41st_add_description_to_finance_transactions.sql',
-    '42nd_create_sms_logs_table.sql',
-    '43rd_assessment_scoped_grade_locks.sql'
-  ];
+  const missingFiles = migrationFiles.filter(({ filePath }) => !fs.existsSync(filePath));
+  if (missingFiles.length > 0) {
+    throw new Error(
+      `Required migration files are missing: ${missingFiles.map(({ fileName }) => fileName).join(', ')}`
+    );
+  }
 
-  for (const fileName of migrationFiles) {
-    const filePath = path.join(__dirname, '../database/newmigrations', fileName);
-
-    if (fs.existsSync(filePath)) {
-      try {
-        const schemaSql = fs.readFileSync(filePath, 'utf8');
-        await pool.query(schemaSql);
-        logger.info(`✅ Migration applied: ${fileName}`);
-      } catch (err: any) {
-        // Warn and continue — earlier migrations may legitimately fail on
-        // production where the schema already exists. We must NOT abort here
-        // because that would prevent newer migrations (e.g. ADD COLUMN IF NOT
-        // EXISTS) from ever running, causing "column does not exist" errors.
-        logger.warn(`⚠️ Migration skipped (already applied or incompatible): ${fileName} — ${err.message}`);
-      }
-    } else {
-      logger.warn(`⚠️ Migration file not found: ${filePath}`);
+  for (const { fileName, filePath } of migrationFiles) {
+    try {
+      const schemaSql = fs.readFileSync(filePath, 'utf8');
+      await pool.query(schemaSql);
+      logger.info(`✅ Migration applied: ${fileName}`);
+    } catch (err: any) {
+      // Legacy migrations are replayed at startup and some are not fully
+      // idempotent. Preserve that behavior until the ledger-based runner is
+      // introduced, then verify required feature schema below.
+      logger.warn(`⚠️ Migration skipped (already applied or incompatible): ${fileName} — ${err.message}`);
     }
+  }
+
+  const requiredSchema = await pool.query<{
+    annual_plans: string | null;
+    teacher_index: string | null;
+    dept_head_index: string | null;
+    status_index: string | null;
+  }>(
+    `SELECT
+       to_regclass('public.annual_plans')::text AS annual_plans,
+       to_regclass('public.idx_annual_plans_teacher')::text AS teacher_index,
+       to_regclass('public.idx_annual_plans_dept_head')::text AS dept_head_index,
+       to_regclass('public.idx_annual_plans_status')::text AS status_index`
+  );
+  const missingSchema = Object.entries(requiredSchema.rows[0] || {})
+    .filter(([, objectName]) => !objectName)
+    .map(([key]) => key);
+
+  if (missingSchema.length > 0) {
+    throw new Error(`Required annual-plan schema is missing: ${missingSchema.join(', ')}`);
+  }
+
+  const expectedAnnualPlanColumns = [
+    'id',
+    'teacher_id',
+    'dept_head_id',
+    'course_id',
+    'academic_year',
+    'subject',
+    'grade',
+    'working_days_year',
+    'periods_year',
+    'periods_week',
+    'duration_period',
+    'items',
+    'status',
+    'rating',
+    'feedback',
+    'reviewed_by',
+    'reviewed_at',
+    'created_at',
+    'updated_at',
+  ];
+  const annualPlanColumns = await pool.query<{ column_name: string }>(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'annual_plans'`
+  );
+  const existingColumns = new Set(annualPlanColumns.rows.map(row => row.column_name));
+  const missingColumns = expectedAnnualPlanColumns.filter(column => !existingColumns.has(column));
+
+  if (missingColumns.length > 0) {
+    throw new Error(`Required annual_plans columns are missing: ${missingColumns.join(', ')}`);
   }
 }
 
