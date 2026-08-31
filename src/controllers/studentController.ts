@@ -161,20 +161,7 @@ const computeFirstSemesterAverage = async (
   const courseIds = courses.map((c: any) => c.id);
   if (courseIds.length === 0) return null;
 
-  let gradeRows: any[] = [];
-  try {
-    gradeRows = await fetchStudentGradeRows(studentRow.id, year, 1, courseIds, true);
-  } catch {
-    if (courseIds.length > 0) {
-      const legacy = await pool.query(
-        `SELECT g.course_id, g.type, g.score
-         FROM grades g
-         WHERE g.student_id = $1 AND g.course_id = ANY($2::uuid[]) AND g.score IS NOT NULL`,
-        [studentRow.id, courseIds]
-      );
-      gradeRows = legacy.rows;
-    }
-  }
+  const gradeRows = await fetchStudentGradeRows(studentRow.id, year, 1, courseIds, true);
 
   const gradingMethods = await loadGradingMethods(studentRow.grade);
   const courseTotals: number[] = [];
@@ -341,7 +328,7 @@ const fetchStudentCoursesForTerm = async (
  * Returns courses enrolled for a specific academic year and semester.
  * Past years never fall back to the student's current class roster.
  */
-const fetchHistoricalCourses = async (
+export const fetchHistoricalCourses = async (
   studentId: string,
   userId: string,
   year: string,
@@ -380,6 +367,7 @@ const fetchHistoricalCourses = async (
      WHERE g.student_id = $1
        AND g.academic_year = $2
        AND g.semester = $3
+       AND COALESCE(g.is_finalized, false) = true
      ORDER BY c.id, c.name ASC`,
     [studentId, year, semester]
   );
@@ -388,25 +376,14 @@ const fetchHistoricalCourses = async (
     return gradeCourseResult.rows;
   }
 
-  if (year === CURRENT_ACADEMIC_YEAR) {
-    const studentRow = await resolveStudentRecord(studentId);
-    if (!studentRow) return [];
-    return fetchStudentCoursesForTerm(
-      studentRow.id,
-      studentRow.section_id,
-      studentRow.grade,
-      studentRow.branch_id
-    );
-  }
-
   return [];
 };
 
 /** Only grades the teacher has FINALIZED and locked for release to students. */
-const SUBMITTED_GRADE_FILTER = `
+export const SUBMITTED_GRADE_FILTER = `
   AND COALESCE(g.is_finalized, false) = true`;
 
-const fetchStudentGradeRows = async (
+export const fetchStudentGradeRows = async (
   studentId: string,
   academicYear: string,
   semester: number,
@@ -759,29 +736,14 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
     );
 
     const courseIds = courses.map((c: any) => c.id);
-    let dbGrades: any[] = [];
-    try {
-      // Include not-yet-locked grades so students/parents see partial submissions immediately
-      dbGrades = await fetchStudentGradeRows(
-        studentRow.id,
-        year,
-        semester,
-        courseIds,
-        false
-      );
-    } catch (gradeErr: any) {
-      if (courseIds.length > 0) {
-        const legacy = await pool.query(
-          `SELECT g.course_id, g.type, g.score, g.total, g.weight
-           FROM grades g
-           WHERE g.student_id = $1
-             AND g.course_id = ANY($2::uuid[])
-             AND g.score IS NOT NULL`,
-          [studentRow.id, courseIds]
-        );
-        dbGrades = legacy.rows;
-      }
-    }
+    // The current-period screen is provisional, but its query must stay period-scoped.
+    const dbGrades = await fetchStudentGradeRows(
+      studentRow.id,
+      year,
+      semester,
+      courseIds,
+      false
+    );
 
     const mergedCourses = buildCourseGradeSummaries(
       courses,
@@ -795,6 +757,8 @@ export const getGrades = async (req: AuthRequest, res: Response) => {
       year,
       currentSemester: CURRENT_SEMESTER,
       currentAcademicYear: CURRENT_ACADEMIC_YEAR,
+      official: false,
+      visibility: 'provisional',
       student: {
         id: studentRow.id,
         name: studentRow.student_name,
@@ -866,29 +830,14 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
     );
     const courseIds = courses.map((c: any) => c.id);
 
-    let gradeRows: any[] = [];
-    try {
-      // For history view also include incremental submissions (not only locked)
-      gradeRows = await fetchStudentGradeRows(
-        studentRow.id,
-        year,
-        semester,
-        courseIds,
-        false
-      );
-    } catch {
-      if (courseIds.length > 0) {
-        const legacy = await pool.query(
-          `SELECT g.course_id, g.type, g.score
-           FROM grades g
-           WHERE g.student_id = $1
-             AND g.course_id = ANY($2::uuid[])
-             AND g.score IS NOT NULL`,
-          [studentRow.id, courseIds]
-        );
-        gradeRows = legacy.rows;
-      }
-    }
+    // Academic history is official: only finalized grades from the exact period qualify.
+    const gradeRows = await fetchStudentGradeRows(
+      studentRow.id,
+      year,
+      semester,
+      courseIds,
+      true
+    );
 
     const historyCourses = courses.map((c: any) => {
       const finalScore = computeHistoricalCourseScore(c.id, gradeRows, gradingMethods);
