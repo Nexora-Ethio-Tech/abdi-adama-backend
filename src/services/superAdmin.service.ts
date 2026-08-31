@@ -734,14 +734,14 @@ class SuperAdminService {
     'school_name_oromic', 'school_name_amharic', 'school_name_english',
     'school_motto_oromic', 'school_motto_amharic', 'school_motto_english',
     'system_email', 'phone', 'address',
-    'grades_locked', 'registration_open', 'active_academic_year_id',
+    'grades_locked', 'registration_open', 'grade_submission_open', 'active_academic_year_id',
   ] as const;
 
   private static readonly PUBLIC_SETTING_KEYS = [
     'school_name_oromic', 'school_name_amharic', 'school_name_english',
     'school_motto_oromic', 'school_motto_amharic', 'school_motto_english',
     'system_email', 'phone', 'address',
-    'grades_locked', 'registration_open',
+    'grades_locked', 'registration_open', 'grade_submission_open',
   ] as const;
 
   async getSystemSettings(): Promise<Record<string, string>> {

@@ -43,7 +43,7 @@ class TeacherController {
   async enterGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const teacherUserId = req.user!.id;
-      const { studentId, courseId, type, score, total, weight } = req.body;
+      const { studentId, courseId, type, score, total, weight, academicYear, semester } = req.body;
 
       const grade = await teacherService.enterGrade({
         teacherUserId,
@@ -52,7 +52,9 @@ class TeacherController {
         type,
         score,
         total,
-        weight
+        weight,
+        academicYear,
+        semester: semester !== undefined ? Number(semester) : undefined,
       });
 
       res.status(201).json({
@@ -90,8 +92,13 @@ class TeacherController {
   async getGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { courseId } = req.params;
+      const { academicYear, semester } = req.query;
 
-      const grades = await teacherService.getGradesByCourse(courseId);
+      const grades = await teacherService.getGradesByCourse(
+        courseId,
+        academicYear as string | undefined,
+        semester !== undefined ? Number(semester) : undefined
+      );
 
       res.json({
         success: true,
@@ -352,14 +359,19 @@ class TeacherController {
   async submitCourseGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const teacherUserId = req.user!.id;
-      const { courseId, submissionType } = req.body;
+      const { courseId, submissionType, academicYear, semester } = req.body;
 
       if (!courseId || !submissionType) {
         res.status(400).json({ success: false, message: 'courseId and submissionType are required' });
         return;
       }
 
-      const submission = await teacherService.submitCourseGrades(teacherUserId, courseId, submissionType);
+      const submission = await teacherService.submitCourseGrades(
+        teacherUserId,
+        courseId,
+        submissionType,
+        { academicYear, semester: semester !== undefined ? Number(semester) : undefined }
+      );
 
       res.status(201).json({
         success: true,

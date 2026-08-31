@@ -258,7 +258,12 @@ class VicePrincipalController {
   async getGradeSubmissions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
-      const submissions = await vicePrincipalService.getGradeSubmissions(branchId!);
+      const { academicYear, semester } = req.query;
+      const submissions = await vicePrincipalService.getGradeSubmissions(
+        branchId!,
+        academicYear as string | undefined,
+        semester !== undefined ? Number(semester) : undefined
+      );
 
       res.json({
         success: true,
@@ -269,15 +274,55 @@ class VicePrincipalController {
     }
   }
 
+  async getGradeSubmissionPolicy(_req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json({ success: true, data: vicePrincipalService.getGradeSubmissionPolicy() });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async setGradeSubmissionOpen(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await vicePrincipalService.setGradeSubmissionOpen(req.body.open, req.user!.id);
+      res.json({
+        success: true,
+        data: result,
+        message: `Grade submission window ${result.open ? 'opened' : 'closed'} successfully.`,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async unlockGradeSubmission(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const unlockedBy = req.user!.id;
+      const submission = await vicePrincipalService.unlockGradeSubmission(branchId!, unlockedBy, req.body);
+
+      res.json({
+        success: true,
+        data: submission,
+        message: 'Assessment unlocked. The teacher can now correct and resubmit it.',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getSubmittedGrades(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const branchId = req.user!.branch_id;
       const { courseId, submissionType } = req.params;
+      const { academicYear, semester } = req.query;
 
       const grades = await vicePrincipalService.getSubmittedGrades(
         courseId,
         submissionType,
-        branchId!
+        branchId!,
+        academicYear as string | undefined,
+        semester !== undefined ? Number(semester) : undefined
       );
 
       res.json({

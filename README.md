@@ -527,6 +527,10 @@ JWT_SECRET=your_long_secure_jwt_key_min_32_characters
 JWT_REFRESH_SECRET=your_long_secure_refresh_key_min_32_characters
 
 FRONTEND_URL=https://app.abdi-adama.com
+
+# VP may unlock an assessment only during the active semester and within this many days.
+# Defaults to 60 when omitted or invalid.
+GRADE_SUBMISSION_UNLOCK_DAYS=60
 ```
 
 ### Production PM2 Commands

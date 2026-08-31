@@ -28,6 +28,17 @@ const gradeLockSchema = Joi.object({
   academicYearId: Joi.string().uuid()
 });
 
+const unlockGradeSubmissionSchema = Joi.object({
+  courseId: Joi.string().uuid().required(),
+  submissionType: Joi.string().trim().required(),
+  academicYear: Joi.string().pattern(/^\d{4}\/\d{4}$/).required(),
+  semester: Joi.number().integer().valid(1, 2).required(),
+});
+
+const gradeSubmissionSettingsSchema = Joi.object({
+  open: Joi.boolean().required(),
+});
+
 const sendAbsenceNotificationSchema = Joi.object({
   phoneNumbers: Joi.array().items(Joi.string().required()).required(),
   message: Joi.string().required(),
@@ -46,6 +57,9 @@ router.post('/grade-locks', validate(gradeLockSchema), vicePrincipalController.t
 
 // Grade submissions reviews
 router.get('/grade-submissions', vicePrincipalController.getGradeSubmissions);
+router.get('/grade-submission-policy', vicePrincipalController.getGradeSubmissionPolicy);
+router.post('/grade-submission-settings', validate(gradeSubmissionSettingsSchema), vicePrincipalController.setGradeSubmissionOpen);
+router.post('/unlock-grade-submission', validate(unlockGradeSubmissionSchema), vicePrincipalController.unlockGradeSubmission);
 router.get('/grades/:courseId/:submissionType', vicePrincipalController.getSubmittedGrades);
 
 // Grade Management

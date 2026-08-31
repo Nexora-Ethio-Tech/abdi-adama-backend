@@ -1,4 +1,9 @@
 import pool from '../config/database';
+import {
+  canUnlockGradeSubmission,
+  getCurrentAcademicPeriod,
+  getGradeUnlockWindowDays,
+} from '../shared/gradeSubmissionPolicy';
 import { getCurrentECYear, getCurrentSemester, formatSemester, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
 import { getEthiopianNow } from './schoolAdmin.service';
 
@@ -746,23 +751,198 @@ class VicePrincipalService {
     }));
   }
 
-  // Get all grade submissions in a branch
-  async getGradeSubmissions(branchId: string) {
+  // Get every expected assessment in a branch, including assessments that have
+  // not been submitted yet. Each row is scoped to one exact academic period.
+  async getGradeSubmissions(branchId: string, academicYear?: string, semester?: number) {
+    const activePeriod = getCurrentAcademicPeriod();
+    const selectedYear = academicYear && /^\d{4}\/\d{4}$/.test(academicYear)
+      ? academicYear
+      : activePeriod.academicYear;
+    const selectedSemester = semester === 1 || semester === 2
+      ? semester
+      : activePeriod.semester;
+
     const result = await pool.query(
-      `SELECT gs.*, c.name as course_name, c.code as course_code, u.name as teacher_name
-       FROM grade_submissions gs
-       JOIN courses c ON gs.course_id = c.id
-       JOIN teachers t ON gs.teacher_id = t.id
+      `SELECT
+         COALESCE(gs.id::text, c.id::text || ':' || gc.method_id || ':' || $2 || ':' || $3::text) AS id,
+         c.id AS course_id,
+         c.name AS course_name,
+         c.code AS course_code,
+         t.id AS teacher_id,
+         u.name AS teacher_name,
+         COALESCE(cl.grade, cl.name) AS grade_level,
+         COALESCE(NULLIF(TRIM(cl.section), ''), '1') AS section_name,
+         gc.method_id AS submission_type,
+         $2::varchar AS academic_year,
+         $3::smallint AS semester,
+         gs.submitted_at,
+         COALESCE(gs.is_locked, false) AS is_locked,
+         COALESCE(gs.submission_stage, 'not_submitted') AS submission_stage
+       FROM courses c
+       JOIN classes cl ON c.class_id = cl.id
+       JOIN teachers t ON c.teacher_id = t.id
        JOIN users u ON t.user_id = u.id
-       WHERE t.branch_id = $1
-       ORDER BY gs.academic_year DESC, gs.semester DESC, gs.submitted_at DESC`,
-      [branchId]
+       JOIN LATERAL (
+         SELECT configured.method_id, configured.label, configured.max_weight
+         FROM grading_configs configured
+         WHERE regexp_replace(LOWER(TRIM(configured.grade_level)), '^grade\\s*', '', 'i') =
+               regexp_replace(LOWER(TRIM(COALESCE(cl.grade, cl.name))), '^grade\\s*', '', 'i')
+            OR (
+              LOWER(TRIM(configured.grade_level)) = 'default'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM grading_configs exact_config
+                WHERE regexp_replace(LOWER(TRIM(exact_config.grade_level)), '^grade\\s*', '', 'i') =
+                      regexp_replace(LOWER(TRIM(COALESCE(cl.grade, cl.name))), '^grade\\s*', '', 'i')
+              )
+            )
+       ) gc ON true
+       LEFT JOIN grade_submissions gs
+         ON gs.course_id = c.id
+        AND gs.teacher_id = t.id
+        AND gs.submission_type = gc.method_id
+        AND gs.academic_year = $2
+        AND gs.semester = $3
+       WHERE cl.branch_id = $1
+       ORDER BY COALESCE(cl.grade, cl.name), cl.section, c.name, gc.method_id`,
+      [branchId, selectedYear, selectedSemester]
     );
     return result.rows;
   }
 
+  getGradeSubmissionPolicy() {
+    return {
+      unlockWindowDays: getGradeUnlockWindowDays(),
+      activeSemesterOnly: true,
+      activePeriod: getCurrentAcademicPeriod(),
+    };
+  }
+
+  async setGradeSubmissionOpen(open: boolean, updatedBy: string) {
+    await pool.query(
+      `INSERT INTO system_settings (key, value, updated_by, updated_at)
+       VALUES ('grade_submission_open', $1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+      [String(open), updatedBy]
+    );
+    return { open };
+  }
+
+  async unlockGradeSubmission(branchId: string, unlockedBy: string, data: {
+    courseId: string;
+    submissionType: string;
+    academicYear: string;
+    semester: number;
+  }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const submissionResult = await client.query(
+        `SELECT gs.*
+         FROM grade_submissions gs
+         JOIN teachers t ON gs.teacher_id = t.id
+         JOIN courses c ON gs.course_id = c.id
+         JOIN classes cl ON c.class_id = cl.id
+         WHERE gs.course_id = $1
+           AND gs.submission_type = $2
+           AND gs.academic_year = $3
+           AND gs.semester = $4
+           AND t.branch_id = $5
+           AND cl.branch_id = $5
+         FOR UPDATE`,
+        [data.courseId, data.submissionType, data.academicYear, data.semester, branchId]
+      );
+
+      const submission = submissionResult.rows[0];
+      if (!submission) {
+        const error: any = new Error('Grade submission not found or access denied.');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (!submission.is_locked || !submission.submitted_at) {
+        const error: any = new Error('This assessment is already unlocked.');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      if (!canUnlockGradeSubmission({
+        academicYear: data.academicYear,
+        semester: data.semester as 1 | 2,
+        submittedAt: submission.submitted_at,
+      })) {
+        const error: any = new Error(
+          `Unlock denied: only submissions from the active semester and within ${getGradeUnlockWindowDays()} days can be unlocked.`
+        );
+        error.statusCode = 403;
+        throw error;
+      }
+
+      const unlockedResult = await client.query(
+        `UPDATE grade_submissions
+         SET is_locked = false, submission_stage = 'saved', updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [submission.id]
+      );
+
+      await client.query(
+        `UPDATE grades
+         SET is_submitted = false,
+             is_finalized = false,
+             status = 'draft',
+             submitted_at = NULL,
+             submitted_by = NULL
+         WHERE course_id = $1
+           AND type = $2
+           AND academic_year = $3
+           AND semester = $4`,
+        [data.courseId, data.submissionType, data.academicYear, data.semester]
+      );
+
+      await client.query(
+        `DELETE FROM grade_submission_locks
+         WHERE course_id = $1
+           AND grading_component = $2
+           AND academic_year = $3
+           AND semester = $4
+           AND branch_id = $5`,
+        [data.courseId, data.submissionType, data.academicYear, data.semester, branchId]
+      );
+
+      await client.query('COMMIT');
+      return {
+        ...unlockedResult.rows[0],
+        unlocked_by: unlockedBy,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   // Get individual student grades for a locked course grade submission
-  async getSubmittedGrades(courseId: string, submissionType: string, branchId: string) {
+  async getSubmittedGrades(
+    courseId: string,
+    submissionType: string,
+    branchId: string,
+    academicYear?: string,
+    semester?: number
+  ) {
+    const periodConditions: string[] = [];
+    const submissionParams: Array<string | number> = [courseId, submissionType, branchId];
+    if (academicYear) {
+      submissionParams.push(academicYear);
+      periodConditions.push(`gs.academic_year = $${submissionParams.length}`);
+    }
+    if (semester !== undefined) {
+      submissionParams.push(semester);
+      periodConditions.push(`gs.semester = $${submissionParams.length}`);
+    }
+
     // Verify course belongs to this branch and find the matching finalized submission period
     const submissionResult = await pool.query(
       `SELECT gs.academic_year, gs.semester
@@ -773,16 +953,20 @@ class VicePrincipalService {
          AND gs.submission_stage = 'finalized'
          AND gs.is_locked = true
          AND t.branch_id = $3
+         ${periodConditions.length ? `AND ${periodConditions.join(' AND ')}` : ''}
        ORDER BY gs.academic_year DESC, gs.semester DESC, gs.submitted_at DESC
        LIMIT 1`,
-      [courseId, submissionType, branchId]
+      submissionParams
     );
 
     if (submissionResult.rows.length === 0) {
       throw new Error('Grade submission not found or access denied');
     }
 
-    const { academic_year: academicYear, semester } = submissionResult.rows[0];
+    const {
+      academic_year: resolvedAcademicYear,
+      semester: resolvedSemester,
+    } = submissionResult.rows[0];
 
     const result = await pool.query(
       `SELECT g.*, u.name as student_name, u.digital_id
@@ -796,7 +980,7 @@ class VicePrincipalService {
          AND g.score IS NOT NULL
          AND COALESCE(g.is_finalized, false) = true
        ORDER BY u.name`,
-      [courseId, submissionType, academicYear, semester]
+      [courseId, submissionType, resolvedAcademicYear, resolvedSemester]
     );
 
     return result.rows;

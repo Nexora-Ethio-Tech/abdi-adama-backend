@@ -30,13 +30,15 @@ const enterGradeSchema = Joi.object({
   type: Joi.string().required(),
   score: Joi.number().min(0).required(),
   total: Joi.number().positive().required(),
-  weight: Joi.string().allow('')
+  weight: Joi.string().allow(''),
+  academicYear: Joi.string().allow('', null).optional(),
+  semester: Joi.number().integer().valid(1, 2).optional()
 });
 
 const bulkEnterGradesSchema = Joi.object({
   courseId: Joi.string().uuid().required(),
   academicYear: Joi.string().allow('', null).optional(),
-  semester: Joi.any().optional(),
+  semester: Joi.number().integer().valid(1, 2).optional(),
   grades: Joi.array().items(
     Joi.object({
       studentId: Joi.string().uuid().required(),

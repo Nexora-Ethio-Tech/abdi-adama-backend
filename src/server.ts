@@ -55,7 +55,8 @@ async function ensureSchemaExtensions(): Promise<void> {
     '39th_create_teacher_proxy_assignments.sql',
     '40th_add_graduation_year_to_students.sql',
     '41st_add_description_to_finance_transactions.sql',
-    '42nd_create_sms_logs_table.sql'
+    '42nd_create_sms_logs_table.sql',
+    '43rd_assessment_scoped_grade_locks.sql'
   ];
 
   for (const fileName of migrationFiles) {
