@@ -118,46 +118,6 @@ class VicePrincipalService {
     return result.rows[0];
   }
 
-  // Grade Locking
-  async getGradeLocks(branchId: string) {
-    const result = await pool.query(
-      `SELECT 
-        gl.*,
-        u.name as locked_by_name,
-        ay.year_name as academic_year_name
-      FROM grade_locks gl
-      LEFT JOIN users u ON gl.locked_by = u.id
-      LEFT JOIN academic_years ay ON gl.academic_year_id = ay.id
-      WHERE gl.branch_id = $1
-      ORDER BY gl.grade_level`,
-      [branchId]
-    );
-
-    return result.rows;
-  }
-
-  async toggleGradeLock(data: {
-    gradeLevel: string;
-    isLocked: boolean;
-    branchId: string;
-    lockedBy: string;
-    academicYearId?: string;
-  }) {
-    const result = await pool.query(
-      `INSERT INTO grade_locks (grade_level, is_locked, locked_by, locked_at, branch_id, academic_year_id)
-       VALUES ($1, $2, $3, NOW(), $4, $5)
-       ON CONFLICT (grade_level, branch_id, academic_year_id)
-       DO UPDATE SET 
-         is_locked = $2, 
-         locked_by = $3, 
-         locked_at = CASE WHEN $2 = true THEN NOW() ELSE NULL END
-       RETURNING *`,
-      [data.gradeLevel, data.isLocked, data.lockedBy, data.branchId, data.academicYearId || null]
-    );
-
-    return result.rows[0];
-  }
-
   // Teacher Monitoring
   async getBranchTeachers(branchId: string, date?: string) {
     const targetDate = date || new Date().toLocaleDateString('en-CA');

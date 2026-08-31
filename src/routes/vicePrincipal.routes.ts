@@ -22,12 +22,6 @@ const reviewPlanSchema = Joi.object({
   deanRating: Joi.number().integer().min(1).max(5)
 });
 
-const gradeLockSchema = Joi.object({
-  gradeLevel: Joi.string().required(),
-  isLocked: Joi.boolean().required(),
-  academicYearId: Joi.string().uuid()
-});
-
 const unlockGradeSubmissionSchema = Joi.object({
   courseId: Joi.string().uuid().required(),
   submissionType: Joi.string().trim().required(),
@@ -52,8 +46,10 @@ router.post('/absence-queue/:id', validate(updateAbsenceSchema), vicePrincipalCo
 router.get('/weekly-plans', vicePrincipalController.getWeeklyPlans);
 router.post('/weekly-plans/:id/review', validate(reviewPlanSchema), vicePrincipalController.reviewWeeklyPlan);
 
-router.get('/grade-locks', vicePrincipalController.getGradeLocks);
-router.post('/grade-locks', validate(gradeLockSchema), vicePrincipalController.toggleGradeLock);
+// Compatibility endpoints for old clients. The grade-level lock model is retired;
+// assessment/course/period controls live under Grade Management.
+router.get('/grade-locks', vicePrincipalController.gradeLocksRetired);
+router.post('/grade-locks', vicePrincipalController.gradeLocksRetired);
 
 // Grade submissions reviews & unlock
 router.get('/grade-submissions', vicePrincipalController.getGradeSubmissions);

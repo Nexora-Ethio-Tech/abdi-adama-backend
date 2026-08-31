@@ -333,7 +333,7 @@ class TeacherService {
 
       // Verify every submitted student is in this course's class and branch.
       const studentIds = grades.map(g => g.studentId);
-      const rosterStudents = await this.assertStudentsInCourseRoster(
+      await this.assertStudentsInCourseRoster(
         client,
         teacherId,
         courseId,
@@ -343,19 +343,6 @@ class TeacherService {
 
       await this.assertGradesNotGloballyLocked(client);
       await this.assertGradeSubmissionOpen(client);
-
-      // Check if any grade level is locked
-      for (const student of rosterStudents) {
-        const lockResult = await client.query(
-          `SELECT is_locked FROM grade_locks 
-           WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
-          [student.grade, student.branch_id]
-        );
-
-        if (lockResult.rows.length > 0) {
-          throw new Error(`Grades are locked for ${student.grade}. Contact Vice Principal to unlock.`);
-        }
-      }
 
       // Check if grades are locked for this course and type (already submitted) within the academic period
       const uniqueTypes = Array.from(new Set(grades.map(g => g.type)));
@@ -518,16 +505,6 @@ class TeacherService {
       await this.assertGradesNotGloballyLocked(client);
       await this.assertGradeSubmissionOpen(client);
 
-      const lockResult = await client.query(
-        `SELECT is_locked FROM grade_locks 
-         WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
-        [grade.grade_level, grade.branch_id]
-      );
-
-      if (lockResult.rows.length > 0) {
-        throw new Error(`Grades are locked for ${grade.grade_level}. Contact Vice Principal to unlock.`);
-      }
-
       // Validate score doesn't exceed total
       if (data.score > data.total) {
         throw new Error('Score cannot exceed total marks');
@@ -566,16 +543,6 @@ class TeacherService {
 
       await this.assertGradesNotGloballyLocked(client);
       await this.assertGradeSubmissionOpen(client);
-
-      const lockResult = await client.query(
-        `SELECT is_locked FROM grade_locks 
-         WHERE grade_level = $1 AND branch_id = $2 AND is_locked = true`,
-        [grade.grade_level, grade.branch_id]
-      );
-
-      if (lockResult.rows.length > 0) {
-        throw new Error(`Grades are locked for ${grade.grade_level}. Contact Vice Principal to unlock.`);
-      }
 
       // Delete grade
       await client.query('DELETE FROM grades WHERE id = $1', [gradeId]);

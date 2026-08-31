@@ -82,44 +82,15 @@ class VicePrincipalController {
     }
   }
 
-  // Grade Locking
-  async getGradeLocks(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const branchId = req.user!.branch_id;
-
-      const locks = await vicePrincipalService.getGradeLocks(branchId!);
-
-      res.json({
-        success: true,
-        data: locks
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async toggleGradeLock(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const branchId = req.user!.branch_id;
-      const userId = req.user!.id;
-      const { gradeLevel, isLocked, academicYearId } = req.body;
-
-      const lock = await vicePrincipalService.toggleGradeLock({
-        gradeLevel,
-        isLocked,
-        branchId: branchId!,
-        lockedBy: userId,
-        academicYearId
-      });
-
-      res.json({
-        success: true,
-        data: lock,
-        message: `Grade ${isLocked ? 'locked' : 'unlocked'} successfully`
-      });
-    } catch (error) {
-      next(error);
-    }
+  // The legacy whole-grade lock model conflicts with assessment-period locks.
+  gradeLocksRetired(_req: AuthRequest, res: Response): void {
+    res.status(410).json({
+      success: false,
+      error: {
+        code: 'LEGACY_GRADE_LOCKS_RETIRED',
+        message: 'Grade-level locks are retired. Use VP Grade Management for assessment-scoped submission and unlock controls.',
+      },
+    });
   }
 
   // Teacher Monitoring
