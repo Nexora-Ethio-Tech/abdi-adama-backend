@@ -13,9 +13,7 @@ describe('startup migration manifest', () => {
     expect(() => validateStartupMigrationManifest()).not.toThrow();
 
     const sequences = STARTUP_MIGRATION_FILES.map(getMigrationSequence);
-    expect(sequences[sequences.length - 3]).toBe(43);
-    expect(sequences[sequences.length - 2]).toBe(44);
-    expect(sequences[sequences.length - 1]).toBe(45);
+    expect(sequences.slice(-4)).toEqual([43, 44, 45, 46]);
   });
 
   it('registers files that exist in the authoritative migration directory', () => {
@@ -26,6 +24,7 @@ describe('startup migration manifest', () => {
     expect(missingFiles).toEqual([]);
     expect(STARTUP_MIGRATION_FILES).toContain('44th_create_annual_plans_table.sql');
     expect(STARTUP_MIGRATION_FILES).toContain('45th_enforce_grade_academic_periods.sql');
+    expect(STARTUP_MIGRATION_FILES).toContain('46th_enforce_single_active_academic_year.sql');
   });
 
   it('has no duplicate numbered SQL files in the authoritative directory', () => {
@@ -74,5 +73,17 @@ describe('startup migration manifest', () => {
       '44th_later.sql',
       '43rd_earlier.sql',
     ])).toThrow('out of order');
+  });
+
+  it('reconciles duplicate active years and enforces a single active row', () => {
+    const sql = fs.readFileSync(
+      path.join(migrationsDirectory, '46th_enforce_single_active_academic_year.sql'),
+      'utf8'
+    );
+
+    expect(sql).toContain('ROW_NUMBER() OVER');
+    expect(sql).toContain('active_rank > 1');
+    expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_academic_years_single_active');
+    expect(sql).toContain('WHERE is_active = true');
   });
 });

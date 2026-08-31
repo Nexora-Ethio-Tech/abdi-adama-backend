@@ -47,19 +47,21 @@ async function ensureSchemaExtensions(): Promise<void> {
     teacher_index: string | null;
     dept_head_index: string | null;
     status_index: string | null;
+    active_academic_year_index: string | null;
   }>(
     `SELECT
        to_regclass('public.annual_plans')::text AS annual_plans,
        to_regclass('public.idx_annual_plans_teacher')::text AS teacher_index,
        to_regclass('public.idx_annual_plans_dept_head')::text AS dept_head_index,
-       to_regclass('public.idx_annual_plans_status')::text AS status_index`
+       to_regclass('public.idx_annual_plans_status')::text AS status_index,
+       to_regclass('public.idx_academic_years_single_active')::text AS active_academic_year_index`
   );
   const missingSchema = Object.entries(requiredSchema.rows[0] || {})
     .filter(([, objectName]) => !objectName)
     .map(([key]) => key);
 
   if (missingSchema.length > 0) {
-    throw new Error(`Required annual-plan schema is missing: ${missingSchema.join(', ')}`);
+    throw new Error(`Required startup schema is missing: ${missingSchema.join(', ')}`);
   }
 
   const expectedAnnualPlanColumns = [

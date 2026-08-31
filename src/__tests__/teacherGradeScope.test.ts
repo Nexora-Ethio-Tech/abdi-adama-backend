@@ -40,7 +40,6 @@ const makeClient = (
     if (sql.includes('FROM teachers t') && sql.includes('JOIN courses c')) return { rows: [ownedCourse] };
     if (sql.includes('SELECT DISTINCT s.id')) return { rows: rosterRows };
     if (sql.includes("WHERE key = 'grades_locked'")) return { rows: [] };
-    if (sql.includes('FROM grade_locks')) return { rows: [] };
     if (sql.includes('FROM grade_submissions')) return { rows: [] };
     if (sql.includes('SELECT DISTINCT g.type FROM grades')) return { rows: finalizedRows };
     if (sql.includes('UPDATE grades g')) return { rows: [{ id: 'grade-1' }], rowCount: 1 };
@@ -110,6 +109,9 @@ describe('teacher grade assessment scoping', () => {
       String(sql).includes('SELECT DISTINCT g.type FROM grades')
     );
     expect(finalizedCall?.[1]).toEqual([courseId, '2025/2026', 2, ['final'], classId]);
+    expect(client.query.mock.calls.some(([sql]) =>
+      String(sql).includes('FROM grade_locks')
+    )).toBe(false);
   });
 
   it('still rejects editing when that exact requested assessment is finalized', async () => {

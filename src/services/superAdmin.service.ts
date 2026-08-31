@@ -649,18 +649,73 @@ class SuperAdminService {
   }
   //
 
-  async activateGlobalAcademicYear(yearId: string) {
-    await pool.query(`UPDATE academic_years SET is_active = false WHERE is_active = true`);
-
-    const result = await pool.query(
-      `UPDATE academic_years SET is_active = true WHERE id = $1 RETURNING *`,
-      [yearId]
-    );
-
-    if (result.rows.length === 0) {
-      throw new Error('Academic year not found');
+  async activateGlobalAcademicYear(yearId: string, userId?: string) {
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidPattern.test(yearId)) {
+      const error: any = new Error('Invalid academic year ID');
+      error.statusCode = 400;
+      error.code = 'INVALID_ACADEMIC_YEAR_ID';
+      throw error;
     }
-    return result.rows[0];
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Serialize global activations before validating and changing either row.
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtext($1))`,
+        ['global_academic_year_activation']
+      );
+
+      const target = await client.query(
+        `SELECT id
+         FROM academic_years
+         WHERE id = $1
+         FOR UPDATE`,
+        [yearId]
+      );
+      if (target.rows.length === 0) {
+        const error: any = new Error('Academic year not found');
+        error.statusCode = 404;
+        error.code = 'ACADEMIC_YEAR_NOT_FOUND';
+        throw error;
+      }
+
+      await client.query(
+        `UPDATE academic_years
+         SET is_active = false, updated_at = NOW()
+         WHERE is_active = true AND id <> $1`,
+        [yearId]
+      );
+
+      const result = await client.query(
+        `UPDATE academic_years
+         SET is_active = true, updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [yearId]
+      );
+
+      // Keep the compatibility setting synchronized with the authoritative row.
+      await client.query(
+        `INSERT INTO system_settings (key, value, updated_by, updated_at)
+         VALUES ('active_academic_year_id', $1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE
+         SET value = EXCLUDED.value,
+             updated_by = EXCLUDED.updated_by,
+             updated_at = NOW()`,
+        [yearId, userId || null]
+      );
+
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getGlobalAcademicYears() {
@@ -734,7 +789,8 @@ class SuperAdminService {
     'school_name_oromic', 'school_name_amharic', 'school_name_english',
     'school_motto_oromic', 'school_motto_amharic', 'school_motto_english',
     'system_email', 'phone', 'address',
-    'grades_locked', 'registration_open', 'grade_submission_open', 'active_academic_year_id',
+    // active_academic_year_id is owned exclusively by the atomic activation path.
+    'grades_locked', 'registration_open', 'grade_submission_open',
   ] as const;
 
   private static readonly PUBLIC_SETTING_KEYS = [

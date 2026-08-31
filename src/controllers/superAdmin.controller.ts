@@ -339,7 +339,7 @@ class SuperAdminController {
   async activateGlobalAcademicYear(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params;
-      const academicYear = await superAdminService.activateGlobalAcademicYear(id);
+      const academicYear = await superAdminService.activateGlobalAcademicYear(id, req.user?.id);
       res.json({
         success: true,
         data: academicYear,
