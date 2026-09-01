@@ -35,13 +35,15 @@ export async function startWeeklyPlansCleanupJob(): Promise<void> {
  */
 export async function cleanupWeeklyPlans(): Promise<void> {
   const client = await pool.connect();
+  let plansCount = 0;
+  let cleanupCompleted = false;
   
   try {
     await client.query('BEGIN');
 
     // Count plans before deletion
     const countResult = await client.query('SELECT COUNT(*) as count FROM weekly_plans');
-    const plansCount = parseInt(countResult.rows[0]?.count || '0', 10);
+    plansCount = parseInt(countResult.rows[0]?.count || '0', 10);
 
     if (plansCount === 0) {
       logger.info('Weekly Plans Cleanup: No plans to delete');
@@ -50,20 +52,12 @@ export async function cleanupWeeklyPlans(): Promise<void> {
     }
 
     // Delete all weekly plans
-    const deleteResult = await client.query('DELETE FROM weekly_plans');
+    await client.query('DELETE FROM weekly_plans');
 
     // Log success
     await client.query('COMMIT');
+    cleanupCompleted = true;
     logger.info(`✓ Weekly Plans Cleanup: Deleted ${plansCount} plans from database`);
-
-    // Optional: Log cleanup event for audit trail
-    await pool.query(
-      `INSERT INTO audit_logs (action, entity_type, description, timestamp)
-       VALUES ($1, $2, $3, $4)`,
-      ['DELETE_BATCH', 'weekly_plans', `Automatic cleanup: removed ${plansCount} plans`, new Date()]
-    ).catch(() => {
-      // Audit log table may not exist, ignore error
-    });
 
   } catch (error) {
     await client.query('ROLLBACK');
@@ -71,6 +65,18 @@ export async function cleanupWeeklyPlans(): Promise<void> {
     throw error;
   } finally {
     client.release();
+  }
+
+  if (cleanupCompleted) {
+    // Audit logging is deliberately outside the transaction and after the
+    // checked-out client has been returned to the pool.
+    await pool.query(
+      `INSERT INTO audit_logs (action, entity_type, description, timestamp)
+       VALUES ($1, $2, $3, $4)`,
+      ['DELETE_BATCH', 'weekly_plans', `Automatic cleanup: removed ${plansCount} plans`, new Date()]
+    ).catch(() => {
+      // Audit log table may not exist, ignore error
+    });
   }
 }
 

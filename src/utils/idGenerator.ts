@@ -1,22 +1,32 @@
-import pool from '../config/database';
+import { PoolClient } from 'pg';
 import { DIGITAL_ID_PREFIX, BRANCH_CODES } from '../config/constants';
 import { UserRole } from '../types';
 
-// 1. In-memory registry to track IDs currently being checked or generated.
-const reservedIds = new Set<string>();
+type TransactionClient = Pick<PoolClient, 'query'>;
 
-// 2. Helper to check the actual database.
-const checkDbExists = async (digitalId: string): Promise<boolean> => {
-  const res = await pool.query('SELECT 1 FROM users WHERE digital_id = $1 LIMIT 1', [digitalId]);
+const checkDbExists = async (client: TransactionClient, digitalId: string): Promise<boolean> => {
+  const res = await client.query('SELECT 1 FROM users WHERE digital_id = $1 LIMIT 1', [digitalId]);
   return res.rows.length > 0;
 };
 
-export const generateDigitalId = async (role: UserRole, branchId: string | null = null): Promise<string> => {
+export const generateDigitalId = async (
+  role: UserRole,
+  branchId: string | null,
+  client: TransactionClient
+): Promise<string> => {
   const prefix = DIGITAL_ID_PREFIX[role];
 
   if (!prefix) {
     throw new Error('Invalid role for digital ID generation');
   }
+
+  // Serialize ID allocation for the same role/branch across every Node/PM2
+  // process. Because this is a transaction-scoped lock, PostgreSQL releases it
+  // automatically on COMMIT, ROLLBACK, or a lost connection.
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+    ['digital-id', `${role}:${branchId || 'global'}`]
+  );
 
   // Helper to build IDs with a numeric sequence and check uniqueness.
   const buildAndEnsureUnique = async (build: (seq: number) => string, startSeq = 1) => {
@@ -24,39 +34,20 @@ export const generateDigitalId = async (role: UserRole, branchId: string | null 
     let candidate = build(seq);
 
     while (true) {
-      // Synchronously check if another concurrent request has already claimed this ID.
-      // Because Node.js is single-threaded, this synchronous check completely
-      // eliminates the race condition locally without needing a database lock.
-      if (reservedIds.has(candidate)) {
-        seq += 1;
-        candidate = build(seq);
-        continue;
-      }
-
-      // Claim the ID synchronously BEFORE yielding to the async database query.
-      reservedIds.add(candidate);
-
-      // Now it's safe to check the database.
-      const inDb = await checkDbExists(candidate);
+      const inDb = await checkDbExists(client, candidate);
 
       if (inDb) {
-        // If it was already in the DB, loop again.
         seq += 1;
         candidate = build(seq);
         continue;
       }
-
-      // We found an available ID. 
-      // Clear the memory lock after 60 seconds to prevent memory leaks.
-      // (60s is more than enough time for your application to finish the INSERT).
-      setTimeout(() => reservedIds.delete(candidate), 60000);
 
       return candidate;
     }
   };
 
   if (role === UserRole.SUPER_ADMIN) {
-    const result = await pool.query(
+    const result = await client.query(
       `SELECT digital_id FROM users WHERE role = $1 ORDER BY created_at DESC, digital_id DESC LIMIT 1`,
       [role]
     );
@@ -76,7 +67,7 @@ export const generateDigitalId = async (role: UserRole, branchId: string | null 
   let branchLookupId = branchId;
 
   if (branchId) {
-    const branchResult = await pool.query<{ name: string; code: string | null }>(
+    const branchResult = await client.query<{ name: string; code: string | null }>(
       'SELECT name, code FROM branches WHERE id = $1 LIMIT 1',
       [branchId]
     );
@@ -87,11 +78,11 @@ export const generateDigitalId = async (role: UserRole, branchId: string | null 
   }
 
   const result = branchLookupId
-    ? await pool.query(
+    ? await client.query(
         `SELECT digital_id FROM users WHERE role = $1 AND branch_id = $2 ORDER BY created_at DESC, digital_id DESC LIMIT 1`,
         [role, branchLookupId]
       )
-    : await pool.query(
+    : await client.query(
         `SELECT digital_id FROM users WHERE role = $1 ORDER BY created_at DESC, digital_id DESC LIMIT 1`,
         [role]
       );

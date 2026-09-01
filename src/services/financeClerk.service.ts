@@ -4,6 +4,8 @@ import { gregorianToEthiopic, todayEthiopic } from '../utils/ethiopicUtils';
 import { generateCredentials } from '../utils/credentialGenerator';
 import { gregorianToEthiopian, ethiopianToGregorianDate } from '../shared/ethiopianCalendar';
 
+type Queryable = Pick<typeof pool, 'query'>;
+
 class FinanceClerkService {
   // Get available aid allocations for a student (active allocations with remaining balance)
   private async getAvailableAid(client: any, studentId: string) {
@@ -66,12 +68,12 @@ class FinanceClerkService {
     const summerMonths = this.getSummerMonths(targetYear, targetMonthNum);
 
     if (isSummer) {
-      const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
+      const reg = await this.getGlobalRegistrationFee(branchId, student.grade, client).catch(() => ({ amount: 0 }));
       return Number(reg.amount || 0);
 
     } else if (targetMonth === enrollmentMonth) {
       // First-time admission month charge
-      const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
+      const reg = await this.getGlobalRegistrationFee(branchId, student.grade, client).catch(() => ({ amount: 0 }));
       return Number(reg.amount || 0);
 
     } else {
@@ -84,13 +86,17 @@ class FinanceClerkService {
       );
       if (summerExistsRes.rows.length === 0) return 0; // No summer billing → no carry-over
 
-      const reg = await this.getGlobalRegistrationFee(branchId, student.grade).catch(() => ({ amount: 0 }));
+      const reg = await this.getGlobalRegistrationFee(branchId, student.grade, client).catch(() => ({ amount: 0 }));
       return Number(reg.amount || 0);
     }
   }
 
-  private async getFinanceSettingNumber(key: string, defaultValue = 0): Promise<number> {
-    const result = await pool.query(`SELECT value FROM finance_settings WHERE key = $1 LIMIT 1`, [key]);
+  private async getFinanceSettingNumber(
+    key: string,
+    defaultValue = 0,
+    queryable: Queryable = pool
+  ): Promise<number> {
+    const result = await queryable.query(`SELECT value FROM finance_settings WHERE key = $1 LIMIT 1`, [key]);
     const value = Number(result.rows[0]?.value);
     return Number.isFinite(value) && value > 0 ? value : defaultValue;
   }
@@ -209,7 +215,7 @@ class FinanceClerkService {
       }
     }
 
-    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10, client);
     const now = new Date();
 
     for (const month of months) {
@@ -241,7 +247,7 @@ class FinanceClerkService {
     const [_, monthNum] = month.split('-').map(Number);
     if (monthNum === 11 || monthNum === 12 || monthNum === 13) return 0; // No penalty for summer months
 
-    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+    const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10, client);
     const dueDate = this.getPaymentDueDateForMonth(month, deadlineDay);
 
     // If today (now) is before or on the deadline, no penalty is due yet
@@ -285,7 +291,7 @@ class FinanceClerkService {
     }
 
     // Otherwise, penalty applies
-    const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
+    const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0, client);
     const defaultPenalty = Number(student.penalty_fee || 0) || penaltyRate;
     return defaultPenalty;
   }
@@ -606,7 +612,7 @@ class FinanceClerkService {
       // Recompute outstanding MONTHLY FEES ONLY (excluding registration) and update student_collections for the paid month
       // Registration is a one-time fee and should NOT affect collection status
       const outstandingTotal = await this.computeMonthlyFeesOutstanding(client, student, data.branchId, data.month);
-      const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
+      const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10, client);
       const dueDate = this.getPaymentDueDateForMonth(data.month, deadlineDay);
       const now = new Date();
       let status = 'in_collections';
@@ -773,7 +779,7 @@ class FinanceClerkService {
 
       for (const ft of feeTypes) {
         totalDue += Number(ft.due || 0);
-        const paidRes = await pool.query(
+        const paidRes = await client.query(
           `SELECT COALESCE(SUM(pi.amount),0) as paid
          FROM payments p JOIN payment_items pi ON pi.payment_id = p.id
          WHERE p.student_id = $1 AND p.month = $2 AND pi.fee_type = $3`,
@@ -782,7 +788,7 @@ class FinanceClerkService {
         let paid = Number(paidRes.rows[0].paid || 0);
         // Include aid usages in monthly tuition paid total
         if (ft.key === 'monthly') {
-          const aidRes2 = await pool.query(
+          const aidRes2 = await client.query(
             `SELECT COALESCE(SUM(amount),0) AS paid FROM student_aid_usages WHERE student_id=$1 AND month=$2`,
             [studentId, targetMonth]
           );
@@ -806,11 +812,11 @@ class FinanceClerkService {
       }
 
       // Also pull collection status
-      const collRes = await pool.query(`SELECT status, due_date FROM student_collections WHERE student_id = $1 AND month = $2`, [studentId, targetMonth]);
+      const collRes = await client.query(`SELECT status, due_date FROM student_collections WHERE student_id = $1 AND month = $2`, [studentId, targetMonth]);
       const collection = collRes.rows[0] || null;
 
       // Pull aid allocations summary for the student
-      const aidRes = await pool.query(
+      const aidRes = await client.query(
         `SELECT COALESCE(SUM(approved_amount),0)::numeric AS approved_total, COALESCE(SUM(used_amount),0)::numeric AS used_total
        FROM student_aids WHERE student_id = $1 AND status = 'active'`,
         [studentId]
@@ -1064,14 +1070,15 @@ class FinanceClerkService {
   /** Resolve registration fee from DB (grade-specific → global setting → branch policy). */
   async resolveRegistrationFee(
     branchId: string,
-    gradeApplying?: string | null
+    gradeApplying?: string | null,
+    queryable: Queryable = pool
   ): Promise<{ amount: number; source: string }> {
     const gradeLevel = String(gradeApplying || '')
       .replace(/^grade\s*/i, '')
       .trim();
 
     if (gradeLevel) {
-      const gradeFee = await pool.query(
+      const gradeFee = await queryable.query(
         `SELECT registration_fee
          FROM branch_grade_fees
          WHERE branch_id = $1 AND grade_level = $2
@@ -1087,7 +1094,7 @@ class FinanceClerkService {
       }
     }
 
-    const settingsResult = await pool.query(
+    const settingsResult = await queryable.query(
       `SELECT key, value
        FROM finance_settings
        WHERE key IN ('student_registration_fee', 'registration_fee')
@@ -1116,7 +1123,7 @@ class FinanceClerkService {
          LIMIT 1`;
 
     const policyParams = gradeLevel ? [branchId, gradeLevel] : [branchId];
-    const policyResult = await pool.query(policyQuery, policyParams);
+    const policyResult = await queryable.query(policyQuery, policyParams);
     const policyAmount = Number(policyResult.rows[0]?.registration_fee) || 0;
 
     return {
@@ -1129,9 +1136,10 @@ class FinanceClerkService {
 
   async getGlobalRegistrationFee(
     branchId: string,
-    gradeApplying?: string | null
+    gradeApplying?: string | null,
+    queryable: Queryable = pool
   ): Promise<{ amount: number; source: string }> {
-    return this.resolveRegistrationFee(branchId, gradeApplying);
+    return this.resolveRegistrationFee(branchId, gradeApplying, queryable);
   }
 
   // Assign or change a student's transport route and fee
@@ -1611,8 +1619,8 @@ class FinanceClerkService {
 
       // --- BULK FETCHING ---
       
-      const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10);
-      const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0);
+      const deadlineDay = await this.getFinanceSettingNumber('student_payment_deadline', 10, client);
+      const penaltyRate = await this.getFinanceSettingNumber('student_late_penalty_rate', 0, client);
       const now = new Date();
 
       // Bulk fetch fee deductions for overdue months
@@ -1807,6 +1815,17 @@ class FinanceClerkService {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      // Avoid duplicate full-school syncs from concurrent requests or multiple
+      // PM2 instances. The transaction-scoped lock is released automatically.
+      const lockResult = await client.query<{ acquired: boolean }>(
+        'SELECT pg_try_advisory_xact_lock(hashtext($1), hashtext($2)) AS acquired',
+        ['collection-sync', `${branchId || 'all'}:${month}`]
+      );
+      if (!lockResult.rows[0]?.acquired) {
+        await client.query('ROLLBACK');
+        return;
+      }
 
       const params: any[] = [];
       let where = '';

@@ -517,6 +517,15 @@ DB_NAME=abdiadam_school_db
 DB_USER=abdiadam_super-admin
 DB_PASSWORD=replace_with_a_unique_database_password
 DB_SSL=false
+DB_APPLICATION_NAME=abdi-adama-api
+
+# PostgreSQL connection safety (all values are per backend process)
+DB_POOL_MAX=10
+DB_POOL_IDLE_TIMEOUT_MS=30000
+DB_CONNECTION_TIMEOUT_MS=10000
+DB_STATEMENT_TIMEOUT_MS=120000
+DB_IDLE_TRANSACTION_TIMEOUT_MS=300000
+DB_CONNECTION_MAX_LIFETIME_SECONDS=1800
 
 JWT_SECRET=your_long_secure_jwt_key_min_32_characters
 JWT_REFRESH_SECRET=your_long_secure_refresh_key_min_32_characters
@@ -537,6 +546,12 @@ FRONTEND_URL=https://app.abdi-adama.com
 # Defaults to 60 when omitted or invalid.
 GRADE_SUBMISSION_UNLOCK_DAYS=60
 ```
+
+`DB_POOL_MAX` applies to each backend process. Keep the combined total for all
+PM2/backend instances below PostgreSQL's normal-user connection allowance after
+reserving capacity for migrations, administration, and other services. Start
+with `10` per process only when the database connection budget supports it; use
+a lower value when several backend instances share a small database plan.
 
 Do not commit real values. After deploying this security change, rotate any SMTP, machine API, database, or seeded-account credential that previously appeared in source or Git history.
 

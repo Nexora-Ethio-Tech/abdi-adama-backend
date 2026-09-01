@@ -150,12 +150,12 @@ class TeacherOfWeekService {
         [teacherId]
       );
 
-      await client.query('COMMIT');
-
-      const teacherName = await pool.query(
+      const teacherName = await client.query(
         `SELECT u.name FROM teachers t JOIN users u ON t.user_id = u.id WHERE t.id = $1`,
         [teacherId]
       );
+
+      await client.query('COMMIT');
 
       return {
         success: true,

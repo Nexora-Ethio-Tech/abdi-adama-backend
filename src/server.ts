@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 import app from './app';
-import pool from './config/database';
+import pool, { getDatabasePoolStats } from './config/database';
 import logger from './utils/logger';
 import ensureScheduleSchema from './scripts/ensureScheduleSchema';
 import financeClerkService from './services/financeClerk.service';
@@ -319,7 +319,14 @@ async function bootstrap(): Promise<void> {
     //   2. The Ethiopian YYYY-13  (only during Pagume = Ethiopian month 13, Sep 6-10)
     //      This ensures every active student gets a collection record for the Pagume
     //      month so the annual Registration Fee billing appears in the dashboard.
+    let collectionsSyncRunning = false;
     const runCollectionsSync = async () => {
+      if (collectionsSyncRunning) {
+        logger.warn('Finance collections sync skipped because the previous run is still active');
+        return;
+      }
+
+      collectionsSyncRunning = true;
       try {
         const now = new Date();
         const gregMonth = now.toISOString().slice(0, 7);
@@ -347,11 +354,22 @@ async function bootstrap(): Promise<void> {
         }
       } catch (err: any) {
         logger.warn(`⚠️ Finance collections sync failed: ${err.message}`);
+      } finally {
+        collectionsSyncRunning = false;
       }
     };
 
     await runCollectionsSync();
     const collectionsSyncInterval = setInterval(runCollectionsSync, 60 * 60 * 1000);
+    const poolMonitorInterval = setInterval(() => {
+      const stats = getDatabasePoolStats();
+      if (stats.waiting > 0 || (stats.total >= stats.max && stats.idle === 0)) {
+        logger.warn('Database pool pressure detected', stats);
+      } else {
+        logger.debug('Database pool status', stats);
+      }
+    }, 60 * 1000);
+    poolMonitorInterval.unref();
 
 
     const server = app.listen(PORT, () => {
@@ -363,6 +381,7 @@ async function bootstrap(): Promise<void> {
     process.on('SIGTERM', () => {
       logger.info('SIGTERM signal received: closing HTTP server');
       clearInterval(collectionsSyncInterval);
+      clearInterval(poolMonitorInterval);
       server.close(() => {
         logger.info('HTTP server closed');
         pool.end(() => {
@@ -375,6 +394,7 @@ async function bootstrap(): Promise<void> {
     process.on('SIGINT', () => {
       logger.info('SIGINT signal received: closing HTTP server');
       clearInterval(collectionsSyncInterval);
+      clearInterval(poolMonitorInterval);
       server.close(() => {
         logger.info('HTTP server closed');
         pool.end(() => {
