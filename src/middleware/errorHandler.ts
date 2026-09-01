@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import logger from '../utils/logger';
+import { databaseUnavailableResponse, isDatabaseAvailabilityError } from '../utils/publicError';
 
 interface CustomError extends Error {
   statusCode?: number;
@@ -16,6 +17,17 @@ export const errorHandler = (err: CustomError, req: Request, res: Response, _nex
     path: req.path,
     method: req.method
   });
+
+  if (isDatabaseAvailabilityError(err)) {
+    res.status(databaseUnavailableResponse.status).json({
+      success: false,
+      error: {
+        code: databaseUnavailableResponse.code,
+        message: databaseUnavailableResponse.message,
+      },
+    });
+    return;
+  }
 
   if (err.isJoi) {
     res.status(400).json({

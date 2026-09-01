@@ -275,12 +275,14 @@ class TeacherExamService {
          WHERE exam_id=$1 AND student_id=$2`,
         [examId, studentId, reason]);
       await client.query('COMMIT');
-      // Auto-grade
-      await this.submitExamResult(examId, userId);
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
     } finally { client.release(); }
+
+    // Auto-grading uses its own transaction. Start it only after the first
+    // client has been returned to the pool so this request never holds two.
+    await this.submitExamResult(examId, userId);
   }
 
   // ─── Reset PIN ─────────────────────────────────────────────────────────────

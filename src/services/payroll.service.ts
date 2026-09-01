@@ -2,6 +2,8 @@ import pool from '../config/database';
 import { calculateEthiopianIncomeTax, calculatePension } from '../utils/taxCalculator';
 import { sendPayrollNotification } from '../utils/emailService';
 
+type Queryable = Pick<typeof pool, 'query'>;
+
 // Map month names to numbers (1-12) — supports both Gregorian and Ethiopic names
 const MONTH_MAP: { [key: string]: number } = {
   // Gregorian
@@ -53,8 +55,12 @@ class PayrollService {
   /**
    * Helper to retrieve a global finance setting value.
    */
-  private async getFinanceSetting(key: string, defaultValue: number): Promise<number> {
-    const result = await pool.query(`SELECT value FROM finance_settings WHERE key = $1`, [key]);
+  private async getFinanceSetting(
+    key: string,
+    defaultValue: number,
+    queryable: Queryable = pool
+  ): Promise<number> {
+    const result = await queryable.query(`SELECT value FROM finance_settings WHERE key = $1`, [key]);
     if (result.rows.length === 0) return defaultValue;
     return Number(result.rows[0].value);
   }
@@ -116,7 +122,7 @@ class PayrollService {
       await client.query('BEGIN');
 
       // 2. Fetch global settings
-      const dailyPenaltyRate = await this.getFinanceSetting('daily_penalty_rate', 150.0);
+      const dailyPenaltyRate = await this.getFinanceSetting('daily_penalty_rate', 150.0, client);
 
       // 3. Fetch all approved employees with valid payroll profiles
       const employeesQuery = `
@@ -386,6 +392,11 @@ class PayrollService {
     }
 
     const client = await pool.connect();
+    const emailNotifications: Array<{
+      employeeName: string;
+      email: string;
+      netPay: number;
+    }> = [];
     try {
       await client.query('BEGIN');
 
@@ -450,19 +461,20 @@ class PayrollService {
           ]
         );
 
-        // C. Fetch employee email and send payroll notification email stub
+        // C. Capture email details. Delivery happens after COMMIT and after the
+        // database client is released, so a slow SMTP provider cannot hold a
+        // transaction or consume a pool connection.
         const emailRes = await client.query(`SELECT email FROM users WHERE id = $1`, [empId]);
         if (emailRes.rows.length > 0 && emailRes.rows[0].email) {
-          try {
-            await sendPayrollNotification(item.employee_name, emailRes.rows[0].email, run.month, run.year, Number(item.net_pay));
-          } catch (err) {
-            console.error(`Failed to send email notification to ${item.employee_name}:`, err);
-          }
+          emailNotifications.push({
+            employeeName: item.employee_name,
+            email: emailRes.rows[0].email,
+            netPay: Number(item.net_pay),
+          });
         }
       }
 
       await client.query('COMMIT');
-      return { success: true, message: 'Payroll run finalized, loan repayments recorded, and payslips released.' };
 
     } catch (error) {
       await client.query('ROLLBACK');
@@ -470,6 +482,22 @@ class PayrollService {
     } finally {
       client.release();
     }
+
+    for (const notification of emailNotifications) {
+      try {
+        await sendPayrollNotification(
+          notification.employeeName,
+          notification.email,
+          run.month,
+          run.year,
+          notification.netPay
+        );
+      } catch (err) {
+        console.error(`Failed to send email notification to ${notification.employeeName}:`, err);
+      }
+    }
+
+    return { success: true, message: 'Payroll run finalized, loan repayments recorded, and payslips released.' };
   }
 
   /**

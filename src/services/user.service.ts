@@ -95,7 +95,7 @@ class UserService {
           }
         }
 
-        const digitalId = await generateDigitalId(role, branchId || null);
+        const digitalId = await generateDigitalId(role, branchId || null, client);
 
         let zkDeviceId = null;
         const staffRoles = ['teacher', 'finance-clerk', 'driver', 'librarian', 'clinic-admin', 'school-admin', 'auditor', 'vice-principal', 'super-admin'];

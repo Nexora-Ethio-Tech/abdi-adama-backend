@@ -1,4 +1,3 @@
-import { PoolClient } from 'pg';
 import pool from '../config/database';
 import { hashPassword, comparePassword } from '../utils/password';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
@@ -192,12 +191,10 @@ class AuthService {
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<{ message: string }> {
-    const client: PoolClient = await pool.connect();
-
     try {
-      await client.query('BEGIN');
-
-      const result = await client.query<{ password_hash: string }>(
+      // Password comparison and hashing are intentionally outside a database
+      // transaction. bcrypt is CPU-intensive and must not occupy a pool client.
+      const result = await pool.query<{ password_hash: string }>(
         'SELECT password_hash FROM users WHERE id = $1',
         [userId]
       );
@@ -206,30 +203,31 @@ class AuthService {
         throw new Error('User not found');
       }
 
-      const isValid = await comparePassword(currentPassword, result.rows[0].password_hash);
+      const currentPasswordHash = result.rows[0].password_hash;
+      const isValid = await comparePassword(currentPassword, currentPasswordHash);
 
       if (!isValid) {
         throw new Error('Current password is incorrect');
       }
 
       const hashedPassword = await hashPassword(newPassword);
-
-      await client.query(
-        'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
-        [hashedPassword, userId]
+      const updateResult = await pool.query(
+        `UPDATE users
+         SET password_hash = $1, updated_at = NOW()
+         WHERE id = $2 AND password_hash = $3`,
+        [hashedPassword, userId, currentPasswordHash]
       );
 
-      await client.query('COMMIT');
+      if (updateResult.rowCount === 0) {
+        throw new Error('Password changed in another session. Please try again.');
+      }
 
       logger.info(`Password changed for user: ${userId}`);
 
       return { message: 'Password changed successfully' };
     } catch (error) {
-      await client.query('ROLLBACK');
       logger.error('Change password error:', error);
       throw error;
-    } finally {
-      client.release();
     }
   }
 }

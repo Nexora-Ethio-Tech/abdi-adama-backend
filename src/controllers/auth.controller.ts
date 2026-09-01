@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import authService from '../services/auth.service';
 import { AuthRequest, LoginDTO, ChangePasswordDTO } from '../types';
+import { databaseUnavailableResponse, isDatabaseAvailabilityError } from '../utils/publicError';
 
 class AuthController {
   async login(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -17,6 +18,17 @@ class AuthController {
     } catch (error) {
       // If the service threw a known error with statusCode, return it explicitly
       const err: any = error;
+      if (isDatabaseAvailabilityError(err)) {
+        res.status(databaseUnavailableResponse.status).json({
+          success: false,
+          error: {
+            code: databaseUnavailableResponse.code,
+            message: databaseUnavailableResponse.message,
+          },
+        });
+        return;
+      }
+
       const status = err.statusCode || 500;
       res.status(status).json({
         success: false,
