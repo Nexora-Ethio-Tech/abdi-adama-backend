@@ -32,6 +32,12 @@ function formatTime12Hour(hour: number, minute: number): string {
   return `${displayHour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} ${meridiem}`;
 }
 
+import {
+  AttendanceWindows,
+  DEFAULT_ATTENDANCE_WINDOWS,
+  evaluateAttendanceStatus,
+} from '../utils/attendanceTime.helper';
+
 /** Determine if a punch time is a late arrival in Ethiopian time (after 02:20 AM Ethiopian clock) */
 function isLate(hour: number, minute: number): boolean {
   let ethHour = hour - 6;
@@ -43,24 +49,17 @@ function isLate(hour: number, minute: number): boolean {
 /**
  * Compute status from the current state of all four punch slots.
  * Rules:
- *   - All 4 punches present → 'present'  (is_late_arrival preserved in DB for "Present (Late)" display)
- *   - At least punch 1, but NOT all 4 → if late arrival: 'late', else: 'half-day'
- *   - No punches → 'absent'
+ *   - All 4 punches present and within interval -> 'present'
+ *   - 1 to 3 punches present -> 'half-day'
+ *   - No punches -> 'absent'
  */
 function computeStatus(row: {
   sign_in_time: string | null;
   lunch_out_time: string | null;
   lunch_in_time: string | null;
   sign_out_time: string | null;
-  is_late_arrival: boolean;
 }): string {
-  if (row.sign_in_time && row.lunch_out_time && row.lunch_in_time && row.sign_out_time) {
-    return 'present';
-  }
-  if (row.sign_in_time) {
-    return row.is_late_arrival ? 'late' : 'half-day';
-  }
-  return 'absent';
+  return evaluateAttendanceStatus(row, DEFAULT_ATTENDANCE_WINDOWS).status;
 }
 
 class MachineController {
@@ -131,7 +130,7 @@ class MachineController {
                 continue;
               }
 
-              const initialStatus = lateArrival ? 'late' : 'half-day';
+              const initialStatus = 'half-day';
               await client.query(
                 `INSERT INTO employee_attendance
                    (user_id, date, status, recorded_by, sign_in_time, is_late_arrival, created_at)

@@ -204,6 +204,8 @@ router.get('/students/:studentId/attendance-history', schoolAdminController.getS
 router.get('/staff-attendance', schoolAdminController.getStaffAttendance);
 router.post('/staff-attendance/bulk', schoolAdminController.bulkRecordStaffAttendance);
 router.post('/staff-attendance', schoolAdminController.recordStaffAttendance);
+router.get('/attendance-times', schoolAdminController.getAttendanceTimes);
+router.post('/attendance-times', schoolAdminController.saveAttendanceTimes);
 
 // Registration Toggle (open/close student registration)
 router.post('/system-settings/registration', schoolAdminController.toggleRegistration);

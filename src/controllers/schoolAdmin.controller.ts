@@ -1736,6 +1736,7 @@ class SchoolAdminController {
         lunch_out_time,
         lunch_in_time,
         sign_out_time,
+        branchId: req.user!.branch_id || undefined,
       });
 
       res.json({ success: true, data: record });
@@ -1755,13 +1756,74 @@ class SchoolAdminController {
         return;
       }
 
-      const result = await schoolAdminService.bulkRecordStaffAttendance({ adminId, date, records });
+      const result = await schoolAdminService.bulkRecordStaffAttendance({
+        adminId,
+        date,
+        records,
+        branchId: req.user!.branch_id || undefined,
+      });
 
       res.json({
         success: true,
         data: result,
         message: `Saved ${result.count} attendance records for ${date}.`,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get attendance time intervals for a given date or branch default
+  async getAttendanceTimes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const { date } = req.query;
+
+      const windows = await schoolAdminService.getAttendanceTimeWindows(
+        branchId!,
+        date as string | undefined
+      );
+
+      res.json({
+        success: true,
+        data: windows,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Save attendance time intervals for a date or branch default
+  async saveAttendanceTimes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const branchId = req.user!.branch_id;
+      const {
+        date,
+        morningCheckInStart,
+        morningCheckInEnd,
+        lunchCheckOutStart,
+        lunchCheckOutEnd,
+        lunchCheckInStart,
+        lunchCheckInEnd,
+        leaveStart,
+        leaveEnd,
+        applyToAll,
+      } = req.body;
+
+      const result = await schoolAdminService.saveAttendanceTimeWindows(branchId!, {
+        date,
+        morningCheckInStart,
+        morningCheckInEnd,
+        lunchCheckOutStart,
+        lunchCheckOutEnd,
+        lunchCheckInStart,
+        lunchCheckInEnd,
+        leaveStart,
+        leaveEnd,
+        applyToAll: !!applyToAll,
+      });
+
+      res.json(result);
     } catch (error) {
       next(error);
     }

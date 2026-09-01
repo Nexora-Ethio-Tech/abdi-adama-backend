@@ -6,6 +6,10 @@ import {
 } from '../shared/gradeSubmissionPolicy';
 import { formatSemester, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
 import { getEthiopianNow } from './schoolAdmin.service';
+import {
+  DEFAULT_ATTENDANCE_WINDOWS,
+  evaluateAttendanceStatus,
+} from '../utils/attendanceTime.helper';
 
 class VicePrincipalService {
   // Absence Queue Management
@@ -289,12 +293,58 @@ class VicePrincipalService {
            WHEN COALESCE(ea.status,'zzz') = 'present'  THEN 4
            ELSE 5
          END,
-         u.name,
-         ea.date DESC`,
+          u.name,
+          ea.date DESC`,
       [branchId, targetStart, targetEnd, ethNow.dateStr, ethNow.time24, gregStartStr]
     );
 
-    return result.rows;
+    // Query windows for branch/targetStart
+    let windows = DEFAULT_ATTENDANCE_WINDOWS;
+    try {
+      const winRes = await pool.query(
+        `SELECT * FROM attendance_time_windows 
+         WHERE branch_id = $1 AND (date = $2::date OR date IS NULL)
+         ORDER BY date DESC NULLS LAST LIMIT 1`,
+        [branchId, targetStart]
+      );
+      if (winRes.rows.length > 0) {
+        const w = winRes.rows[0];
+        windows = {
+          morningCheckInStart: w.morning_check_in_start,
+          morningCheckInEnd: w.morning_check_in_end,
+          lunchCheckOutStart: w.lunch_check_out_start,
+          lunchCheckOutEnd: w.lunch_check_out_end,
+          lunchCheckInStart: w.lunch_check_in_start,
+          lunchCheckInEnd: w.lunch_check_in_end,
+          leaveStart: w.leave_start,
+          leaveEnd: w.leave_end,
+        };
+      }
+    } catch (_) {}
+
+    return result.rows.map((row: any) => {
+      const evalRes = evaluateAttendanceStatus({
+        sign_in_time: row.sign_in_time,
+        lunch_out_time: row.lunch_out_time,
+        lunch_in_time: row.lunch_in_time,
+        sign_out_time: row.sign_out_time,
+      }, windows);
+
+      let effectiveStatus = row.attendance_status;
+      if ((row.sign_in_time || row.lunch_out_time || row.lunch_in_time || row.sign_out_time) &&
+          (!effectiveStatus || ['present', 'late', 'half-day'].includes(effectiveStatus))) {
+        effectiveStatus = evalRes.status;
+      }
+
+      return {
+        ...row,
+        attendance_status: effectiveStatus,
+        valid_morning: evalRes.validMorning,
+        valid_lunch_out: evalRes.validLunchOut,
+        valid_lunch_in: evalRes.validLunchIn,
+        valid_leave: evalRes.validLeave,
+      };
+    });
   }
 
   async getTeacherAttendanceDetail(branchId: string, userId: string, startDate: string, endDate: string) {

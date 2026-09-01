@@ -13,7 +13,7 @@ describe('startup migration manifest', () => {
     expect(() => validateStartupMigrationManifest()).not.toThrow();
 
     const sequences = STARTUP_MIGRATION_FILES.map(getMigrationSequence);
-    expect(sequences.slice(-4)).toEqual([43, 44, 45, 46]);
+    expect(sequences.slice(-5)).toEqual([43, 44, 45, 46, 47]);
   });
 
   it('registers files that exist in the authoritative migration directory', () => {
@@ -25,6 +25,7 @@ describe('startup migration manifest', () => {
     expect(STARTUP_MIGRATION_FILES).toContain('44th_create_annual_plans_table.sql');
     expect(STARTUP_MIGRATION_FILES).toContain('45th_enforce_grade_academic_periods.sql');
     expect(STARTUP_MIGRATION_FILES).toContain('46th_enforce_single_active_academic_year.sql');
+    expect(STARTUP_MIGRATION_FILES).toContain('47th_create_attendance_time_windows.sql');
   });
 
   it('has no duplicate numbered SQL files in the authoritative directory', () => {

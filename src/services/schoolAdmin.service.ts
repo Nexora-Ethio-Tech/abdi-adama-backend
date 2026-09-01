@@ -4,6 +4,13 @@ import { generate4DigitPIN, hashPassword } from '../utils/password';
 import { sendAdmissionCredentialsEmail } from '../utils/emailService';
 import { gregorianToEthiopian, ethiopianToGregorianDate, ethiopianToGregorianIso } from '../shared/ethiopianCalendar';
 import { invalidateUserCache } from '../cache/userCache';
+import {
+  AttendanceWindows,
+  DEFAULT_ATTENDANCE_WINDOWS,
+  evaluateAttendanceStatus,
+  timeStringToMinutes,
+  isWithinInterval,
+} from '../utils/attendanceTime.helper';
 
 export function getEthiopianNow() {
   const now = new Date();
@@ -222,13 +229,230 @@ class SchoolAdminService {
       [branchId, targetStart, targetEnd, ethNow.dateStr, ethNow.time24, gregStartStr]
     );
 
-    return result.rows;
+    const windows = await this.getAttendanceTimeWindows(branchId, targetStart);
+
+    return result.rows.map((row: any) => {
+      const evalRes = evaluateAttendanceStatus({
+        sign_in_time: row.sign_in_time,
+        lunch_out_time: row.lunch_out_time,
+        lunch_in_time: row.lunch_in_time,
+        sign_out_time: row.sign_out_time,
+      }, windows);
+
+      let effectiveStatus = row.attendance_status;
+      if ((row.sign_in_time || row.lunch_out_time || row.lunch_in_time || row.sign_out_time) &&
+          (!effectiveStatus || ['present', 'late', 'half-day'].includes(effectiveStatus))) {
+        effectiveStatus = evalRes.status;
+      }
+
+      return {
+        ...row,
+        attendance_status: effectiveStatus,
+        valid_morning: evalRes.validMorning,
+        valid_lunch_out: evalRes.validLunchOut,
+        valid_lunch_in: evalRes.validLunchIn,
+        valid_leave: evalRes.validLeave,
+      };
+    });
+  }
+
+  /**
+   * Fetch attendance time intervals configured for a given date or branch default.
+   */
+  async getAttendanceTimeWindows(branchId: string, date?: string) {
+    if (date) {
+      const dateRes = await pool.query(
+        `SELECT * FROM attendance_time_windows 
+         WHERE branch_id = $1 AND date = $2::date LIMIT 1`,
+        [branchId, date]
+      );
+      if (dateRes.rows.length > 0) {
+        const row = dateRes.rows[0];
+        return {
+          id: row.id,
+          branchId: row.branch_id,
+          date: date,
+          isCustomForDate: true,
+          isDefault: false,
+          morningCheckInStart: row.morning_check_in_start,
+          morningCheckInEnd: row.morning_check_in_end,
+          lunchCheckOutStart: row.lunch_check_out_start,
+          lunchCheckOutEnd: row.lunch_check_out_end,
+          lunchCheckInStart: row.lunch_check_in_start,
+          lunchCheckInEnd: row.lunch_check_in_end,
+          leaveStart: row.leave_start,
+          leaveEnd: row.leave_end,
+        };
+      }
+    }
+
+    // Try branch default (date IS NULL)
+    const defRes = await pool.query(
+      `SELECT * FROM attendance_time_windows 
+       WHERE branch_id = $1 AND date IS NULL LIMIT 1`,
+      [branchId]
+    );
+    if (defRes.rows.length > 0) {
+      const row = defRes.rows[0];
+      return {
+        id: row.id,
+        branchId: row.branch_id,
+        date: date || null,
+        isCustomForDate: false,
+        isDefault: true,
+        morningCheckInStart: row.morning_check_in_start,
+        morningCheckInEnd: row.morning_check_in_end,
+        lunchCheckOutStart: row.lunch_check_out_start,
+        lunchCheckOutEnd: row.lunch_check_out_end,
+        lunchCheckInStart: row.lunch_check_in_start,
+        lunchCheckInEnd: row.lunch_check_in_end,
+        leaveStart: row.leave_start,
+        leaveEnd: row.leave_end,
+      };
+    }
+
+    // Global default fallback
+    return {
+      id: null,
+      branchId: branchId,
+      date: date || null,
+      isCustomForDate: false,
+      isDefault: true,
+      ...DEFAULT_ATTENDANCE_WINDOWS,
+    };
+  }
+
+  /**
+   * Save / update attendance time intervals for a given date or branch default.
+   */
+  async saveAttendanceTimeWindows(branchId: string, data: {
+    date?: string | null;
+    morningCheckInStart?: string;
+    morningCheckInEnd?: string;
+    lunchCheckOutStart?: string;
+    lunchCheckOutEnd?: string;
+    lunchCheckInStart?: string;
+    lunchCheckInEnd?: string;
+    leaveStart?: string;
+    leaveEnd?: string;
+    applyToAll?: boolean;
+  }) {
+    const {
+      date,
+      morningCheckInStart = DEFAULT_ATTENDANCE_WINDOWS.morningCheckInStart,
+      morningCheckInEnd = DEFAULT_ATTENDANCE_WINDOWS.morningCheckInEnd,
+      lunchCheckOutStart = DEFAULT_ATTENDANCE_WINDOWS.lunchCheckOutStart,
+      lunchCheckOutEnd = DEFAULT_ATTENDANCE_WINDOWS.lunchCheckOutEnd,
+      lunchCheckInStart = DEFAULT_ATTENDANCE_WINDOWS.lunchCheckInStart,
+      lunchCheckInEnd = DEFAULT_ATTENDANCE_WINDOWS.lunchCheckInEnd,
+      leaveStart = DEFAULT_ATTENDANCE_WINDOWS.leaveStart,
+      leaveEnd = DEFAULT_ATTENDANCE_WINDOWS.leaveEnd,
+      applyToAll = false,
+    } = data;
+
+    const targetDate = applyToAll ? null : (date || null);
+
+    let savedRow;
+    if (targetDate) {
+      const res = await pool.query(
+        `INSERT INTO attendance_time_windows
+           (branch_id, date, morning_check_in_start, morning_check_in_end, lunch_check_out_start, lunch_check_out_end, lunch_check_in_start, lunch_check_in_end, leave_start, leave_end, updated_at)
+         VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+         ON CONFLICT (branch_id, date) WHERE date IS NOT NULL DO UPDATE SET
+           morning_check_in_start = EXCLUDED.morning_check_in_start,
+           morning_check_in_end   = EXCLUDED.morning_check_in_end,
+           lunch_check_out_start  = EXCLUDED.lunch_check_out_start,
+           lunch_check_out_end    = EXCLUDED.lunch_check_out_end,
+           lunch_check_in_start   = EXCLUDED.lunch_check_in_start,
+           lunch_check_in_end     = EXCLUDED.lunch_check_in_end,
+           leave_start            = EXCLUDED.leave_start,
+           leave_end              = EXCLUDED.leave_end,
+           updated_at             = NOW()
+         RETURNING *`,
+        [
+          branchId, targetDate,
+          morningCheckInStart, morningCheckInEnd,
+          lunchCheckOutStart, lunchCheckOutEnd,
+          lunchCheckInStart, lunchCheckInEnd,
+          leaveStart, leaveEnd
+        ]
+      );
+      savedRow = res.rows[0];
+
+      // Re-evaluate existing attendance records on this date for this branch
+      const windows: AttendanceWindows = {
+        morningCheckInStart, morningCheckInEnd,
+        lunchCheckOutStart, lunchCheckOutEnd,
+        lunchCheckInStart, lunchCheckInEnd,
+        leaveStart, leaveEnd
+      };
+
+      const existingRecords = await pool.query(
+        `SELECT ea.id, ea.sign_in_time, ea.lunch_out_time, ea.lunch_in_time, ea.sign_out_time, ea.status
+         FROM employee_attendance ea
+         JOIN users u ON u.id = ea.user_id
+         WHERE u.branch_id = $1 AND ea.date = $2::date`,
+        [branchId, targetDate]
+      );
+
+      for (const rec of existingRecords.rows) {
+        if (['excused', 'leave'].includes(rec.status)) continue;
+        const evalRes = evaluateAttendanceStatus(rec, windows);
+        if (evalRes.status !== rec.status) {
+          await pool.query(
+            `UPDATE employee_attendance SET status = $1 WHERE id = $2`,
+            [evalRes.status, rec.id]
+          );
+        }
+      }
+    } else {
+      const res = await pool.query(
+        `INSERT INTO attendance_time_windows
+           (branch_id, date, morning_check_in_start, morning_check_in_end, lunch_check_out_start, lunch_check_out_end, lunch_check_in_start, lunch_check_in_end, leave_start, leave_end, updated_at)
+         VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+         ON CONFLICT (branch_id) WHERE date IS NULL DO UPDATE SET
+           morning_check_in_start = EXCLUDED.morning_check_in_start,
+           morning_check_in_end   = EXCLUDED.morning_check_in_end,
+           lunch_check_out_start  = EXCLUDED.lunch_check_out_start,
+           lunch_check_out_end    = EXCLUDED.lunch_check_out_end,
+           lunch_check_in_start   = EXCLUDED.lunch_check_in_start,
+           lunch_check_in_end     = EXCLUDED.lunch_check_in_end,
+           leave_start            = EXCLUDED.leave_start,
+           leave_end              = EXCLUDED.leave_end,
+           updated_at             = NOW()
+         RETURNING *`,
+        [
+          branchId,
+          morningCheckInStart, morningCheckInEnd,
+          lunchCheckOutStart, lunchCheckOutEnd,
+          lunchCheckInStart, lunchCheckInEnd,
+          leaveStart, leaveEnd
+        ]
+      );
+      savedRow = res.rows[0];
+    }
+
+    return {
+      success: true,
+      data: {
+        id: savedRow.id,
+        branchId: savedRow.branch_id,
+        date: savedRow.date,
+        morningCheckInStart: savedRow.morning_check_in_start,
+        morningCheckInEnd: savedRow.morning_check_in_end,
+        lunchCheckOutStart: savedRow.lunch_check_out_start,
+        lunchCheckOutEnd: savedRow.lunch_check_out_end,
+        lunchCheckInStart: savedRow.lunch_check_in_start,
+        lunchCheckInEnd: savedRow.lunch_check_in_end,
+        leaveStart: savedRow.leave_start,
+        leaveEnd: savedRow.leave_end,
+      }
+    };
   }
 
   /**
    * Manually record / update staff attendance for a given date.
-   * Auto-timestamps each punch slot to NOW() (admin-recorded time) if not explicitly provided.
-   * Computes status and is_late_arrival using the same rules as the biometric machine.
+   * Uses configured attendance time windows to calculate status ('present', 'half-day', 'absent').
    */
   async recordStaffAttendance(data: {
     adminId: string;
@@ -239,22 +463,19 @@ class SchoolAdminService {
     lunch_out_time?: string;
     lunch_in_time?: string;
     sign_out_time?: string;
+    branchId?: string;
   }) {
     const { adminId, userId, date, status, sign_in_time, lunch_out_time, lunch_in_time, sign_out_time } = data;
 
-    // Compute is_late_arrival from the Arrival time string ("HH:MM AM/PM" in Ethiopian clock)
-    // The late cutoff is 02:20 AM Ethiopian = 2*60+20 = 140 minutes past Ethiopian midnight.
-    let isLateArrival = false;
-    if (sign_in_time) {
-      const [timePart, meridiem] = sign_in_time.split(' ');
-      const [hStr, mStr] = timePart.split(':');
-      let h = parseInt(hStr, 10);
-      const m = parseInt(mStr, 10);
-      if (meridiem === 'PM' && h !== 12) h += 12;
-      if (meridiem === 'AM' && h === 12) h = 0;
-      const totalMin = h * 60 + m;
-      isLateArrival = totalMin > 2 * 60 + 20; // 02:20 AM Ethiopian clock
+    // Fetch branch for user if not supplied
+    let userBranchId = data.branchId;
+    if (!userBranchId) {
+      const uRes = await pool.query(`SELECT branch_id FROM users WHERE id = $1`, [userId]);
+      userBranchId = uRes.rows[0]?.branch_id;
     }
+
+    const windows = await this.getAttendanceTimeWindows(userBranchId || '', date);
+    const evalRes = evaluateAttendanceStatus({ sign_in_time, lunch_out_time, lunch_in_time, sign_out_time }, windows);
 
     const validStatuses = ['present', 'absent', 'late', 'half-day', 'excused', 'leave'];
     const statusClean = status ? status.toLowerCase().trim() : '';
@@ -267,17 +488,13 @@ class SchoolAdminService {
       return null;
     }
 
-    // Compute effective status if not explicitly supplied
-    let computedStatus = status;
-    if (!computedStatus) {
-      if (sign_in_time && lunch_out_time && lunch_in_time && sign_out_time) {
-        computedStatus = 'present';
-      } else if (sign_in_time) {
-        computedStatus = isLateArrival ? 'late' : 'half-day';
-      } else {
-        computedStatus = 'absent';
-      }
+    // Compute effective status: if not explicitly forced to 'excused' or 'leave', use evaluated status
+    let computedStatus = statusClean;
+    if (!computedStatus || ['present', 'absent', 'late', 'half-day'].includes(computedStatus)) {
+      computedStatus = evalRes.status;
     }
+
+    const isLateArrival = !evalRes.validMorning && !!sign_in_time;
 
     const result = await pool.query(
       `INSERT INTO employee_attendance
@@ -310,12 +527,12 @@ class SchoolAdminService {
 
   /**
    * Bulk upsert staff attendance records for a given date (Ethiopian calendar).
-   * Used by the School Admin's "Save Attendance Records" button so that daily
-   * attendance history is permanently stored for auditing.
+   * Evaluates all punch intervals and records consistent status.
    */
   async bulkRecordStaffAttendance(data: {
     adminId: string;
     date: string;
+    branchId?: string;
     records: Array<{
       userId: string;
       status?: string;
@@ -325,7 +542,15 @@ class SchoolAdminService {
       sign_out_time?: string;
     }>;
   }) {
-    const { adminId, date, records } = data;
+    const { adminId, date, records, branchId } = data;
+
+    // Get branch attendance windows for this date
+    let effectiveBranchId = branchId;
+    if (!effectiveBranchId && records.length > 0) {
+      const uRes = await pool.query(`SELECT branch_id FROM users WHERE id = $1`, [records[0].userId]);
+      effectiveBranchId = uRes.rows[0]?.branch_id;
+    }
+    const windows = await this.getAttendanceTimeWindows(effectiveBranchId || '', date);
 
     const client = await pool.connect();
     try {
@@ -333,26 +558,22 @@ class SchoolAdminService {
 
       const saved = [];
       for (const rec of records) {
-        // Compute is_late_arrival from sign_in_time if present
-        let isLateArrival = false;
-        if (rec.sign_in_time) {
-          const parts = rec.sign_in_time.split(' ');
-          if (parts.length === 2) {
-            const [timePart, meridiem] = parts;
-            const [hStr, mStr] = timePart.split(':');
-            let h = parseInt(hStr, 10);
-            const m = parseInt(mStr, 10);
-            if (meridiem === 'PM' && h !== 12) h += 12;
-            if (meridiem === 'AM' && h === 12) h = 0;
-            isLateArrival = h * 60 + m > 2 * 60 + 20;
-          }
-        }
+        const evalRes = evaluateAttendanceStatus({
+          sign_in_time: rec.sign_in_time,
+          lunch_out_time: rec.lunch_out_time,
+          lunch_in_time: rec.lunch_in_time,
+          sign_out_time: rec.sign_out_time,
+        }, windows);
 
-        // Determine effective status
+        const isLateArrival = !evalRes.validMorning && !!rec.sign_in_time;
+
         const validStatuses = ['present', 'absent', 'late', 'half-day', 'excused', 'leave'];
-        let effectiveStatus = rec.status || 'absent';
-        // Normalise "present-(late)" -> stored as "present" with is_late_arrival=true
-        if (effectiveStatus === 'present-(late)') effectiveStatus = 'present';
+        let effectiveStatus = rec.status || evalRes.status;
+        if (effectiveStatus === 'present-(late)' || effectiveStatus === 'late') {
+          effectiveStatus = evalRes.status;
+        } else if (effectiveStatus === 'half day') {
+          effectiveStatus = 'half-day';
+        }
 
         const statusClean = effectiveStatus.toLowerCase().trim();
         if (!validStatuses.includes(statusClean)) {
@@ -379,7 +600,7 @@ class SchoolAdminService {
           [
             rec.userId,
             date,
-            effectiveStatus,
+            statusClean,
             `admin-bulk:${adminId}`,
             rec.sign_in_time || null,
             rec.lunch_out_time || null,
