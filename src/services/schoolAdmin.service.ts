@@ -716,17 +716,46 @@ class SchoolAdminService {
       if (specificStudentMatch && specificStudentMatch.student_id) {
         // Delete only the specific duplicate row from students table and its child tables
         const studentTableId = specificStudentMatch.student_id;
-        await client.query(`DELETE FROM section_assignments WHERE student_id = $1`, [studentTableId]);
-        await client.query(`DELETE FROM student_routes WHERE student_id = $1`, [studentTableId]);
-        await client.query(`DELETE FROM fee_deductions WHERE student_id = $1`, [studentTableId]);
+        // Clean up child tables that reference students.id (ignore if table doesn't exist)
+        const childTables = [
+          'section_assignment_audit',
+          'student_routes',
+          'fee_deductions',
+          'student_attendance',
+          'communication_logs',
+          'clinic_visits',
+          'clinic_chat_messages',
+          'library_loans',
+          'grades',
+          'parent_student',
+        ];
+        for (const table of childTables) {
+          try {
+            await client.query(`DELETE FROM ${table} WHERE student_id = $1`, [studentTableId]);
+          } catch (_e) { /* table may not exist — ignore */ }
+        }
         await client.query(`DELETE FROM students WHERE id = $1`, [studentTableId]);
       } else {
         // Delete all student rows for this user_id
         const allStudentRows = await client.query(`SELECT id FROM students WHERE user_id = $1`, [userId]);
         for (const row of allStudentRows.rows) {
-          await client.query(`DELETE FROM section_assignments WHERE student_id = $1`, [row.id]);
-          await client.query(`DELETE FROM student_routes WHERE student_id = $1`, [row.id]);
-          await client.query(`DELETE FROM fee_deductions WHERE student_id = $1`, [row.id]);
+          const childTables = [
+            'section_assignment_audit',
+            'student_routes',
+            'fee_deductions',
+            'student_attendance',
+            'communication_logs',
+            'clinic_visits',
+            'clinic_chat_messages',
+            'library_loans',
+            'grades',
+            'parent_student',
+          ];
+          for (const table of childTables) {
+            try {
+              await client.query(`DELETE FROM ${table} WHERE student_id = $1`, [row.id]);
+            } catch (_e) { /* table may not exist — ignore */ }
+          }
         }
         await client.query(`DELETE FROM students WHERE user_id = $1`, [userId]);
       }
