@@ -769,7 +769,6 @@ class SchoolAdminService {
 
       if (count === 0) {
         // No remaining student records for this user account -> delete the user record
-        await client.query(`DELETE FROM parent_student_links WHERE student_user_id = $1`, [userId]);
         await client.query(`DELETE FROM users WHERE id = $1`, [userId]);
       }
 
