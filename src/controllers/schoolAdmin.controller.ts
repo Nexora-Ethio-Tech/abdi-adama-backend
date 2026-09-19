@@ -295,6 +295,23 @@ class SchoolAdminController {
     }
   }
 
+  // Delete Student record
+  async deleteStudent(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const branchId = req.user!.branch_id;
+
+      const result = await schoolAdminService.deleteStudent(id, branchId!);
+
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Assign Student to Class
   async assignStudentToClass(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

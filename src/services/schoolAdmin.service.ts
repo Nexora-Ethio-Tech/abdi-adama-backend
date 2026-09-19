@@ -675,13 +675,107 @@ class SchoolAdminService {
     return result.rows[0];
   }
 
+  // Delete Student record safely (handles duplicate student records or student user deletion)
+  async deleteStudent(studentIdOrUserId: string, branchId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Query joining users and students matching on s.id OR u.id
+      const findQuery = `
+        SELECT 
+          s.id as student_id, 
+          u.id as user_id, 
+          u.name,
+          COALESCE(s.branch_id, u.branch_id) as student_branch_id
+        FROM users u
+        LEFT JOIN students s ON s.user_id = u.id
+        WHERE (s.id = $1 OR u.id = $1)
+      `;
+      const findRes = await client.query(findQuery, [studentIdOrUserId]);
+
+      if (findRes.rows.length === 0) {
+        throw new Error('Student not found in your branch');
+      }
+
+      // Check branch match if branchId is provided
+      if (branchId) {
+        const branchMatch = findRes.rows.some(
+          r => !r.student_branch_id || r.student_branch_id === branchId
+        );
+        if (!branchMatch) {
+          throw new Error('Student not found in your branch');
+        }
+      }
+
+      // Determine whether input matched a specific students.id PK or a user_id
+      const specificStudentMatch = findRes.rows.find(r => r.student_id === studentIdOrUserId);
+      const studentName = findRes.rows[0].name || 'Student';
+      const userId = findRes.rows[0].user_id;
+
+      if (specificStudentMatch && specificStudentMatch.student_id) {
+        // Delete only the specific duplicate row from students table and its child tables
+        const studentTableId = specificStudentMatch.student_id;
+        await client.query(`DELETE FROM section_assignments WHERE student_id = $1`, [studentTableId]);
+        await client.query(`DELETE FROM student_routes WHERE student_id = $1`, [studentTableId]);
+        await client.query(`DELETE FROM fee_deductions WHERE student_id = $1`, [studentTableId]);
+        await client.query(`DELETE FROM students WHERE id = $1`, [studentTableId]);
+      } else {
+        // Delete all student rows for this user_id
+        const allStudentRows = await client.query(`SELECT id FROM students WHERE user_id = $1`, [userId]);
+        for (const row of allStudentRows.rows) {
+          await client.query(`DELETE FROM section_assignments WHERE student_id = $1`, [row.id]);
+          await client.query(`DELETE FROM student_routes WHERE student_id = $1`, [row.id]);
+          await client.query(`DELETE FROM fee_deductions WHERE student_id = $1`, [row.id]);
+        }
+        await client.query(`DELETE FROM students WHERE user_id = $1`, [userId]);
+      }
+
+      // Check if there are remaining student rows for this user_id
+      const remainingCountRes = await client.query(
+        `SELECT COUNT(*) as count FROM students WHERE user_id = $1`,
+        [userId]
+      );
+      const count = parseInt(remainingCountRes.rows[0].count, 10);
+
+      if (count === 0) {
+        // No remaining student records for this user account -> delete the user record
+        await client.query(`DELETE FROM parent_student_links WHERE student_user_id = $1`, [userId]);
+        await client.query(`DELETE FROM users WHERE id = $1`, [userId]);
+      }
+
+      await client.query('COMMIT');
+      invalidateUserCache(userId);
+
+      return { message: `Student ${studentName} deleted successfully` };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   // Delete User (teachers, students, parents, staff in their branch)
-  async deleteUser(userId: string, branchId: string, _schoolAdminId: string) {
-    // Verify user belongs to School Admin's branch
+  async deleteUser(userIdOrStudentId: string, branchId: string, _schoolAdminId: string) {
+    // 1. Check if target is a student (matching either students.id PK or users.id PK)
+    const studentCheck = await pool.query(
+      `SELECT s.id as student_id, u.id as user_id 
+       FROM users u 
+       LEFT JOIN students s ON s.user_id = u.id 
+       WHERE (s.id = $1 OR u.id = $1) AND u.role = 'student'`,
+      [userIdOrStudentId]
+    );
+
+    if (studentCheck.rows.length > 0) {
+      return this.deleteStudent(userIdOrStudentId, branchId);
+    }
+
+    // 2. Otherwise check non-student user in users table
     const userCheck = await pool.query(
       `SELECT id, role, name FROM users 
-       WHERE id = $1 AND branch_id = $2`,
-      [userId, branchId]
+       WHERE id = $1 AND (branch_id = $2 OR $2 IS NULL)`,
+      [userIdOrStudentId, branchId]
     );
 
     if (userCheck.rows.length === 0) {
@@ -696,13 +790,8 @@ class SchoolAdminService {
       throw new Error('You cannot delete admin roles. Contact Super Admin.');
     }
 
-    // Prevent deletion of student records to preserve historical academic and financial records
-    if (user.role === 'student') {
-      throw new Error('Student records cannot be deleted to preserve historical academic and financial records. Please update their status to Suspended, Inactive, or Graduated instead.');
-    }
-
     // Delete user (CASCADE will handle related records)
-    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [user.id]);
 
     return { message: `User ${user.name} deleted successfully` };
   }
